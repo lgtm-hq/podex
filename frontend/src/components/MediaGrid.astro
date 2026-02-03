@@ -1,0 +1,31 @@
+---
+import MediaCard from './MediaCard.astro';
+import type { MediaItem } from '../lib/types';
+
+interface Props {
+  items: MediaItem[];
+  emptyMessage?: string;
+}
+
+const { items, emptyMessage = 'No media found' } = Astro.props;
+---
+
+{items.length > 0 ? (
+  <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4 md:gap-6">
+    {items.map((item) => (
+      <MediaCard
+        id={item.id}
+        type={item.type}
+        title={item.title}
+        author={item.author}
+        coverUrl={item.cover_url}
+        mentionCount={item.mention_count}
+        episodeCount={item.episode_count}
+      />
+    ))}
+  </div>
+) : (
+  <div class="text-center py-12">
+    <p class="text-text-muted">{emptyMessage}</p>
+  </div>
+)}

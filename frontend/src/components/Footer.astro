@@ -1,0 +1,99 @@
+---
+/**
+ * Footer Component
+ */
+const currentYear = new Date().getFullYear();
+
+const navLinks = [
+  { href: '/', label: 'Home' },
+  { href: '/sources', label: 'Sources' },
+  { href: '/media', label: 'References' },
+  { href: '/episodes', label: 'Episodes' },
+  { href: '/stats', label: 'Stats' },
+  { href: '/about', label: 'About' },
+];
+
+const mediaTypes = [
+  { href: '/media?type=book', label: 'Books' },
+  { href: '/media?type=movie', label: 'Movies' },
+  { href: '/media?type=tv_show', label: 'TV Shows' },
+  { href: '/media?type=documentary', label: 'Documentaries' },
+  { href: '/media?type=podcast', label: 'Podcasts' },
+];
+---
+
+<footer class="border-t border-border-subtle bg-surface">
+  <div class="container py-12 md:py-16">
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-8 md:gap-12">
+      <!-- Brand -->
+      <div class="col-span-2 md:col-span-1">
+        <a href="/" class="flex items-center gap-2 mb-4">
+          <div class="w-8 h-8 rounded-lg bg-accent/10 flex items-center justify-center">
+            <svg class="w-4 h-4 text-accent" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+            </svg>
+          </div>
+          <span class="font-semibold text-text">Podex</span>
+        </a>
+        <p class="text-sm text-text-muted leading-relaxed">
+          Discover books, movies, and shows mentioned in podcasts.
+        </p>
+      </div>
+
+      <!-- Navigation -->
+      <div>
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-4">Navigate</h4>
+        <ul class="space-y-2">
+          {navLinks.map((link) => (
+            <li>
+              <a href={link.href} class="text-sm text-text-secondary hover:text-text transition-colors">
+                {link.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <!-- Browse -->
+      <div>
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-4">Browse</h4>
+        <ul class="space-y-2">
+          {mediaTypes.map((type) => (
+            <li>
+              <a href={type.href} class="text-sm text-text-secondary hover:text-text transition-colors">
+                {type.label}
+              </a>
+            </li>
+          ))}
+        </ul>
+      </div>
+
+      <!-- Info -->
+      <div>
+        <h4 class="text-xs font-semibold uppercase tracking-wider text-text-muted mb-4">Info</h4>
+        <ul class="space-y-2">
+          <li>
+            <a href="/about" class="text-sm text-text-secondary hover:text-text transition-colors">
+              About Podex
+            </a>
+          </li>
+          <li>
+            <a href="/stats" class="text-sm text-text-secondary hover:text-text transition-colors">
+              Statistics
+            </a>
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- Bottom -->
+    <div class="mt-12 pt-8 border-t border-border-subtle flex flex-col md:flex-row justify-between items-center gap-4">
+      <p class="text-sm text-text-muted">
+        &copy; {currentYear} Podex. Built with Whisper AI.
+      </p>
+      <p class="text-xs text-text-muted">
+        Powered by Astro, FastAPI, and Groq
+      </p>
+    </div>
+  </div>
+</footer>

@@ -1,0 +1,154 @@
+---
+/**
+ * Media (References) Index Page
+ * Browse all media mentioned in podcasts with filtering and search
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import MediaGrid from '../../components/MediaGrid.astro';
+import FilterPanel from '../../components/FilterPanel';
+import Pagination from '../../components/Pagination.astro';
+import SearchBar from '../../components/SearchBar';
+import { getMedia, searchMedia } from '../../lib/api';
+import type { PaginatedResponse, MediaItem, MediaType } from '../../lib/types';
+
+// Type-safe parameter parsing
+type SortOption = 'mention_count' | 'title' | 'created_at';
+type SortOrder = 'asc' | 'desc';
+
+const validMediaTypes = new Set<string>([
+  'book', 'movie', 'documentary', 'tv_show', 'study',
+  'podcast', 'article', 'standup_special', 'person', 'place',
+]);
+const validSortOptions = new Set<string>(['mention_count', 'title', 'created_at']);
+const validSortOrders = new Set<string>(['asc', 'desc']);
+
+function parseTypes(rawTypes: string[]): MediaType[] {
+  return rawTypes.filter((t): t is MediaType => validMediaTypes.has(t));
+}
+
+function parseSort(rawSort: string | null): SortOption {
+  return rawSort && validSortOptions.has(rawSort)
+    ? (rawSort as SortOption)
+    : 'mention_count';
+}
+
+function parseOrder(rawOrder: string | null): SortOrder {
+  return rawOrder && validSortOrders.has(rawOrder)
+    ? (rawOrder as SortOrder)
+    : 'desc';
+}
+
+const url = new URL(Astro.request.url);
+const query = url.searchParams.get('q');
+const types = parseTypes(url.searchParams.getAll('type'));
+const sort = parseSort(url.searchParams.get('sort'));
+const order = parseOrder(url.searchParams.get('order'));
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 24;
+
+let mediaData: PaginatedResponse<MediaItem> = { items: [], total: 0, page: 1, per_page: perPage };
+let error: unknown = null;
+
+try {
+  if (query) {
+    mediaData = await searchMedia(query, page, perPage, types);
+  } else {
+    mediaData = await getMedia(page, perPage, types, sort, order);
+  }
+} catch (e) {
+  error = e;
+  console.error('Failed to fetch media:', e);
+}
+
+const totalPages = Math.ceil(mediaData.total / perPage);
+
+// Build human-readable title based on filters
+function getPageTitle(): string {
+  if (query) return `Search: ${query}`;
+  if (types.length === 1) {
+    const typeLabels: Record<string, string> = {
+      book: 'Books',
+      movie: 'Movies',
+      documentary: 'Documentaries',
+      tv_show: 'TV Shows',
+      podcast: 'Podcasts',
+      standup_special: 'Standup Specials',
+      article: 'Articles',
+      study: 'Studies',
+    };
+    return typeLabels[types[0]] || 'References';
+  }
+  return 'All References';
+}
+
+// Build query params for pagination component
+const paginationParams: Record<string, string | string[]> = {};
+if (query) paginationParams.q = query;
+if (types.length > 0) paginationParams.type = types;
+if (sort !== 'mention_count') paginationParams.sort = sort;
+if (order !== 'desc') paginationParams.order = order;
+---
+
+<BaseLayout title={getPageTitle()}>
+  <main class="py-12 md:py-16">
+    <div class="container">
+      <!-- Header -->
+      <div class="mb-8">
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border-subtle mb-4">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+          <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">References</span>
+        </div>
+        <h1 class="section-title mb-2">{getPageTitle()}</h1>
+        <p class="text-text-secondary">
+          {mediaData.total.toLocaleString()} {mediaData.total === 1 ? 'item' : 'items'} found
+        </p>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="mb-10 space-y-5">
+        <div class="max-w-xl">
+          <SearchBar client:load placeholder="Search books, movies, shows..." />
+        </div>
+        <FilterPanel
+          client:load
+          initialTypes={types}
+          initialSort={sort}
+          initialOrder={order}
+        />
+      </div>
+
+      <!-- Results -->
+      {error ? (
+        <div class="card p-12 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl">⚠️</span>
+          </div>
+          <h2 class="text-lg font-semibold mb-2">Unable to load references</h2>
+          <p class="text-text-secondary">Make sure the backend API is running.</p>
+        </div>
+      ) : mediaData.items.length === 0 ? (
+        <div class="card p-12 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl">🔍</span>
+          </div>
+          <h2 class="text-lg font-semibold mb-2">No results found</h2>
+          <p class="text-text-secondary">Try adjusting your filters or search query.</p>
+        </div>
+      ) : (
+        <>
+          <MediaGrid items={mediaData.items} />
+
+          {/* Pagination */}
+          <div class="mt-12">
+            <Pagination
+              currentPage={page}
+              totalPages={totalPages}
+              baseUrl="/media"
+              queryParams={paginationParams}
+            />
+          </div>
+        </>
+      )}
+    </div>
+  </main>
+</BaseLayout>

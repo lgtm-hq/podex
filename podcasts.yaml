@@ -1,0 +1,39 @@
+---
+# podcasts.yaml - Curated podcast collection
+#
+# This file defines the podcasts to track and their discovery sources.
+#
+# Status values:
+#   - watchlist: Saved for later, no processing
+#   - active: Actively discovering and processing
+#   - paused: Temporarily stopped
+#
+# Sources:
+#   - podscripts: Slug on podscripts.co (preferred, has free transcripts)
+#   - youtube_channel: YouTube channel ID
+#   - rss: RSS feed URL
+#   - spotify: Spotify show ID
+
+podcasts:
+  # Active podcasts - being processed
+  - slug: jre
+    name: The Joe Rogan Experience
+    status: active
+    sources:
+      podscripts: the-joe-rogan-experience
+      youtube_channel: UCzQUP1qoWDoEbmsQxvdjxgQ
+
+  # Watchlist - interested but not processing yet
+  - slug: huberman-lab
+    name: Huberman Lab
+    status: watchlist
+    sources:
+      podscripts: huberman-lab
+      spotify: 79CkJF3UJTHFV8Dse3Ez0P
+
+  - slug: lex-fridman
+    name: Lex Fridman Podcast
+    status: watchlist
+    sources:
+      podscripts: lex-fridman-podcast
+      youtube_channel: UCSHZKyawb77ixDdsGog4iWA

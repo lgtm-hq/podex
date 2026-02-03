@@ -5,6 +5,7 @@
 .coverage
 .claude
 .lintro-cache
+.astro/
 
 ### dirs
 Reports/
@@ -13,6 +14,7 @@ htmlcov/
 junit-reports/
 snowplow/schemas/
 allure*/
+data/
 
 ### files (MacOS)
 .DS_Store
@@ -21,6 +23,9 @@ allure*/
 *sample_test*.py
 *.iml
 report.xml
+*.db
+*.sqlite
+*.sqlite3
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -337,6 +342,7 @@ dist
 .pnp.*
 .lintro/
 coverage.json
+bun.lockb
 
 # act secrets file (DO NOT COMMIT)
 .secrets

@@ -1,0 +1,62 @@
+---
+import type { EpisodeWithStats } from '../lib/types';
+
+interface Props {
+  episode: EpisodeWithStats;
+}
+
+const { episode } = Astro.props;
+const { id, title, episode_number: episodeNumber, youtube_id: youtubeId, published_at: publishedAt, thumbnail_url: thumbnailUrl, mention_count: mentionCount } = episode;
+
+const formattedDate = publishedAt
+  ? new Date(publishedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+  : null;
+
+const defaultThumbnail = youtubeId
+  ? `https://i.ytimg.com/vi/${youtubeId}/mqdefault.jpg`
+  : null;
+
+const thumbnail = thumbnailUrl || defaultThumbnail;
+---
+
+<a href={`/episodes/${id}`} class="group block no-underline">
+  <div class="card overflow-hidden hover:shadow-lg transition-shadow">
+    <div class="flex gap-4 p-4">
+      <!-- Thumbnail -->
+      {thumbnail ? (
+        <div class="w-32 h-20 flex-shrink-0 rounded overflow-hidden bg-surface">
+          <img
+            src={thumbnail}
+            alt={title}
+            class="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+            loading="lazy"
+          />
+        </div>
+      ) : (
+        <div class="w-32 h-20 flex-shrink-0 rounded bg-surface flex items-center justify-center">
+          <svg class="w-8 h-8 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+        </div>
+      )}
+
+      <!-- Info -->
+      <div class="flex-1 min-w-0">
+        <h3 class="font-semibold text-text truncate group-hover:text-primary transition-colors">
+          {title}
+        </h3>
+        <div class="mt-1 flex items-center gap-3 text-sm text-text-muted">
+          {episodeNumber && (
+            <span>#{episodeNumber}</span>
+          )}
+          {formattedDate && (
+            <span>{formattedDate}</span>
+          )}
+        </div>
+        <div class="mt-2 text-xs text-text-muted">
+          {mentionCount} media {mentionCount === 1 ? 'mention' : 'mentions'}
+        </div>
+      </div>
+    </div>
+  </div>
+</a>

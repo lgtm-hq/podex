@@ -1,0 +1,145 @@
+---
+/**
+ * Pagination component with page numbers
+ */
+interface Props {
+  currentPage: number;
+  totalPages: number;
+  baseUrl: string;
+  queryParams?: Record<string, string | string[]>;
+}
+
+const { currentPage, totalPages, baseUrl, queryParams = {} } = Astro.props;
+
+function buildPageUrl(page: number): string {
+  const params = new URLSearchParams();
+
+  // Add existing query params
+  for (const [key, value] of Object.entries(queryParams)) {
+    if (Array.isArray(value)) {
+      value.forEach((v) => params.append(key, v));
+    } else if (value) {
+      params.set(key, value);
+    }
+  }
+
+  // Set page
+  if (page > 1) {
+    params.set('page', page.toString());
+  } else {
+    params.delete('page');
+  }
+
+  const queryString = params.toString();
+  return queryString ? `${baseUrl}?${queryString}` : baseUrl;
+}
+
+// Generate page numbers to show
+function getPageNumbers(): (number | 'ellipsis')[] {
+  const pages: (number | 'ellipsis')[] = [];
+  const delta = 2; // Pages to show on each side of current
+
+  for (let i = 1; i <= totalPages; i++) {
+    if (
+      i === 1 || // Always show first
+      i === totalPages || // Always show last
+      (i >= currentPage - delta && i <= currentPage + delta) // Pages near current
+    ) {
+      pages.push(i);
+    } else if (pages[pages.length - 1] !== 'ellipsis') {
+      pages.push('ellipsis');
+    }
+  }
+
+  return pages;
+}
+
+const hasNextPage = currentPage < totalPages;
+const hasPrevPage = currentPage > 1;
+const pageNumbers = getPageNumbers();
+---
+
+{totalPages > 1 && (
+  <nav class="flex flex-col sm:flex-row justify-center items-center gap-4" aria-label="Pagination">
+    <div class="flex items-center gap-1">
+      {/* Previous button */}
+      {hasPrevPage ? (
+        <a
+          href={buildPageUrl(currentPage - 1)}
+          class="pagination-btn"
+          aria-label="Previous page"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+        </a>
+      ) : (
+        <span class="pagination-btn pagination-btn-disabled" aria-disabled="true">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+          </svg>
+        </span>
+      )}
+
+      {/* Page numbers */}
+      {pageNumbers.map((page) =>
+        page === 'ellipsis' ? (
+          <span class="px-2 text-text-muted">...</span>
+        ) : page === currentPage ? (
+          <span class="pagination-btn pagination-btn-active" aria-current="page">
+            {page}
+          </span>
+        ) : (
+          <a
+            href={buildPageUrl(page)}
+            class="pagination-btn"
+            aria-label={`Page ${page}`}
+          >
+            {page}
+          </a>
+        )
+      )}
+
+      {/* Next button */}
+      {hasNextPage ? (
+        <a
+          href={buildPageUrl(currentPage + 1)}
+          class="pagination-btn"
+          aria-label="Next page"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </a>
+      ) : (
+        <span class="pagination-btn pagination-btn-disabled" aria-disabled="true">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+          </svg>
+        </span>
+      )}
+    </div>
+
+    {/* Page info */}
+    <span class="text-sm text-text-muted">
+      Page {currentPage} of {totalPages}
+    </span>
+  </nav>
+)}
+
+<style>
+  .pagination-btn {
+    @apply inline-flex items-center justify-center min-w-[2.5rem] h-10 px-3 rounded-lg
+           text-sm font-medium transition-colors
+           bg-surface hover:bg-surface-elevated
+           border border-border-subtle;
+  }
+
+  .pagination-btn-active {
+    @apply bg-accent text-white border-accent hover:bg-accent;
+  }
+
+  .pagination-btn-disabled {
+    @apply opacity-40 cursor-not-allowed hover:bg-surface;
+  }
+</style>

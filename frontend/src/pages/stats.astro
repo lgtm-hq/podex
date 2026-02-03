@@ -1,0 +1,190 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import StatsCard from '../components/StatsCard.astro';
+import MediaCard from '../components/MediaCard.astro';
+import { getOverviewStats, getStatsByType, getTopMentioned, getTopMedia } from '../lib/api';
+
+let stats = null;
+let typeStats: any[] = [];
+let topMentioned: any[] = [];
+let topBooks: any[] = [];
+let topMovies: any[] = [];
+let error = null;
+
+try {
+  [stats, typeStats, topMentioned, topBooks, topMovies] = await Promise.all([
+    getOverviewStats(),
+    getStatsByType(),
+    getTopMentioned(10),
+    getTopMedia(5, 'book'),
+    getTopMedia(5, 'movie'),
+  ]);
+} catch (e) {
+  error = e;
+  console.error('Failed to fetch stats:', e);
+}
+
+const typeLabels: Record<string, string> = {
+  book: 'Books',
+  movie: 'Movies',
+  documentary: 'Documentaries',
+  tv_show: 'TV Shows',
+  study: 'Studies',
+  podcast: 'Podcasts',
+  article: 'Articles',
+};
+
+const typeColors: Record<string, string> = {
+  book: 'bg-blue-500',
+  movie: 'bg-purple-500',
+  documentary: 'bg-green-500',
+  tv_show: 'bg-orange-500',
+  study: 'bg-cyan-500',
+  podcast: 'bg-pink-500',
+  article: 'bg-yellow-500',
+};
+---
+
+<BaseLayout title="Statistics" description="Analytics and statistics about podcast media mentions">
+  <div class="container mx-auto px-4 py-8">
+    <h1 class="text-3xl font-bold mb-8">Statistics</h1>
+
+    {error ? (
+      <div class="card p-8 text-center">
+        <p class="text-text-muted">Failed to load statistics. Make sure the API is running.</p>
+      </div>
+    ) : (
+      <>
+        {/* Overview Stats */}
+        {stats && (
+          <section class="mb-12">
+            <h2 class="text-xl font-semibold mb-4">Overview</h2>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <StatsCard title="Total Media" value={stats.total_media} icon="📚" />
+              <StatsCard title="Total Mentions" value={stats.total_mentions} icon="💬" />
+              <StatsCard title="Episodes" value={stats.total_episodes} icon="🎙️" />
+              <StatsCard title="Podcasts" value={stats.total_podcasts} icon="📻" />
+            </div>
+          </section>
+        )}
+
+        {/* Type Distribution */}
+        {typeStats.length > 0 && (
+          <section class="mb-12">
+            <h2 class="text-xl font-semibold mb-4">Media by Type</h2>
+            <div class="card p-6">
+              <div class="space-y-4">
+                {typeStats.map((type) => {
+                  const total = typeStats.reduce((sum, t) => sum + t.mention_count, 0);
+                  const percentage = total > 0 ? (type.mention_count / total) * 100 : 0;
+                  return (
+                    <div>
+                      <div class="flex justify-between mb-1">
+                        <span class="font-medium">{typeLabels[type.type] || type.type}</span>
+                        <span class="text-text-muted">
+                          {type.count} items · {type.mention_count} mentions
+                        </span>
+                      </div>
+                      <div class="h-3 bg-surface rounded-full overflow-hidden">
+                        <div
+                          class={`h-full ${typeColors[type.type] || 'bg-primary'} rounded-full`}
+                          style={`width: ${percentage}%`}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* Top Mentioned */}
+        {topMentioned.length > 0 && (
+          <section class="mb-12">
+            <h2 class="text-xl font-semibold mb-4">Top 10 Most Mentioned</h2>
+            <div class="card overflow-hidden">
+              <table class="w-full">
+                <thead class="bg-surface">
+                  <tr>
+                    <th class="text-left p-4 font-medium text-text-muted">#</th>
+                    <th class="text-left p-4 font-medium text-text-muted">Title</th>
+                    <th class="text-left p-4 font-medium text-text-muted">Type</th>
+                    <th class="text-left p-4 font-medium text-text-muted">Author</th>
+                    <th class="text-right p-4 font-medium text-text-muted">Mentions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {topMentioned.map((item, index) => (
+                    <tr class="border-t border-border hover:bg-surface/50">
+                      <td class="p-4 font-semibold text-text-muted">{index + 1}</td>
+                      <td class="p-4">
+                        <a href={`/media/${item.id}`} class="font-medium text-text hover:text-primary">
+                          {item.title}
+                        </a>
+                      </td>
+                      <td class="p-4">
+                        <span class={`badge badge-${item.type}`}>
+                          {typeLabels[item.type] || item.type}
+                        </span>
+                      </td>
+                      <td class="p-4 text-text-muted">{item.author || '-'}</td>
+                      <td class="p-4 text-right font-semibold text-primary">{item.mention_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
+
+        {/* Top Books & Movies */}
+        <section class="grid md:grid-cols-2 gap-8">
+          {topBooks.length > 0 && (
+            <div>
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold">Top Books</h2>
+                <a href="/books" class="text-primary text-sm hover:underline">View all →</a>
+              </div>
+              <div class="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                {topBooks.map((book) => (
+                  <MediaCard
+                    id={book.id}
+                    type={book.type}
+                    title={book.title}
+                    author={book.author}
+                    coverUrl={book.cover_url}
+                    mentionCount={book.mention_count}
+                    episodeCount={book.episode_count}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {topMovies.length > 0 && (
+            <div>
+              <div class="flex items-center justify-between mb-4">
+                <h2 class="text-xl font-semibold">Top Movies</h2>
+                <a href="/movies" class="text-primary text-sm hover:underline">View all →</a>
+              </div>
+              <div class="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                {topMovies.map((movie) => (
+                  <MediaCard
+                    id={movie.id}
+                    type={movie.type}
+                    title={movie.title}
+                    author={movie.author}
+                    coverUrl={movie.cover_url}
+                    mentionCount={movie.mention_count}
+                    episodeCount={movie.episode_count}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      </>
+    )}
+  </div>
+</BaseLayout>

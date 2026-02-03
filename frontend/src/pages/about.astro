@@ -1,0 +1,164 @@
+---
+/**
+ * About Page
+ */
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="About" description="About Podex - Podcast Media Index">
+  <main class="py-12 md:py-20">
+    <div class="container">
+      <div class="max-w-3xl mx-auto">
+        <!-- Header -->
+        <div class="mb-12">
+          <h1 class="section-title mb-4">About Podex</h1>
+          <p class="text-lg text-text-secondary">
+            A searchable index of books, movies, TV shows, and other media mentioned in podcasts.
+          </p>
+        </div>
+
+        <!-- Content -->
+        <div class="space-y-12">
+          <!-- Mission -->
+          <section>
+            <h2 class="text-xl font-semibold mb-4">What is Podex?</h2>
+            <p class="text-text-secondary leading-relaxed">
+              <strong class="text-text">Podex</strong> helps you discover the books, movies, documentaries,
+              TV shows, and other media mentioned in podcasts. Every reference is linked to the exact
+              timestamp where it was discussed, so you can jump directly to the conversation.
+            </p>
+          </section>
+
+          <!-- How it works -->
+          <section>
+            <h2 class="text-xl font-semibold mb-4">How It Works</h2>
+            <div class="grid gap-4">
+              <div class="card p-5 flex gap-4">
+                <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <span class="text-lg">🎙️</span>
+                </div>
+                <div>
+                  <h3 class="font-medium mb-1">1. Transcribe</h3>
+                  <p class="text-sm text-text-secondary">
+                    We use Whisper AI (via Groq) to transcribe podcast episodes with high accuracy.
+                  </p>
+                </div>
+              </div>
+
+              <div class="card p-5 flex gap-4">
+                <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <span class="text-lg">🔍</span>
+                </div>
+                <div>
+                  <h3 class="font-medium mb-1">2. Extract</h3>
+                  <p class="text-sm text-text-secondary">
+                    AI identifies mentions of books, movies, TV shows, documentaries, podcasts, and more.
+                  </p>
+                </div>
+              </div>
+
+              <div class="card p-5 flex gap-4">
+                <div class="w-10 h-10 rounded-xl bg-accent/10 flex items-center justify-center flex-shrink-0">
+                  <span class="text-lg">🔗</span>
+                </div>
+                <div>
+                  <h3 class="font-medium mb-1">3. Link</h3>
+                  <p class="text-sm text-text-secondary">
+                    Each mention links to the exact timestamp in the original YouTube video.
+                  </p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <!-- Tech Stack -->
+          <section>
+            <h2 class="text-xl font-semibold mb-4">Tech Stack</h2>
+            <div class="grid md:grid-cols-2 gap-4">
+              <div class="card p-5">
+                <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">Frontend</h3>
+                <ul class="space-y-2 text-sm text-text-secondary">
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    Astro - Static site generation
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    React - Interactive components
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    Tailwind CSS - Styling
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    TypeScript - Type safety
+                  </li>
+                </ul>
+              </div>
+
+              <div class="card p-5">
+                <h3 class="text-sm font-semibold uppercase tracking-wider text-text-muted mb-3">Backend</h3>
+                <ul class="space-y-2 text-sm text-text-secondary">
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    FastAPI - REST API
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    Whisper AI - Transcription
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    Groq - Fast inference
+                  </li>
+                  <li class="flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                    SQLite - Database
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </section>
+
+          <!-- Terminology -->
+          <section>
+            <h2 class="text-xl font-semibold mb-4">Terminology</h2>
+            <div class="space-y-4">
+              <div class="card p-5">
+                <h3 class="font-medium text-accent mb-1">Sources</h3>
+                <p class="text-sm text-text-secondary">
+                  Podcasts we're actively analyzing. These are the input - the shows we transcribe and scan for mentions.
+                </p>
+              </div>
+              <div class="card p-5">
+                <h3 class="font-medium text-accent mb-1">References</h3>
+                <p class="text-sm text-text-secondary">
+                  Media mentioned in podcasts. These are the output - books, movies, TV shows, documentaries, other podcasts, standup specials, articles, and studies.
+                </p>
+              </div>
+              <div class="card p-5">
+                <h3 class="font-medium text-accent mb-1">Mentions</h3>
+                <p class="text-sm text-text-secondary">
+                  Individual instances where a reference appears in an episode. One reference can have many mentions across different episodes.
+                </p>
+              </div>
+            </div>
+          </section>
+
+          <!-- CTA -->
+          <section class="pt-8 border-t border-border-subtle">
+            <div class="flex flex-col sm:flex-row gap-4">
+              <a href="/sources" class="btn btn-primary">
+                Browse Sources
+              </a>
+              <a href="/media" class="btn btn-secondary">
+                Explore References
+              </a>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+  </main>
+</BaseLayout>

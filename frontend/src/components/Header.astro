@@ -1,0 +1,149 @@
+---
+/**
+ * Header Component
+ * Main navigation with Sources/References distinction
+ */
+
+const navLinks = [
+  { href: '/', label: 'Home' },
+  { href: '/sources', label: 'Sources' },
+  { href: '/media', label: 'References' },
+  { href: '/episodes', label: 'Episodes' },
+  { href: '/stats', label: 'Stats' },
+];
+
+const mediaTypes = [
+  { href: '/media?type=book', label: 'Books' },
+  { href: '/media?type=movie', label: 'Movies' },
+  { href: '/media?type=tv_show', label: 'TV Shows' },
+  { href: '/media?type=podcast', label: 'Podcasts' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<header class="sticky top-0 z-50 bg-background/80 backdrop-blur-xl border-b border-border-subtle">
+  <div class="container">
+    <div class="flex items-center justify-between h-16">
+      <!-- Logo -->
+      <a href="/" class="flex items-center gap-3 group">
+        <div class="w-9 h-9 rounded-lg bg-accent/10 flex items-center justify-center group-hover:bg-accent/20 transition-colors">
+          <svg class="w-5 h-5 text-accent" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+          </svg>
+        </div>
+        <span class="text-lg font-semibold text-text tracking-tight">Podex</span>
+      </a>
+
+      <!-- Main Navigation -->
+      <nav class="hidden md:flex items-center gap-1">
+        {navLinks.map((link) => (
+          <a
+            href={link.href}
+            class:list={[
+              'nav-link',
+              currentPath === link.href && 'active',
+            ]}
+          >
+            {link.label}
+          </a>
+        ))}
+      </nav>
+
+      <!-- Right side actions -->
+      <div class="flex items-center gap-3">
+        <!-- Search trigger button -->
+        <button
+          id="search-trigger"
+          class="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-surface border border-border-subtle text-text-muted hover:text-text hover:border-border transition-colors text-sm"
+          aria-label="Open search"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <span class="hidden md:inline">Search</span>
+          <span class="kbd text-xs ml-1">⌘K</span>
+        </button>
+
+        <!-- Media type quick links - Desktop only -->
+        <div class="hidden lg:flex items-center gap-1 mr-2 pl-3 border-l border-border-subtle">
+          {mediaTypes.map((type) => (
+            <a
+              href={type.href}
+              class="text-xs font-medium text-text-muted hover:text-text px-2 py-1 rounded transition-colors"
+            >
+              {type.label}
+            </a>
+          ))}
+        </div>
+
+        <!-- Mobile menu button -->
+        <button
+          id="mobile-menu-button"
+          class="md:hidden p-2 text-text-muted hover:text-text rounded-lg hover:bg-surface-elevated transition-colors"
+          aria-label="Toggle menu"
+        >
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile navigation -->
+    <nav id="mobile-menu" class="hidden md:hidden pb-4 pt-2 border-t border-border-subtle mt-2">
+      <div class="flex flex-col gap-1">
+        {navLinks.map((link) => (
+          <a
+            href={link.href}
+            class:list={[
+              'px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
+              currentPath === link.href
+                ? 'bg-surface-elevated text-text'
+                : 'text-text-secondary hover:bg-surface hover:text-text',
+            ]}
+          >
+            {link.label}
+          </a>
+        ))}
+
+        <div class="h-px bg-border-subtle my-2"></div>
+
+        <div class="px-3 py-1">
+          <span class="text-2xs font-semibold uppercase tracking-wider text-text-muted">Browse by Type</span>
+        </div>
+
+        <div class="grid grid-cols-2 gap-1">
+          {mediaTypes.map((type) => (
+            <a
+              href={type.href}
+              class="px-3 py-2 rounded-lg text-sm text-text-secondary hover:bg-surface hover:text-text transition-colors"
+            >
+              {type.label}
+            </a>
+          ))}
+        </div>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const mobileMenuButton = document.getElementById('mobile-menu-button');
+  const mobileMenu = document.getElementById('mobile-menu');
+  const searchTrigger = document.getElementById('search-trigger');
+
+  mobileMenuButton?.addEventListener('click', () => {
+    mobileMenu?.classList.toggle('hidden');
+  });
+
+  // Open search modal with Cmd+K when clicking the search button
+  searchTrigger?.addEventListener('click', () => {
+    const event = new KeyboardEvent('keydown', {
+      key: 'k',
+      metaKey: true,
+      bubbles: true,
+    });
+    document.dispatchEvent(event);
+  });
+</script>

@@ -1,0 +1,176 @@
+---
+/**
+ * Source (Podcast) Detail Page
+ * Shows podcast info and its episodes
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import EpisodeCard from '../../components/EpisodeCard.astro';
+import { getPodcast, getPodcastEpisodes } from '../../lib/api';
+import type { Podcast, EpisodeWithStats, PaginatedResponse } from '../../lib/types';
+
+const { slug } = Astro.params;
+
+if (!slug) {
+  return Astro.redirect('/sources');
+}
+
+const url = new URL(Astro.request.url);
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 24;
+
+let podcast: Podcast | null = null;
+let episodesData: PaginatedResponse<EpisodeWithStats> = { items: [], total: 0, page: 1, per_page: perPage };
+let error: string | null = null;
+
+try {
+  [podcast, episodesData] = await Promise.all([
+    getPodcast(slug),
+    getPodcastEpisodes(slug, page, perPage),
+  ]);
+} catch (e) {
+  error = e instanceof Error ? e.message : 'Failed to load podcast';
+  console.error('Failed to fetch podcast:', e);
+}
+
+const totalPages = Math.ceil(episodesData.total / perPage);
+const hasNextPage = page < totalPages;
+const hasPrevPage = page > 1;
+
+function buildPageUrl(newPage: number): string {
+  return newPage > 1 ? `/sources/${slug}?page=${newPage}` : `/sources/${slug}`;
+}
+---
+
+<BaseLayout title={podcast?.name || 'Source'}>
+  <main class="py-12 md:py-20">
+    <div class="container">
+      {error || !podcast ? (
+        <div class="card p-12 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl">⚠️</span>
+          </div>
+          <h2 class="text-lg font-semibold mb-2">Source not found</h2>
+          <p class="text-text-secondary mb-6">
+            {error || "The podcast you're looking for doesn't exist."}
+          </p>
+          <a href="/sources" class="btn btn-secondary">
+            View all sources
+          </a>
+        </div>
+      ) : (
+        <>
+          {/* Header */}
+          <div class="mb-12">
+            <a href="/sources" class="inline-flex items-center gap-2 text-text-secondary hover:text-accent transition-colors mb-6">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to Sources
+            </a>
+
+            <div class="flex gap-6 items-start">
+              {/* Cover */}
+              {podcast.cover_url ? (
+                <img
+                  src={podcast.cover_url}
+                  alt={podcast.name}
+                  class="w-32 h-32 md:w-40 md:h-40 rounded-2xl object-cover flex-shrink-0"
+                />
+              ) : (
+                <div class="w-32 h-32 md:w-40 md:h-40 rounded-2xl bg-surface-elevated flex items-center justify-center flex-shrink-0">
+                  <span class="text-6xl">🎙️</span>
+                </div>
+              )}
+
+              {/* Info */}
+              <div class="flex-1 min-w-0">
+                <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border-subtle mb-3">
+                  <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+                  <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">Source</span>
+                </div>
+
+                <h1 class="text-3xl md:text-4xl font-serif font-medium text-text mb-3">
+                  {podcast.name}
+                </h1>
+
+                {podcast.description && (
+                  <p class="text-text-secondary text-lg mb-4 max-w-2xl">
+                    {podcast.description}
+                  </p>
+                )}
+
+                <div class="flex flex-wrap gap-6">
+                  <div>
+                    <div class="text-2xl font-semibold stat-number">{podcast.episode_count?.toLocaleString() || 0}</div>
+                    <div class="stat-label">Episodes</div>
+                  </div>
+                  <div>
+                    <div class="text-2xl font-semibold stat-number">{podcast.mention_count?.toLocaleString() || 0}</div>
+                    <div class="stat-label">Mentions Found</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Episodes */}
+          <div>
+            <div class="flex items-center justify-between mb-6">
+              <h2 class="text-xl font-semibold">Episodes</h2>
+              <span class="text-sm text-text-muted">
+                {episodesData.total.toLocaleString()} {episodesData.total === 1 ? 'episode' : 'episodes'}
+              </span>
+            </div>
+
+            {episodesData.items.length === 0 ? (
+              <div class="card p-12 text-center">
+                <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+                  <span class="text-3xl">📻</span>
+                </div>
+                <h3 class="text-lg font-semibold mb-2">No episodes yet</h3>
+                <p class="text-text-secondary">
+                  Episodes will appear here once they're imported.
+                </p>
+              </div>
+            ) : (
+              <>
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  {episodesData.items.map((episode) => (
+                    <EpisodeCard episode={episode} />
+                  ))}
+                </div>
+
+                {/* Pagination */}
+                {totalPages > 1 && (
+                  <div class="mt-12 flex flex-col sm:flex-row justify-center items-center gap-4">
+                    <div class="flex gap-2">
+                      {hasPrevPage && (
+                        <a href={buildPageUrl(page - 1)} class="btn btn-secondary">
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+                          </svg>
+                          Previous
+                        </a>
+                      )}
+                      {hasNextPage && (
+                        <a href={buildPageUrl(page + 1)} class="btn btn-secondary">
+                          Next
+                          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                          </svg>
+                        </a>
+                      )}
+                    </div>
+                    <span class="text-sm text-text-muted">
+                      Page {page} of {totalPages}
+                    </span>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  </main>
+</BaseLayout>

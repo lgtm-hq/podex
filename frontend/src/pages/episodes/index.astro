@@ -1,0 +1,77 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import EpisodeCard from '../../components/EpisodeCard.astro';
+import Pagination from '../../components/Pagination.astro';
+import { getEpisodes } from '../../lib/api';
+import type { PaginatedResponse, EpisodeWithStats } from '../../lib/types';
+
+const url = new URL(Astro.request.url);
+const page = parseInt(url.searchParams.get('page') || '1');
+const perPage = 20;
+
+let episodeData: PaginatedResponse<EpisodeWithStats> = { items: [], total: 0, page: 1, per_page: perPage };
+let error: unknown = null;
+
+try {
+  episodeData = await getEpisodes(page, perPage);
+} catch (e) {
+  error = e;
+  console.error('Failed to fetch episodes:', e);
+}
+
+const totalPages = Math.ceil(episodeData.total / perPage);
+---
+
+<BaseLayout title="Episodes" description="Podcast episodes analyzed for media mentions">
+  <div class="container mx-auto px-4 py-8">
+    <!-- Header -->
+    <div class="mb-8">
+      <div class="flex items-center gap-3 mb-2">
+        <span class="text-4xl">🎙️</span>
+        <h1 class="text-3xl font-bold">Episodes</h1>
+      </div>
+      <p class="text-text-muted">
+        {episodeData.total} episodes analyzed for media mentions
+      </p>
+    </div>
+
+    <!-- Results -->
+    {error ? (
+      <div class="card p-12 text-center">
+        <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+          <span class="text-3xl">⚠️</span>
+        </div>
+        <h2 class="text-lg font-semibold mb-2">Unable to load episodes</h2>
+        <p class="text-text-muted mb-4">
+          The API server might be unavailable. Please try again later.
+        </p>
+        <a href="/episodes" class="btn btn-primary">
+          Retry
+        </a>
+      </div>
+    ) : (
+      <>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {episodeData.items.map((episode) => (
+            <EpisodeCard episode={episode} />
+          ))}
+        </div>
+
+        {episodeData.items.length === 0 && (
+          <div class="card p-8 text-center">
+            <p class="text-text-muted">No episodes found.</p>
+          </div>
+        )}
+
+        {/* Pagination */}
+        <div class="mt-8">
+          <Pagination
+            currentPage={page}
+            totalPages={totalPages}
+            baseUrl="/episodes"
+          />
+        </div>
+      </>
+    )}
+  </div>
+</BaseLayout>

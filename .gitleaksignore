@@ -1,0 +1,4 @@
+# Ignore environment files (they contain secrets but should not be committed)
+backend/.env
+.env
+*.env.local

@@ -1,0 +1,130 @@
+---
+/**
+ * Sources Page
+ * Lists all podcasts we're analyzing (input sources)
+ */
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import { getPodcasts, getOverviewStats } from '../../lib/api';
+import type { Podcast, OverviewStats } from '../../lib/types';
+
+let podcasts: Podcast[] = [];
+let stats: OverviewStats | null = null;
+
+try {
+  [podcasts, stats] = await Promise.all([
+    getPodcasts(),
+    getOverviewStats(),
+  ]);
+} catch (error) {
+  console.error('Failed to fetch podcasts:', error);
+}
+---
+
+<BaseLayout title="Sources">
+  <main class="py-12 md:py-20">
+    <div class="container">
+      <!-- Header -->
+      <div class="max-w-2xl mb-12">
+        <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-surface border border-border-subtle mb-4">
+          <span class="w-1.5 h-1.5 rounded-full bg-accent"></span>
+          <span class="text-xs font-medium text-text-secondary uppercase tracking-wider">Input Sources</span>
+        </div>
+        <h1 class="section-title mb-4">Podcast Sources</h1>
+        <p class="section-subtitle">
+          These are the podcasts we're actively analyzing for media mentions.
+          We transcribe each episode and extract references to books, movies, TV shows, and more.
+        </p>
+      </div>
+
+      <!-- Stats bar -->
+      {stats && (
+        <div class="flex flex-wrap gap-6 mb-12 pb-8 border-b border-border-subtle">
+          <div>
+            <div class="text-2xl font-semibold stat-number">{stats.total_podcasts}</div>
+            <div class="stat-label">Sources</div>
+          </div>
+          <div>
+            <div class="text-2xl font-semibold stat-number">{stats.total_episodes.toLocaleString()}</div>
+            <div class="stat-label">Episodes</div>
+          </div>
+          <div>
+            <div class="text-2xl font-semibold stat-number">{stats.total_mentions.toLocaleString()}</div>
+            <div class="stat-label">Mentions Found</div>
+          </div>
+        </div>
+      )}
+
+      <!-- Podcasts grid -->
+      {podcasts.length > 0 ? (
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {podcasts.map((podcast) => (
+            <a
+              href={`/sources/${podcast.slug}`}
+              class="card p-6 hover:border-accent/30 group"
+            >
+              <div class="flex gap-5">
+                <!-- Cover -->
+                {podcast.cover_url ? (
+                  <img
+                    src={podcast.cover_url}
+                    alt={podcast.name}
+                    class="w-24 h-24 rounded-xl object-cover flex-shrink-0"
+                  />
+                ) : (
+                  <div class="w-24 h-24 rounded-xl bg-surface-elevated flex items-center justify-center flex-shrink-0">
+                    <span class="text-4xl">🎙️</span>
+                  </div>
+                )}
+
+                <!-- Info -->
+                <div class="flex-1 min-w-0">
+                  <h2 class="text-lg font-semibold text-text group-hover:text-accent transition-colors mb-2">
+                    {podcast.name}
+                  </h2>
+
+                  {podcast.description && (
+                    <p class="text-sm text-text-secondary line-clamp-2 mb-4">
+                      {podcast.description}
+                    </p>
+                  )}
+
+                  <div class="flex items-center gap-4 text-sm">
+                    <div class="flex items-center gap-1.5">
+                      <svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                      </svg>
+                      <span class="text-text-secondary">{podcast.episode_count} episodes</span>
+                    </div>
+                    <div class="flex items-center gap-1.5">
+                      <svg class="w-4 h-4 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z" />
+                      </svg>
+                      <span class="text-text-secondary">{podcast.mention_count} mentions</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Arrow -->
+                <div class="flex items-center text-text-muted group-hover:text-accent transition-colors">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+                  </svg>
+                </div>
+              </div>
+            </a>
+          ))}
+        </div>
+      ) : (
+        <div class="card p-12 text-center">
+          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
+            <span class="text-3xl">🎙️</span>
+          </div>
+          <h2 class="text-lg font-semibold mb-2">No sources yet</h2>
+          <p class="text-text-secondary">
+            Podcast sources will appear here once they're added to the system.
+          </p>
+        </div>
+      )}
+    </div>
+  </main>
+</BaseLayout>

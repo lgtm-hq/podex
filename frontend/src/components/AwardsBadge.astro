@@ -1,0 +1,39 @@
+---
+/**
+ * AwardsBadge Component
+ * Displays awards information (Oscar wins/nominations, etc.)
+ */
+interface Props {
+  awards?: string;
+  oscarWins?: number;
+  oscarNominations?: number;
+}
+
+const { awards, oscarWins, oscarNominations } = Astro.props;
+
+const hasOscars = (oscarWins && oscarWins > 0) || (oscarNominations && oscarNominations > 0);
+---
+
+{(awards || hasOscars) && (
+  <div class="space-y-2">
+    {hasOscars && (
+      <div class="flex flex-wrap gap-2">
+        {oscarWins && oscarWins > 0 && (
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-yellow-500/10 text-yellow-600 text-sm font-medium">
+            <span>🏆</span>
+            <span>{oscarWins} Oscar{oscarWins > 1 ? 's' : ''}</span>
+          </div>
+        )}
+        {oscarNominations && oscarNominations > 0 && (
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-500/10 text-text-secondary text-sm">
+            <span>🎭</span>
+            <span>{oscarNominations} nomination{oscarNominations > 1 ? 's' : ''}</span>
+          </div>
+        )}
+      </div>
+    )}
+    {awards && (
+      <p class="text-sm text-text-muted">{awards}</p>
+    )}
+  </div>
+)}

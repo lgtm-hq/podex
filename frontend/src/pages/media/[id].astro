@@ -1,0 +1,462 @@
+---
+import BaseLayout from '../../layouts/BaseLayout.astro';
+import MentionList from '../../components/MentionList.astro';
+import RatingBadge from '../../components/RatingBadge.astro';
+import ExternalLinks from '../../components/ExternalLinks.astro';
+import AwardsBadge from '../../components/AwardsBadge.astro';
+import VerificationBadge from '../../components/VerificationBadge.astro';
+import { getMediaById } from '../../lib/api';
+
+const { id } = Astro.params;
+const mediaId = parseInt(id as string);
+
+let media = null;
+let error = null;
+
+try {
+  media = await getMediaById(mediaId);
+} catch (e) {
+  error = e;
+  console.error('Failed to fetch media:', e);
+}
+
+if (!media && !error) {
+  return Astro.redirect('/404');
+}
+
+const typeLabels: Record<string, string> = {
+  book: 'Book',
+  movie: 'Movie',
+  documentary: 'Documentary',
+  tv_show: 'TV Show',
+  study: 'Study',
+  podcast: 'Podcast',
+  article: 'Article',
+  standup_special: 'Standup Special',
+  person: 'Person',
+  place: 'Place',
+};
+
+const typeLabel = media ? typeLabels[media.type] || media.type : '';
+
+// Build Amazon search URL for books
+const amazonSearchUrl = media?.type === 'book'
+  ? `https://www.amazon.com/s?k=${encodeURIComponent(media.title + ' ' + (media.author || ''))}`
+  : undefined;
+
+// Check if we have any ratings to display
+const hasRatings = media && (
+  media.imdb_rating ||
+  media.tmdb_rating ||
+  media.rotten_tomatoes ||
+  media.metacritic ||
+  media.google_books_rating
+);
+
+// Check if we have cast/crew to display
+const hasCast = media?.cast && media.cast.length > 0;
+const hasDirectors = media?.directors && media.directors.length > 0;
+const hasGenres = media?.genres && media.genres.length > 0;
+
+// Check if we have academic metadata
+const isAcademic = media?.type === 'study' || media?.type === 'article';
+const hasVerification = media?.verification_sources && media.verification_sources.length > 0;
+const hasAuthors = media?.authors && media.authors.length > 0;
+const hasMeshTerms = media?.mesh_terms && media.mesh_terms.length > 0;
+const hasFieldsOfStudy = media?.fields_of_study && media.fields_of_study.length > 0;
+
+// Check for movie/TV specific metadata
+const isMovie = media?.type === 'movie';
+const isTvShow = media?.type === 'tv_show';
+const hasProductionCountries = media?.production_countries && media.production_countries.length > 0;
+const hasNetworks = media?.networks && media.networks.length > 0;
+
+// Check for book metadata
+const isBook = media?.type === 'book';
+
+// Check for person metadata
+const isPerson = media?.type === 'person';
+const hasKnownFor = media?.known_for && media.known_for.length > 0;
+
+// Check for Wikipedia categories
+const hasWikiCategories = media?.wikipedia_categories && media.wikipedia_categories.length > 0;
+
+// Format currency
+const formatCurrency = (amount: number) => {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 0,
+  }).format(amount);
+};
+
+// Get placeholder icon based on type
+const getPlaceholderIcon = (type: string) => {
+  const icons: Record<string, string> = {
+    book: '📚',
+    movie: '🎬',
+    tv_show: '📺',
+    documentary: '🎥',
+    study: '🔬',
+    article: '📄',
+    podcast: '🎙️',
+    standup_special: '🎤',
+    person: '👤',
+    place: '📍',
+  };
+  return icons[type] || '📋';
+};
+---
+
+<BaseLayout title={media?.title || 'Media'}>
+  <div class="container mx-auto px-4 py-8">
+    {error ? (
+      <div class="card p-8 text-center">
+        <p class="text-text-muted">Failed to load media. Make sure the API is running.</p>
+      </div>
+    ) : media && (
+      <>
+        <!-- Media Header -->
+        <div class="flex flex-col md:flex-row gap-8 mb-12">
+          <!-- Cover -->
+          <div class="w-full md:w-64 flex-shrink-0">
+            {media.cover_url ? (
+              <img
+                src={media.cover_url}
+                alt={media.title}
+                class="w-full rounded-lg shadow-lg"
+              />
+            ) : (
+              <div class="w-full aspect-[2/3] bg-surface rounded-lg flex items-center justify-center text-8xl">
+                {getPlaceholderIcon(media.type)}
+              </div>
+            )}
+          </div>
+
+          <!-- Info -->
+          <div class="flex-1">
+            <span class={`badge badge-${media.type} mb-3`}>
+              {typeLabel}
+            </span>
+            <h1 class="text-3xl md:text-4xl font-bold mb-2">{media.title}</h1>
+
+            {/* Author/Creator */}
+            {media.author && (
+              <p class="text-lg text-text-muted mb-2">by {media.author}</p>
+            )}
+
+            {/* Tagline (movies) */}
+            {media.tagline && (
+              <p class="text-md italic text-text-secondary mb-4">"{media.tagline}"</p>
+            )}
+
+            {/* Stats Row */}
+            <div class="flex flex-wrap gap-6 mb-6">
+              <div>
+                <p class="text-2xl font-bold text-primary">{media.mention_count}</p>
+                <p class="text-sm text-text-muted">mentions</p>
+              </div>
+              <div>
+                <p class="text-2xl font-bold text-primary">{media.episode_count}</p>
+                <p class="text-sm text-text-muted">episodes</p>
+              </div>
+              {media.year && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.year}</p>
+                  <p class="text-sm text-text-muted">year</p>
+                </div>
+              )}
+              {media.runtime_minutes && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.runtime_minutes}</p>
+                  <p class="text-sm text-text-muted">minutes</p>
+                </div>
+              )}
+              {media.page_count && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.page_count}</p>
+                  <p class="text-sm text-text-muted">pages</p>
+                </div>
+              )}
+              {/* TV Show seasons/episodes */}
+              {media.seasons && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.seasons}</p>
+                  <p class="text-sm text-text-muted">seasons</p>
+                </div>
+              )}
+              {media.episodes && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.episodes}</p>
+                  <p class="text-sm text-text-muted">episodes</p>
+                </div>
+              )}
+              {/* Citation count for studies */}
+              {media.citation_count !== undefined && media.citation_count !== null && (
+                <div>
+                  <p class="text-2xl font-bold text-text">{media.citation_count.toLocaleString()}</p>
+                  <p class="text-sm text-text-muted">citations</p>
+                </div>
+              )}
+            </div>
+
+            {/* Verification Badge (for academic papers) */}
+            {hasVerification && media.verification_sources && (
+              <div class="mb-6">
+                <VerificationBadge
+                  sources={media.verification_sources}
+                  doiVerified={media.doi_verified || false}
+                />
+              </div>
+            )}
+
+            {/* Status (TV shows) */}
+            {media.status && (
+              <div class="mb-4">
+                <span class={`inline-flex items-center px-2.5 py-1 rounded-full text-sm font-medium ${
+                  media.status === 'Ended' || media.status === 'Canceled'
+                    ? 'bg-red-500/10 text-red-400'
+                    : media.status === 'Returning Series' || media.status === 'In Production'
+                    ? 'bg-green-500/10 text-green-400'
+                    : 'bg-gray-500/10 text-gray-400'
+                }`}>
+                  {media.status}
+                </span>
+              </div>
+            )}
+
+            {/* Ratings */}
+            {hasRatings && (
+              <div class="flex flex-wrap gap-3 mb-6">
+                {media.imdb_rating && (
+                  <RatingBadge source="imdb" value={media.imdb_rating} size="md" />
+                )}
+                {media.tmdb_rating && (
+                  <RatingBadge source="tmdb" value={media.tmdb_rating} size="md" />
+                )}
+                {media.rotten_tomatoes && (
+                  <RatingBadge source="rotten_tomatoes" value={media.rotten_tomatoes} size="md" />
+                )}
+                {media.metacritic && (
+                  <RatingBadge source="metacritic" value={media.metacritic} size="md" />
+                )}
+                {media.google_books_rating && (
+                  <RatingBadge source="google_books" value={media.google_books_rating} size="md" />
+                )}
+              </div>
+            )}
+
+            {/* Awards */}
+            {(media.awards || media.oscar_wins || media.oscar_nominations) && (
+              <div class="mb-6">
+                <AwardsBadge
+                  awards={media.awards}
+                  oscarWins={media.oscar_wins}
+                  oscarNominations={media.oscar_nominations}
+                />
+              </div>
+            )}
+
+            {/* Genres / Fields of Study / Keywords */}
+            {(hasGenres || hasFieldsOfStudy || hasMeshTerms) && (
+              <div class="flex flex-wrap gap-2 mb-6">
+                {media.genres?.map((genre: string) => (
+                  <span class="px-2.5 py-1 rounded-full bg-surface-elevated text-sm text-text-secondary">
+                    {genre}
+                  </span>
+                ))}
+                {media.fields_of_study?.map((field: string) => (
+                  <span class="px-2.5 py-1 rounded-full bg-blue-500/10 text-sm text-blue-400">
+                    {field}
+                  </span>
+                ))}
+                {media.mesh_terms?.slice(0, 5).map((term: string) => (
+                  <span class="px-2.5 py-1 rounded-full bg-purple-500/10 text-sm text-purple-400">
+                    {term}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Description */}
+            {media.description && (
+              <p class="text-text-muted mb-6 leading-relaxed">{media.description}</p>
+            )}
+
+            {/* Person Biography */}
+            {isPerson && media.biography && (
+              <div class="mb-6">
+                <p class="text-text-muted leading-relaxed">{media.biography}</p>
+              </div>
+            )}
+
+            {/* Detailed Metadata Section */}
+            <div class="space-y-2 mb-6 text-sm">
+              {/* Academic Metadata */}
+              {isAcademic && (
+                <>
+                  {media.journal && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Journal:</span> {media.journal}
+                    </p>
+                  )}
+                  {hasAuthors && media.authors && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Authors:</span> {media.authors.join(', ')}
+                    </p>
+                  )}
+                  {media.publication_date && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Published:</span> {media.publication_date}
+                    </p>
+                  )}
+                  {media.open_access_pdf_url && (
+                    <p class="text-text-muted">
+                      <a href={media.open_access_pdf_url} target="_blank" rel="noopener noreferrer"
+                         class="text-green-400 hover:underline">
+                        Open Access PDF Available
+                      </a>
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Movie/TV Metadata */}
+              {(isMovie || isTvShow) && (
+                <>
+                  {hasDirectors && media.directors && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Director{media.directors.length > 1 ? 's' : ''}:</span>{' '}
+                      {media.directors.join(', ')}
+                    </p>
+                  )}
+                  {hasCast && media.cast && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Cast:</span>{' '}
+                      {media.cast.map((c: { name: string; character?: string }) =>
+                        c.character ? `${c.name} (${c.character})` : c.name
+                      ).join(', ')}
+                    </p>
+                  )}
+                  {hasNetworks && media.networks && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Network{media.networks.length > 1 ? 's' : ''}:</span>{' '}
+                      {media.networks.join(', ')}
+                    </p>
+                  )}
+                  {hasProductionCountries && media.production_countries && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Country:</span>{' '}
+                      {media.production_countries.join(', ')}
+                    </p>
+                  )}
+                  {media.spoken_languages && media.spoken_languages.length > 0 && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Language{media.spoken_languages.length > 1 ? 's' : ''}:</span>{' '}
+                      {media.spoken_languages.join(', ')}
+                    </p>
+                  )}
+                  {(media.budget || media.revenue) && (
+                    <p class="text-text-muted">
+                      {media.budget && (
+                        <span><span class="font-medium text-text-secondary">Budget:</span> {formatCurrency(media.budget)}</span>
+                      )}
+                      {media.budget && media.revenue && <span class="mx-2">|</span>}
+                      {media.revenue && (
+                        <span><span class="font-medium text-text-secondary">Box Office:</span> {formatCurrency(media.revenue)}</span>
+                      )}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Book Metadata */}
+              {isBook && (
+                <>
+                  {media.publisher && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Publisher:</span> {media.publisher}
+                    </p>
+                  )}
+                  {media.isbn && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">ISBN:</span> {media.isbn}
+                    </p>
+                  )}
+                  {media.language && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Language:</span> {media.language}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Person Metadata */}
+              {isPerson && (
+                <>
+                  {media.birthday && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Born:</span> {media.birthday}
+                      {media.birthplace && ` in ${media.birthplace}`}
+                    </p>
+                  )}
+                  {hasKnownFor && media.known_for && (
+                    <p class="text-text-muted">
+                      <span class="font-medium text-text-secondary">Known for:</span> {media.known_for.join(', ')}
+                    </p>
+                  )}
+                </>
+              )}
+
+              {/* Wikipedia Categories (as subtle tags) */}
+              {hasWikiCategories && media.wikipedia_categories && (
+                <div class="pt-2">
+                  <p class="text-xs text-text-muted mb-1">Categories:</p>
+                  <div class="flex flex-wrap gap-1">
+                    {media.wikipedia_categories.slice(0, 5).map((cat: string) => (
+                      <span class="px-2 py-0.5 rounded bg-surface text-xs text-text-muted">
+                        {cat}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* External Links */}
+            <ExternalLinks
+              imdbUrl={media.imdb_url}
+              tmdbUrl={media.tmdb_url}
+              wikipediaUrl={media.wikipedia_url}
+              googleBooksUrl={media.google_books_url}
+              openLibraryUrl={media.open_library_url}
+              amazonSearchUrl={amazonSearchUrl}
+              doiUrl={media.doi_url}
+              pubmedUrl={media.pubmed_url}
+              semanticScholarUrl={media.semantic_scholar_url}
+            />
+          </div>
+        </div>
+
+        <!-- Mentions Section -->
+        <div>
+          <h2 class="text-2xl font-bold mb-6">
+            All Mentions ({media.mentions.length})
+          </h2>
+          {media.mentions.length > 0 ? (
+            <MentionList mentions={media.mentions} />
+          ) : (
+            <p class="text-text-muted">No mentions recorded yet.</p>
+          )}
+        </div>
+
+        <!-- Back Link -->
+        <div class="mt-8">
+          <a href="/media" class="text-primary hover:underline">
+            &larr; Back to all media
+          </a>
+        </div>
+      </>
+    )}
+  </div>
+</BaseLayout>

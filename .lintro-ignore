@@ -1,14 +1,14 @@
 # Ignore test_samples directory and build artifacts from all linting/formatting
 
 test_samples/
-build
-dist
+.lintro/*
+.astro/*
 node_modules
+dist
+build
 .venv
 venv
 env
+__pycache__
 # Claude Code project memory and config (not source code)
 .claude
-
-__pycache__
-.lintro/*

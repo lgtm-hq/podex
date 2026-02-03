@@ -1,0 +1,87 @@
+# Root pyproject.toml for linter configuration
+# The main project config is in backend/pyproject.toml
+
+[tool.bandit]
+exclude_dirs = ["tests", "backend/tests"]
+# B101: assert used for internal validation, acceptable in non-optimized builds
+# B404/B603/B607: subprocess used safely with shell=False for yt-dlp, whisper
+# B108: hardcoded tmp paths are intentional for audio processing
+# B314/B405: XML parsing (defusedxml not needed for RSS feeds from trusted sources)
+skips = ["B101", "B404", "B603", "B607", "B108", "B314", "B405"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_untyped_decorators = false
+mypy_path = "backend/src"
+namespace_packages = true
+explicit_package_bases = true
+# plugins require deps installed, disabled for lintro Docker environment
+# plugins = ["pydantic.mypy", "sqlalchemy.ext.mypy.plugin"]
+exclude = [
+  "^node_modules/",
+  "^dist/",
+  "^build/",
+  "^\\.venv/",
+  "^venv/",
+  "^__pycache__/",
+  "^\\.lintro/",
+  "^frontend/",
+]
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = "scripts.*"
+disallow_untyped_defs = false
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = [
+  "feedparser.*",
+  "meilisearch.*",
+  "rapidfuzz.*",
+  "bs4.*",
+  "spotipy.*",
+  "faster_whisper.*",
+  "groq.*",
+  "yt_dlp.*",
+  "slowapi.*",
+  "pydantic.*",
+  "pydantic_settings.*",
+  "sqlalchemy.*",
+  "alembic.*",
+]
+ignore_missing_imports = true
+
+# API modules use slowapi decorators which are untyped
+[[tool.mypy.overrides]]
+module = ["podex.api.*", "podex.main"]
+disallow_untyped_decorators = false
+warn_return_any = false
+# misc: slowapi/FastAPI decorator metaclass issues without plugins
+disable_error_code = ["misc"]
+
+# Service modules with heavy SQLAlchemy/external library usage
+[[tool.mypy.overrides]]
+module = "podex.services.*"
+warn_return_any = false
+disallow_untyped_defs = false
+check_untyped_defs = true
+# type-arg: SQLAlchemy generics without plugin; no-untyped-def: external lib callbacks
+disable_error_code = ["type-arg", "no-untyped-def"]
+
+# Enrichment submodules - same rationale as services
+[[tool.mypy.overrides]]
+module = "podex.services.enrichment.*"
+warn_return_any = false
+disallow_untyped_defs = false
+check_untyped_defs = true
+# type-arg: SQLAlchemy generics without plugin; no-untyped-def: external lib callbacks
+disable_error_code = ["type-arg", "no-untyped-def"]

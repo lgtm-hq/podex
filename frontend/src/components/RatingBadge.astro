@@ -1,0 +1,75 @@
+---
+/**
+ * RatingBadge Component
+ * Displays a rating badge with source icon (IMDB, Rotten Tomatoes, etc.)
+ */
+interface Props {
+  source: 'imdb' | 'tmdb' | 'rotten_tomatoes' | 'metacritic' | 'google_books';
+  value: number;
+  maxValue?: number;
+  size?: 'sm' | 'md' | 'lg';
+}
+
+const { source, value, maxValue, size = 'md' } = Astro.props;
+
+const sourceConfig = {
+  imdb: {
+    label: 'IMDB',
+    icon: '⭐',
+    color: 'text-yellow-500',
+    bgColor: 'bg-yellow-500/10',
+    format: (v: number) => v.toFixed(1),
+    max: 10,
+  },
+  tmdb: {
+    label: 'TMDB',
+    icon: '🎬',
+    color: 'text-green-500',
+    bgColor: 'bg-green-500/10',
+    format: (v: number) => v.toFixed(1),
+    max: 10,
+  },
+  rotten_tomatoes: {
+    label: 'RT',
+    icon: value >= 60 ? '🍅' : '🤢',
+    color: value >= 60 ? 'text-red-500' : 'text-green-600',
+    bgColor: value >= 60 ? 'bg-red-500/10' : 'bg-green-600/10',
+    format: (v: number) => `${v}%`,
+    max: 100,
+  },
+  metacritic: {
+    label: 'MC',
+    icon: '🎯',
+    color: value >= 60 ? 'text-green-500' : value >= 40 ? 'text-yellow-500' : 'text-red-500',
+    bgColor: value >= 60 ? 'bg-green-500/10' : value >= 40 ? 'bg-yellow-500/10' : 'bg-red-500/10',
+    format: (v: number) => v.toString(),
+    max: 100,
+  },
+  google_books: {
+    label: 'Google',
+    icon: '📚',
+    color: 'text-blue-500',
+    bgColor: 'bg-blue-500/10',
+    format: (v: number) => v.toFixed(1),
+    max: 5,
+  },
+};
+
+const config = sourceConfig[source];
+const displayValue = config.format(value);
+const displayMax = maxValue ?? config.max;
+
+const sizeClasses = {
+  sm: 'text-xs px-1.5 py-0.5 gap-1',
+  md: 'text-sm px-2 py-1 gap-1.5',
+  lg: 'text-base px-3 py-1.5 gap-2',
+};
+---
+
+<div
+  class={`inline-flex items-center rounded-full font-medium ${config.bgColor} ${sizeClasses[size]}`}
+  title={`${config.label}: ${displayValue}/${displayMax}`}
+>
+  <span class="flex-shrink-0">{config.icon}</span>
+  <span class={config.color}>{displayValue}</span>
+</div>

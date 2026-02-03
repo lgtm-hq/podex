@@ -1,0 +1,25 @@
+---
+interface Props {
+  title: string;
+  value: string | number;
+  icon?: string;
+  description?: string;
+}
+
+const { title, value, icon, description } = Astro.props;
+---
+
+<div class="card p-6">
+  <div class="flex items-center justify-between">
+    <div>
+      <p class="text-sm font-medium text-text-muted">{title}</p>
+      <p class="mt-1 text-3xl font-bold text-text">{value.toLocaleString()}</p>
+      {description && (
+        <p class="mt-1 text-xs text-text-muted">{description}</p>
+      )}
+    </div>
+    {icon && (
+      <div class="text-4xl">{icon}</div>
+    )}
+  </div>
+</div>

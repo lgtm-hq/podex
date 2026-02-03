@@ -1,0 +1,60 @@
+---
+/**
+ * Base Layout
+ * Wraps all pages with common structure
+ */
+import { ViewTransitions } from 'astro:transitions';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import GlobalSearch from '../components/GlobalSearch';
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = 'Discover books, movies, and shows mentioned in podcasts' } = Astro.props;
+const fullTitle = title === 'Podcast Media Index' ? 'Podex - Podcast Media Index' : `${title} | Podex`;
+---
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- Preload fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <title>{fullTitle}</title>
+
+    <ViewTransitions />
+
+    <!-- Theme initialization (prevent flash) -->
+    <script is:inline>
+      // Default to dark theme (editorial style)
+      // Users can toggle to light if preferred
+      const theme = localStorage.getItem('podex-theme');
+      if (theme === 'light') {
+        document.documentElement.classList.add('light');
+      }
+    </script>
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+  </head>
+  <body class="min-h-screen flex flex-col">
+    <GlobalSearch client:load />
+    <Header />
+    <div class="flex-1">
+      <slot />
+    </div>
+    <Footer />
+  </body>
+</html>
