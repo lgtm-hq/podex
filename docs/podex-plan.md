@@ -17,53 +17,60 @@ Trust is a product feature, not a backend detail. Podex emphasizes provenance, c
 - **Overall status:** Phase 1 complete and Phase 2 underway with candidate-backed extraction workflow grounding.
 - **Current focus:** Phase 2 catalog and pipeline maturity work.
 
+### Issue Tracking Overview
+
+Retroactive parents grouping already-landed work: [#31](https://github.com/lgtm-hq/podex/issues/31) v2 API foundation, [#32](https://github.com/lgtm-hq/podex/issues/32) shared services, [#33](https://github.com/lgtm-hq/podex/issues/33) v2 public discovery, [#34](https://github.com/lgtm-hq/podex/issues/34) v2 ops + admin, [#35](https://github.com/lgtm-hq/podex/issues/35) candidate-backed extraction, [#36](https://github.com/lgtm-hq/podex/issues/36) backend tests.
+
+Roadmap parents for upcoming phases: [#58](https://github.com/lgtm-hq/podex/issues/58) foundational, [#59](https://github.com/lgtm-hq/podex/issues/59) Phase 2, [#60](https://github.com/lgtm-hq/podex/issues/60) Phase 2.5, [#61](https://github.com/lgtm-hq/podex/issues/61) Phase 3, [#62](https://github.com/lgtm-hq/podex/issues/62) Phase 4, [#63](https://github.com/lgtm-hq/podex/issues/63) Phase 5, [#64](https://github.com/lgtm-hq/podex/issues/64) Phase 6.
+
 ### Completed So Far
 
-- [x] Added `/api/v2` routing and application wiring.
-- [x] Added a dedicated v2 public API foundation.
-- [x] Added a dedicated v2 ops API foundation.
-- [x] Added a first ops dashboard endpoint.
-- [x] Added shared catalog/status query services so v1 and v2 can reuse backend logic.
-- [x] Added shared media query services so v1 and v2 can reuse media/detail logic.
-- [x] Added shared public search services so v1 and v2 can reuse discovery logic.
-- [x] Added shared public episode query services so v1 and v2 can reuse episode/detail logic.
-- [x] Refactored existing v1 podcast, status, search, and episode routes to use shared services.
-- [x] Added grouped `/api/v2/search` with opaque IDs and future-facing public resource URLs.
-- [x] Added typed `/api/v2/episodes` list/detail/mentions endpoints with opaque IDs and nested media references.
-- [x] Added typed `/api/v2/trends` discovery coverage for overview, by-type, and top-mentioned views.
-- [x] Added a dedicated `/api/v2/ops/pipelines` contract for recent runs and transcription-job activity.
-- [x] Added a dedicated `/api/v2/ops/pipelines/run` contract for operator-triggered pipeline runs.
-- [x] Added a dedicated `/api/v2/ops/search` contract for search projection health and per-index stats.
-- [x] Added typed `/api/v2/ops/podcasts` catalog management coverage for filtered inventory plus create/update/archive flows.
-- [x] Added a dedicated `/api/v2/ops/episodes/{id}/rerun` contract for replaying selected processing jobs.
-- [x] Added a dedicated `/api/v2/ops/media/{id}/merge` contract for canonicalizing duplicate media records.
-- [x] Added a dedicated `/api/v2/ops/review-queue` contract backed by review-state models and shared review services.
-- [x] Added a dedicated `/api/v2/ops/audit-log` contract backed by audit-state models and real privileged-action logging.
-- [x] Added typed `/api/v2/admin/settings` coverage for runtime configuration snapshots and partial updates.
-- [x] Added shared pipeline query services so ops surfaces do not depend on raw ORM access patterns.
-- [x] Added shared pipeline mutation services so ops run and rerun surfaces do not depend on raw ORM writes.
-- [x] Added shared search projection query services so ops surfaces do not depend on direct Meilisearch client access.
-- [x] Added shared review queue services so review surfaces can publish, reject, and merge candidates without faking workflow state.
-- [x] Added shared audit log services so ops and admin mutations land in a unified audit stream.
-- [x] Routed transcript extraction output into replay-safe mention candidates and operator review items instead of directly publishing new mentions.
-- [x] Added a typed review reclassification mutation so pending candidates can be corrected before approval while preserving provenance and audit history.
-- [x] Added backend tests covering the first v2 discovery and ops activity slices.
+- [x] Added `/api/v2` routing and application wiring. (#37)
+- [x] Added a dedicated v2 public API foundation. (#37)
+- [x] Added a dedicated v2 ops API foundation. (#37)
+- [x] Added a first ops dashboard endpoint. (#38)
+- [x] Added shared catalog/status query services so v1 and v2 can reuse backend logic. (#39)
+- [x] Added shared media query services so v1 and v2 can reuse media/detail logic. (#39)
+- [x] Added shared public search services so v1 and v2 can reuse discovery logic. (#39)
+- [x] Added shared public episode query services so v1 and v2 can reuse episode/detail logic. (#39)
+- [x] Refactored existing v1 podcast, status, search, and episode routes to use shared services. (#43)
+- [x] Added grouped `/api/v2/search` with opaque IDs and future-facing public resource URLs. (#44)
+- [x] Added typed `/api/v2/episodes` list/detail/mentions endpoints with opaque IDs and nested media references. (#45)
+- [x] Added typed `/api/v2/trends` discovery coverage for overview, by-type, and top-mentioned views. (#46)
+- [x] Added a dedicated `/api/v2/ops/pipelines` contract for recent runs and transcription-job activity. (#48)
+- [x] Added a dedicated `/api/v2/ops/pipelines/run` contract for operator-triggered pipeline runs. (#48)
+- [x] Added a dedicated `/api/v2/ops/search` contract for search projection health and per-index stats. (#49)
+- [x] Added typed `/api/v2/ops/podcasts` catalog management coverage for filtered inventory plus create/update/archive flows. (#50)
+- [x] Added a dedicated `/api/v2/ops/episodes/{id}/rerun` contract for replaying selected processing jobs. (#51)
+- [x] Added a dedicated `/api/v2/ops/media/{id}/merge` contract for canonicalizing duplicate media records. (#51)
+- [x] Added a dedicated `/api/v2/ops/review-queue` contract backed by review-state models and shared review services. (#52)
+- [x] Added a dedicated `/api/v2/ops/audit-log` contract backed by audit-state models and real privileged-action logging. (#53)
+- [x] Added typed `/api/v2/admin/settings` coverage for runtime configuration snapshots and partial updates. (#53)
+- [x] Added shared pipeline query services so ops surfaces do not depend on raw ORM access patterns. (#40)
+- [x] Added shared pipeline mutation services so ops run and rerun surfaces do not depend on raw ORM writes. (#40)
+- [x] Added shared search projection query services so ops surfaces do not depend on direct Meilisearch client access. (#41)
+- [x] Added shared review queue services so review surfaces can publish, reject, and merge candidates without faking workflow state. (#42)
+- [x] Added shared audit log services so ops and admin mutations land in a unified audit stream. (#42)
+- [x] Routed transcript extraction output into replay-safe mention candidates and operator review items instead of directly publishing new mentions. (#54)
+- [x] Added a typed review reclassification mutation so pending candidates can be corrected before approval while preserving provenance and audit history. (#52)
+- [x] Added backend tests covering the first v2 discovery and ops activity slices. (#57)
 
 ### In Progress
 
-- [x] Expand the v2 public surface with media-focused endpoints.
-- [x] Expand the v2 public surface with search-focused endpoints.
-- [x] Continue formalizing background job boundaries and projection-oriented contracts with a typed ops pipeline activity endpoint.
-- [x] Continue broadening `/api/v2` discovery coverage beyond the first catalog and search surfaces with typed episode list/detail/mentions endpoints.
-- [x] Continue separating projection and background-job concerns behind dedicated shared services with a typed ops search projection endpoint.
-- [x] Continue broadening `/api/v2` discovery coverage into richer discovery surfaces such as trends, collections, or related-entity views.
-- [x] Begin Phase 2 extraction workflow hardening by persisting replay-safe mention candidates and review queue items from transcript extraction.
+- [x] Expand the v2 public surface with media-focused endpoints. (#47)
+- [x] Expand the v2 public surface with search-focused endpoints. (#44)
+- [x] Continue formalizing background job boundaries and projection-oriented contracts with a typed ops pipeline activity endpoint. (#48)
+- [x] Continue broadening `/api/v2` discovery coverage beyond the first catalog and search surfaces with typed episode list/detail/mentions endpoints. (#45)
+- [x] Continue separating projection and background-job concerns behind dedicated shared services with a typed ops search projection endpoint. (#49)
+- [x] Continue broadening `/api/v2` discovery coverage into richer discovery surfaces such as trends, collections, or related-entity views. (#46)
+- [x] Begin Phase 2 extraction workflow hardening by persisting replay-safe mention candidates and review queue items from transcript extraction. (#54)
 
 ### Not Started
 
-- [ ] Phase 3: Ops Console
-- [ ] Phase 4: Account Product
-- [ ] Phase 5: Public Product Polish
+- [ ] Phase 2.5: Derivative Data Layer (#60)
+- [ ] Phase 3: Ops Console (#61)
+- [ ] Phase 4: Account Product (#62)
+- [ ] Phase 5: Public Product Polish (#63)
 - [ ] Phase 6: Stabilization
 
 ## 2. Product Definition
@@ -225,6 +232,11 @@ Postgres stores authoritative catalog, pipeline, and account data. Meilisearch s
 - `AuditLog`
 - `SearchAnalyticsEvent`
 - `EditorialCollection`
+- `TranscriptRetentionPolicy`
+- `TranscriptDigest`
+- `SemanticChunk`
+- `GraphTriple`
+- `TakedownRequest`
 
 ### Publication Lifecycle
 
@@ -234,11 +246,50 @@ Podex uses an explicit lifecycle for extracted content:
 2. **Published** for records that are safe to expose publicly.
 3. **Retired or merged** for superseded, hidden, or consolidated records that still need historical traceability.
 
+### Transcript Retention Lifecycle
+
+Raw transcripts follow a separate retention lifecycle alongside the publication lifecycle, because raw source data carries copyright, privacy, and cost considerations that do not apply to extracted derivatives:
+
+1. **Hot** for recently acquired transcripts under active extraction, review, or rerun.
+2. **Warm** for transcripts whose derivatives are stable but where future reruns remain likely.
+3. **Cold** for transcripts retained for audit, sampling, or occasional replay only.
+4. **Purged** for transcripts whose raw payload has been deleted while a `TranscriptDigest` proof-of-processing record is preserved.
+
+Retention transitions are policy driven rather than ad hoc, so purge decisions are explainable, reversible through re-acquisition where possible, and auditable.
+
 ### Transcript Storage Direction
 
 - Keep transcript metadata and searchable snippet records in Postgres.
-- Store large raw transcript artifacts and bulky derived payloads in object storage.
+- Store large raw transcript artifacts and bulky derived payloads in object storage with encryption and ops-only access.
 - Track provider, cleanup lineage, extraction provenance, and timestamps for every transcript asset.
+- Apply `TranscriptRetentionPolicy` configured per `PodcastSource` to decide when raw transcripts move between hot, warm, cold, and purged states.
+- Gate purge on a combination of minimum extraction confidence, stability across multiple extraction model generations, absence of open review items, and an expired cooling period.
+- Always retain a stratified statistical sample of raw transcripts (roughly five to ten percent, stratified by podcast, topic, and confidence) as a permanent calibration corpus for future extraction models.
+- Preserve a `TranscriptDigest` hash, the set of extraction model versions applied, and a summary of extracted outputs for every purged transcript so that processing history remains provable without retaining the raw text.
+- Treat re-acquisition from upstream providers as an explicit supported path when a purged transcript needs to be reprocessed by an improved extraction model.
+
+### Retention Sampling
+
+The stratified retention sample is the permanent calibration corpus that makes future extraction-model upgrades possible even after raw transcripts are purged. The sample is governed by explicit dimensions rather than ad hoc selection:
+
+- **Source dimension:** each active `PodcastSource` contributes proportionally to its episode volume so that no source is over- or under-represented.
+- **Topic dimension:** samples span the canonical media types the product supports (for example books, films, studies, places, people) so that model evaluation covers the full extraction surface.
+- **Confidence band dimension:** samples span low, medium, and high candidate-confidence buckets so that model comparisons can distinguish agreement on easy cases from agreement on hard ones.
+- **Age bucket dimension:** samples span recent, mid-life, and older transcripts so that extraction-model drift over time is observable.
+- **Target size:** roughly five to ten percent of eligible transcripts, adjusted per source to respect the dimensions above.
+
+Sampled transcripts are flagged as retention-exempt, are never purged, and are excluded from cold-storage migration beyond the minimum needed for cost control. The sampling algorithm and its parameters are versioned so that later changes to sampling policy are auditable and reversible.
+
+### Derivative Data Layer
+
+Podex treats extracted derivatives as the durable product surface and raw transcripts as a purgeable intermediate. Derivatives are generated from transcripts, persisted independently, and designed to support public discovery, retrieval, and ranking without re-reading the raw source.
+
+- **Structured mentions** remain the core truth layer via `Mention`, `MentionCandidate`, and transcript span/context metadata.
+- **Semantic chunks** capture transcript windows with embeddings, short context snippets, and provenance through `SemanticChunk`, stored in Postgres with pgvector rather than new infrastructure.
+- **Graph triples** capture entity-to-entity relationships across the catalog through `GraphTriple`, backed by `Media`, `MediaRelation`, and `MediaExternalRef`, with timestamped provenance to source episodes.
+- **Episode and media summaries** provide cached, read-optimized narrative layers for discovery surfaces and are regenerated only when upstream data materially changes.
+
+Derivative generation is treated as a first-class pipeline stage with the same idempotency, replayability, and provenance guarantees as extraction and indexing.
 
 ### Source Catalog Management Direction
 
@@ -402,6 +453,32 @@ The public contract evolves from a mostly `/api/v1` CRUD-oriented surface to a c
 3. Matching users receive digest or alert deliveries according to preferences.
 4. Delivery outcomes are recorded for reliability and support workflows.
 
+### Derivative Generation
+
+1. Published transcript-derived content triggers derivative generation jobs.
+2. Semantic chunks are produced from transcript windows with embeddings, short context snippets, and provenance back to episode and timestamp.
+3. Graph triples are extracted to link canonical entities through typed relations with provenance.
+4. Episode-level and media-level summaries are generated or refreshed from derivatives rather than from raw transcripts.
+5. Derivative artifacts are persisted as first-class, idempotent records so that later retention decisions can treat raw transcripts as purgeable inputs.
+6. Derivative jobs are replay-safe and carry model versions, prompt versions, and extraction lineage for auditability.
+
+### Retention Decision
+
+1. A scheduled retention evaluator inspects each transcript against its `PodcastSource` retention policy.
+2. The evaluator computes whether minimum candidate confidence, multi-model stability, absence of open review items, cooling period, and derivative completeness thresholds are satisfied.
+3. Eligible transcripts transition between hot, warm, cold, and purged states, with transitions recorded in the audit log.
+4. Purge operations replace the raw transcript artifact with a `TranscriptDigest` proof-of-processing record while preserving derivatives and extraction history.
+5. A stratified retention sample is exempt from purge so that future extraction model evaluation remains possible on a representative corpus.
+6. Re-acquisition from upstream providers is used when a purged transcript must be reprocessed, with the resulting retention state starting fresh from hot.
+
+### Takedown and Creator Opt-Out
+
+1. Creators, rights holders, or operators submit a `TakedownRequest` for a podcast, episode, or specific mention.
+2. The request enters the review queue with elevated priority and privileged visibility.
+3. Operators can suppress raw transcripts, suppress derivative artifacts, unpublish mentions, and purge search projections through a single coordinated workflow.
+4. Source-level opt-out flags on `PodcastSource` allow pre-emptive suppression of raw transcript retention while still permitting limited discovery metadata.
+5. Every takedown decision is immutable in the audit log with before-and-after state captured for defensibility.
+
 ## 8. Frontend Direction
 
 ### Astro and React Role Split
@@ -489,6 +566,9 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 - Privileged actions are audited.
 - Rate limits protect public search, auth, and ops endpoints.
 - Secrets are stored in environment or secret-management systems, never in tracked source files.
+- Raw transcripts are ops-only, encrypted at rest in object storage, and never exposed through public APIs.
+- Public surfaces serve short transcript snippets around mentions rather than full transcripts, with deep links back to the original source.
+- A formal takedown intake endpoint exists and is reachable without an account.
 
 ### Privacy
 
@@ -496,6 +576,9 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 - Notification preferences are explicit and reversible.
 - Audit and delivery records follow retention rules.
 - Public product behavior does not depend on invasive user profiling.
+- Creator opt-out preferences are honored at the podcast-source level and cascade to transcript retention, derivative generation, and public surfaces.
+- Transcript retention follows explicit policy-driven lifecycles rather than indefinite storage, and every retention transition is auditable.
+- Personally identifying content that appears incidentally in transcripts is governed by the same takedown and retention policies as copyrighted source material.
 
 ### Accessibility
 
@@ -512,6 +595,8 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 - Alerting on failed providers, queue buildup, and degraded indexing.
 
 ## 10. Testing and Acceptance Scenarios
+
+Cross-cutting backend test coverage against these scenarios is tracked under #20, which spans every phase rather than being grouped under a single phase parent. The first v2 discovery and ops activity slices already landed; remaining coverage lands incrementally alongside the relevant feature work.
 
 ### Unit Tests
 
@@ -565,26 +650,27 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 ### Phase 1: Boundary Hardening
 
 - **Status:** Complete
+- **Retro parents:** #31 (v2 API foundation), #32 (shared services), #33 (v2 public discovery), #34 (v2 ops + admin), #36 (backend tests)
 - **Completed:**
-  - [x] Reorganize selected backend API logic into shared application-style services.
-  - [x] Introduce clearer contracts for the first public and ops v2 surfaces.
-  - [x] Establish the initial `/api/v2` direction without breaking the existing product.
-  - [x] Add the initial v2 media contract with opaque IDs and shared v1/v2 media services.
-  - [x] Add grouped v2 search backed by shared discovery services and opaque public IDs.
-  - [x] Refactor the existing v1 search surface to reuse the shared discovery service layer.
-  - [x] Add typed v2 public episode list/detail/mentions contracts backed by shared episode query services.
-  - [x] Refactor the existing v1 episode surface to reuse the shared episode service layer.
-  - [x] Add a typed v2 public trends contract backed by shared discovery stats query services.
-  - [x] Add a typed v2 ops pipeline activity contract backed by shared run and job query services.
-  - [x] Add a typed v2 ops pipeline run contract backed by shared run mutation services.
-  - [x] Add a typed v2 ops search projection contract backed by shared search projection query services.
-  - [x] Add a typed v2 ops podcast catalog contract backed by shared podcast management query and mutation services, including archive and clear-field updates.
-  - [x] Add a typed v2 ops episode rerun contract backed by shared job mutation services.
-  - [x] Add a typed v2 ops media merge contract backed by shared media merge services.
-  - [x] Add typed v2 ops review queue contracts backed by shared review queue services and review-state models.
-  - [x] Add typed v2 ops audit log contracts backed by shared audit log services and audit-state models.
-  - [x] Add typed v2 admin settings contracts backed by shared runtime configuration services.
-  - [x] Introduce review-state and audit-state domain models so review queue and audit log surfaces can be added without faking missing workflows.
+  - [x] Reorganize selected backend API logic into shared application-style services. (#32)
+  - [x] Introduce clearer contracts for the first public and ops v2 surfaces. (#31, #33, #34)
+  - [x] Establish the initial `/api/v2` direction without breaking the existing product. (#37)
+  - [x] Add the initial v2 media contract with opaque IDs and shared v1/v2 media services. (#47, #39)
+  - [x] Add grouped v2 search backed by shared discovery services and opaque public IDs. (#44, #39)
+  - [x] Refactor the existing v1 search surface to reuse the shared discovery service layer. (#43)
+  - [x] Add typed v2 public episode list/detail/mentions contracts backed by shared episode query services. (#45, #39)
+  - [x] Refactor the existing v1 episode surface to reuse the shared episode service layer. (#43)
+  - [x] Add a typed v2 public trends contract backed by shared discovery stats query services. (#46)
+  - [x] Add a typed v2 ops pipeline activity contract backed by shared run and job query services. (#48, #40)
+  - [x] Add a typed v2 ops pipeline run contract backed by shared run mutation services. (#48, #40)
+  - [x] Add a typed v2 ops search projection contract backed by shared search projection query services. (#49, #41)
+  - [x] Add a typed v2 ops podcast catalog contract backed by shared podcast management query and mutation services, including archive and clear-field updates. (#50)
+  - [x] Add a typed v2 ops episode rerun contract backed by shared job mutation services. (#51)
+  - [x] Add a typed v2 ops media merge contract backed by shared media merge services. (#51)
+  - [x] Add typed v2 ops review queue contracts backed by shared review queue services and review-state models. (#52, #42)
+  - [x] Add typed v2 ops audit log contracts backed by shared audit log services and audit-state models. (#53, #42)
+  - [x] Add typed v2 admin settings contracts backed by shared runtime configuration services. (#53)
+  - [x] Introduce review-state and audit-state domain models so review queue and audit log surfaces can be added without faking missing workflows. (#42, #52, #53)
 
 - Reorganize backend around domain modules, application services, and ports.
 - Introduce clearer contracts for public, account, and ops surfaces.
@@ -594,51 +680,101 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 ### Phase 2: Catalog and Pipeline Maturity
 
 - **Status:** In progress
+- **Retro parent:** #35 (candidate-backed extraction workflow)
+- **Roadmap parent:** #59 (Phase 2 remaining work)
 - **Completed so far:**
-  - [x] Route extracted mentions into replay-safe review candidates instead of publishing immediately.
-  - [x] Persist transcript-derived timestamp/context spans and extraction-job provenance on candidates.
-  - [x] Preserve immutable candidate provenance history across reruns and review-side reclassification.
-  - [x] Surface recent extraction job history, including failures, directly in the ops review queue.
-  - [x] Make review publish and merge projection updates best-effort and replay-safe so search docs stay aligned without blocking writes.
-  - [x] Track pending search projection repairs after extract reruns so ops can see reindex work for already-published episodes and media.
+  - [x] Route extracted mentions into replay-safe review candidates instead of publishing immediately. (#54)
+  - [x] Persist transcript-derived timestamp/context spans and extraction-job provenance on candidates. (#55)
+  - [x] Preserve immutable candidate provenance history across reruns and review-side reclassification. (#55)
+  - [x] Surface recent extraction job history, including failures, directly in the ops review queue. (#56)
+  - [x] Make review publish and merge projection updates best-effort and replay-safe so search docs stay aligned without blocking writes. (#56)
+  - [x] Track pending search projection repairs after extract reruns so ops can see reindex work for already-published episodes and media. (#56)
+- **Remaining work (tracked under #59):**
+  - [ ] Episode discovery + dedup across providers. (#65)
+  - [ ] Retention-aware transcript acquisition with provider fallback. (#9)
+  - [ ] Recurring ingestion + reindex + digest scheduler. (#11)
+  - [ ] Canonical media resolution with aliases and merge. (#12)
+  - [ ] Media enrichment with external references and verification. (#13)
+  - [ ] Database indexes for hot query paths. (#14)
+  - [ ] Caching for stats, trends, and top-list surfaces. (#15)
+  - [ ] Rate limiting and structured request logging. (#16)
+  - [ ] Staging deployment configuration. (#21)
 
-- Move podcast and source management toward database-backed authority.
-- Introduce explicit candidate, review, and pipeline stage models.
-- Strengthen transcript, extraction, enrichment, and search projection workflows.
-- Add replay-safe ingestion and indexing behavior.
+### Phase 2.5: Derivative Data Layer
+
+- **Status:** Not started
+- **Roadmap parent:** #60
+- **Work items:**
+  - [ ] Semantic chunks + embeddings pipeline on Postgres + pgvector. (#24)
+  - [ ] Graph triples + entity relations. (#25)
+  - [ ] Per-episode and per-media summary models. (#66)
+  - [ ] Derivative generation pipeline orchestration with idempotent, replay-safe, version-tracked behavior. (#67)
+  - [ ] Time-boxed LightRAG spike evaluating hybrid graph-plus-vector retrieval vs. a hand-rolled layer. (#26)
+  - [ ] Wrap adopted retrieval framework behind ports.
+  - [ ] Prove derivative coverage is sufficient for all public query classes before retention purge activates.
 
 ### Phase 3: Ops Console
 
 - **Status:** Not started
-
-- Build the ops dashboard, podcast manager, run inspection views, and review queue.
-- Add merge, dedupe, rerun, and audit workflows.
-- Expose provider health and quality thresholds to operators and admins.
+- **Roadmap parent:** #61
+- **Work items:**
+  - [ ] Ops dashboard (pipelines + queue + provider health). (#68)
+  - [ ] Podcast manager UI (add, edit, pause, archive). (#69)
+  - [ ] Pipeline run inspection views. (#70)
+  - [ ] Review queue UI (approve, reject, merge, split, reclassify). (#71)
+  - [ ] Canonical media management UI (merge preview, aliases, metadata). (#72)
+  - [ ] Search tooling UI (reindex, synonym tuning, projection diagnostics). (#73)
+  - [ ] Stratified retention sampling algorithm + implementation. (#74)
+  - [ ] Tiered transcript retention + confidence-gated purge (hot/warm/cold/purged + `TranscriptDigest`). (#27)
+  - [ ] DMCA takedown intake + creator opt-out registry. (#28)
 
 ### Phase 4: Account Product
 
 - **Status:** Not started
-
-- Add passwordless auth, sessions, saves, follows, alerts, and digest preferences.
-- Build account-facing pages and notification delivery behavior.
-- Connect personalization features only to published catalog records.
+- **Roadmap parent:** #62
+- **Work items:**
+  - [ ] Passwordless magic-link auth + sessions. (#75)
+  - [ ] Saves CRUD. (#76)
+  - [ ] Follows CRUD. (#77)
+  - [ ] Alerts CRUD + rule engine. (#78)
+  - [ ] Digests + notification delivery. (#79)
+  - [ ] Account pages (saved, follows, alerts, settings). (#80)
+  - [ ] Terms of Service + Privacy Policy pages. (#81)
+  - [ ] Pre-launch legal review engagement. (#82)
+  - [ ] Paid subscription tier + per-user quota. (#30)
+  - [ ] Personalization features connect only to published catalog records.
+  - [ ] Completed legal review + published policy pages treated as explicit gates for paid-tier launch.
 
 ### Phase 5: Public Product Polish
 
 - **Status:** Not started
-
-- Add richer discovery pages, editorial collections, and trend surfaces.
-- Improve detail pages with stronger provenance, related entities, and explanation layers.
-- Tune ranking, search relevance, and SEO behavior.
+- **Roadmap parent:** #63
+- **Work items:**
+  - [ ] Loading, empty, and degraded-state components across public + ops surfaces. (#17)
+  - [ ] v2 search experience with typed client + filters + URL state. (#18)
+  - [ ] Editorial collections experience. (#83)
+  - [ ] Detail page provenance + related entities + explanation layers. (#84)
+  - [ ] Ranking + search relevance tuning. (#85)
+  - [ ] SEO + sitemap + structured data. (#86)
 
 ### Phase 6: Stabilization
 
 - **Status:** Not started
+- **Roadmap parent:** #64
+- **Work items:**
+  - [ ] Load test core search + ingestion paths. (#87)
+  - [ ] Metrics for review throughput, projection lag, and alert delivery. (#88)
+  - [ ] Alerting + operational playbooks. (#89)
+  - [ ] Retire legacy `/api/v1` surface. (#90)
 
-- Load-test core search and ingestion paths.
-- Measure review throughput, projection lag, and alert delivery quality.
-- Harden observability, reliability, and operational playbooks.
-- Retire legacy surface areas when replacement contracts are complete.
+### Foundational pre-work
+
+- **Status:** Not started
+- **Roadmap parent:** #58
+- **Work items:**
+  - [ ] Open-core license decision + repo split evaluation (AGPL vs BSL, monorepo vs split). (#29)
+
+These items gate paid-tier launch and open-core publishing. They sit outside any single phase because they influence packaging, licensing, and legal posture across the whole product.
 
 ## 12. Assumptions and Defaults
 
@@ -653,3 +789,10 @@ Frontend code consumes generated typed API clients and shared DTO contracts. Dir
 - Astro remains the web framework for the primary frontend shell.
 - The architectural default is a modular monolith.
 - Refactorability and decoupled implementations are core design constraints.
+- Podex follows an open-core distribution model. Core ingestion, extraction, data model, API contracts, and frontend shell are published under a copyleft license such as AGPL or BSL, while curated catalog data, enrichment prompts, ranking tuning, ops console polish, and hosted infrastructure remain closed.
+- A hosted subscription tier covers infrastructure and LLM costs. Free public discovery remains available, while authenticated features such as saves, follows, alerts, digests, and the public API sit behind the subscription boundary with per-user quotas.
+- Extracted derivatives are treated as the durable product surface and the primary moat, while raw transcripts are treated as a purgeable intermediate governed by retention policy.
+- Raw transcripts are never a public contract. Public surfaces expose only structured mentions, short context snippets, and derivative artifacts.
+- Legal review is expected before the first paid user, covering copyright, fair-use posture, DMCA workflow, and privacy disclosures.
+- The default repository layout is a single monorepo with per-package license headers and `LICENSE` files. A split into separate open-core and closed repositories is a deliberate, tracked decision rather than an implicit one.
+- Open-core license selection follows explicit criteria: a strong copyleft option such as AGPL is preferred when discouraging hosted clones and maximizing contribution reciprocity matter more than adoption breadth, while a Business Source License is preferred when a time-delayed conversion to a permissive license and clearer commercial carve-outs matter more. The decision is recorded alongside the license files and referenced from `README.md`.
