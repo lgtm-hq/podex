@@ -14,8 +14,14 @@ Trust is a product feature, not a backend detail. Podex emphasizes provenance, c
 
 ### Current Status
 
-- **Overall status:** Phase 1 complete and Phase 2 underway with candidate-backed extraction workflow grounding.
-- **Current focus:** Phase 2 catalog and pipeline maturity work.
+- **Overall status:** Phase 1 is complete and Podex is in late Phase 2: the backend now has v2 public, ops, and admin contracts plus a candidate-backed review pipeline, while the shipped frontend still relies primarily on `/api/v1` and no ops UI is live yet.
+- **Current focus:** Finish Phase 2 by operationalizing the foundations already in the repo: recurring ingestion + reindex automation, retention-aware transcript handling, canonicalization/enrichment hardening, and production deployment readiness.
+
+### Current Product Reality
+
+- **Backend:** `/api/v2` public discovery, ops/admin contracts, review queue + audit log flows, replay-safe extraction provenance, and search projection repair hooks are all landed.
+- **Frontend:** The public Astro site ships source, media, episode, and stats routes plus shared search/filter components, but it still calls the legacy v1 API client.
+- **Not yet shipped:** The ops console UI, account product, derivative data layer, and public-web migration to typed v2 contracts remain upcoming roadmap work.
 
 ### Issue Tracking Overview
 
@@ -672,11 +678,6 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
   - [x] Add typed v2 admin settings contracts backed by shared runtime configuration services. (#53)
   - [x] Introduce review-state and audit-state domain models so review queue and audit log surfaces can be added without faking missing workflows. (#42, #52, #53)
 
-- Reorganize backend around domain modules, application services, and ports.
-- Introduce clearer contracts for public, account, and ops surfaces.
-- Establish the `/api/v2` direction without breaking the existing product.
-- Formalize background job boundaries and projection flows.
-
 ### Phase 2: Catalog and Pipeline Maturity
 
 - **Status:** In progress
@@ -689,16 +690,20 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
   - [x] Surface recent extraction job history, including failures, directly in the ops review queue. (#56)
   - [x] Make review publish and merge projection updates best-effort and replay-safe so search docs stay aligned without blocking writes. (#56)
   - [x] Track pending search projection repairs after extract reruns so ops can see reindex work for already-published episodes and media. (#56)
+- **Landed foundations informing the remaining work:**
+  - Multi-source episode discovery and dedup services already exist across Podscripts, RSS, and Spotify, but they are not yet fully promoted into recurring operator-visible workflows. (#65, #11)
+  - Transcript acquisition already supports provider fallback, but retention-aware policy and lifecycle management are still open. (#9)
+  - Canonical media merge and enrichment backends already exist, but alias modeling, operator ergonomics, and broader verification coverage are still incomplete. (#12, #13)
+  - Performance indexes and structured logging foundations are already in the repo, but endpoint-level rate limiting, cache strategy, metrics, and deployment hardening still need completion. (#14, #15, #16, #21)
 - **Remaining work (tracked under #59):**
-  - [ ] Episode discovery + dedup across providers. (#65)
-  - [ ] Retention-aware transcript acquisition with provider fallback. (#9)
-  - [ ] Recurring ingestion + reindex + digest scheduler. (#11)
-  - [ ] Canonical media resolution with aliases and merge. (#12)
-  - [ ] Media enrichment with external references and verification. (#13)
-  - [ ] Database indexes for hot query paths. (#14)
-  - [ ] Caching for stats, trends, and top-list surfaces. (#15)
-  - [ ] Rate limiting and structured request logging. (#16)
-  - [ ] Staging deployment configuration. (#21)
+  - [ ] Promote episode discovery + dedup into recurring ingestion workflows and clearer operator visibility. (#65)
+  - [ ] Finish retention-aware transcript acquisition and storage lifecycle policy. (#9)
+  - [ ] Add recurring ingestion + reindex + digest scheduling. (#11)
+  - [ ] Finish canonical media resolution with aliases and richer merge ergonomics. (#12)
+  - [ ] Operationalize media enrichment with external references and verification in the main pipeline. (#13)
+  - [ ] Add caching for stats, trends, and top-list surfaces. (#15)
+  - [ ] Add endpoint-level rate limiting for public search, auth, and ops endpoints. (#16)
+  - [ ] Finalize staging deployment configuration. (#21)
 
 ### Phase 2.5: Derivative Data Layer
 
