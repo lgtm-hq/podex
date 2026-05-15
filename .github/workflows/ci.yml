@@ -1,0 +1,15 @@
+---
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  lintro:
+    permissions:
+      contents: read
+      packages: read
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality.yml@0de41c8e803ba2cb324dd9ec1d2e39eb870f9090
