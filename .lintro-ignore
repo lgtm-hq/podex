@@ -1,0 +1,3 @@
+# Exclude generated lintro reports from linting
+.lintro/**
+**/.lintro/**
