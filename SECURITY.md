@@ -6,8 +6,8 @@ Found a security vulnerability? Here's how to report it:
 
 ### **Private Reporting Only**
 
-Please **do not** create public GitHub issues for security vulnerabilities. This helps
-prevent potential exploitation while we work on a fix.
+Please **do not** create public GitHub issues for security vulnerabilities.
+This helps prevent potential exploitation while we work on a fix.
 
 ### **How to Report**
 
