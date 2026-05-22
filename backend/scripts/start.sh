@@ -1,9 +1,13 @@
 #!/bin/bash
 set -e
 
-# Run seed if database doesn't exist
-if [ ! -f /app/data/podex.db ]; then
-	echo "Seeding database..."
+if [ "${AUTO_MIGRATE:-false}" = "true" ]; then
+	echo "Running database migrations..."
+	alembic upgrade head
+fi
+
+if [ "${SEED_MOCK_DATA:-false}" = "true" ]; then
+	echo "Seeding mock data..."
 	python scripts/seed_mock_data.py
 fi
 

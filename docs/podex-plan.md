@@ -710,8 +710,8 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
   - [x] Finish canonical media resolution merge previews and broader alias ergonomics. (#12)
   - [x] Operationalize media enrichment with external references and verification in the main pipeline. (#13)
   - [x] Add caching for stats, trends, and top-list surfaces. (#15)
-  - [ ] Add endpoint-level rate limiting for public search, auth, and ops endpoints. (#16)
-  - [ ] Finalize staging deployment configuration. (#21)
+  - [x] Add endpoint-level rate limiting for public search, auth, and ops endpoints. (#16)
+  - [x] Finalize staging deployment configuration. (#21)
 
 ### Phase 2.5: Derivative Data Layer
 
