@@ -23,6 +23,7 @@ def test_create_ingestion_run(db_session: Session) -> None:
 
     stored = db_session.query(IngestionRun).first()
     assert_that(stored).is_not_none()
+    assert stored is not None
     assert_that(stored.status).is_equal_to("completed")
     assert_that(stored.error_summary).is_none()
     assert_that(stored.started_at).is_equal_to(started_at)

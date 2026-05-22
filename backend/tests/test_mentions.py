@@ -28,6 +28,7 @@ def test_youtube_timestamp_url_includes_zero(db_session: Session) -> None:
     db_session.commit()
 
     stored = db_session.query(Mention).first()
+    assert stored is not None
     assert_that(stored.youtube_timestamp_url).is_equal_to(
         "https://youtube.com/watch?v=abc123&t=0"
     )

@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://podscripts.co"
 
 
+def _html_attr_to_str(value: object) -> str:
+    """Return a BeautifulSoup attribute value when it is a single string."""
+    return value if isinstance(value, str) else ""
+
+
 class PodscriptsDiscovery:
     """Discover podcasts and episodes from podscripts.co.
 
@@ -94,13 +99,13 @@ class PodscriptsDiscovery:
         description = None
         desc_meta = soup.find("meta", attrs={"name": "description"})
         if desc_meta:
-            description = desc_meta.get("content")
+            description = _html_attr_to_str(desc_meta.get("content"))
 
         # Extract cover image
         cover_url = None
         og_image = soup.find("meta", property="og:image")
         if og_image:
-            cover_url = og_image.get("content")
+            cover_url = _html_attr_to_str(og_image.get("content"))
 
         time.sleep(self.delay)
 
@@ -176,7 +181,7 @@ class PodscriptsDiscovery:
         episodes = []
 
         for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
+            href = _html_attr_to_str(link.get("href", ""))
             expected_prefix = f"/podcasts/{slug}/"
 
             if expected_prefix in href and href != f"/podcasts/{slug}":
@@ -244,7 +249,7 @@ class PodscriptsDiscovery:
         soup = BeautifulSoup(response.text, "html.parser")
 
         for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
+            href = _html_attr_to_str(link.get("href", ""))
 
             if href.startswith("/podcasts/") and href != "/podcasts":
                 slug = href.replace("/podcasts/", "").strip("/")

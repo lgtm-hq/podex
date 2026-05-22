@@ -5,7 +5,7 @@ from __future__ import annotations
 import string
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -241,10 +241,7 @@ def _find_matching_media(
     if normalized_title is None:
         return None
 
-    candidates = cast(
-        list[Media],
-        db.query(Media).filter(Media.type == media_type).all(),
-    )
+    candidates = db.query(Media).filter(Media.type == media_type).all()
     for media in candidates:
         if _normalize_value(value=media.title) == normalized_title:
             return media

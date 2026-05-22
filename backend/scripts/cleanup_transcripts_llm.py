@@ -149,6 +149,13 @@ def main() -> None:
                                 terminology.extend(ep_config.guest_context.terminology)
                             terminology.extend(ep_config.terminology)
 
+                    if transcript.raw_text is None:
+                        logger.warning("Transcript has no raw text, skipping cleanup")
+                        episode.cleanup_status = "skipped"
+                        session.commit()
+                        stats["skipped"] += 1
+                        continue
+
                     # Run cleanup
                     result = cleaner.cleanup_transcript(
                         transcript_text=transcript.raw_text,

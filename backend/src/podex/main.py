@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 from collections.abc import Awaitable, Callable
+from typing import cast
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,7 +36,10 @@ app = FastAPI(
 
 # Add rate limiter to app state
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_exception_handler(
+    RateLimitExceeded,
+    cast(Callable[[Request, Exception], Response], _rate_limit_exceeded_handler),
+)
 
 
 # Request logging middleware

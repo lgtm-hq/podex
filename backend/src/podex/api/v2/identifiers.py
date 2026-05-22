@@ -15,6 +15,8 @@ class IdentifierPrefix(StrEnum):
     REVIEW_ITEM = "rev"
     INGESTION_RUN = "run"
     TRANSCRIPTION_JOB = "job"
+    PIPELINE_SCHEDULE = "sched"
+    SCHEDULED_WORK = "work"
 
 
 def encode_identifier(*, prefix: IdentifierPrefix, value: int) -> str:
@@ -232,3 +234,33 @@ def decode_media_id(*, media_id: str) -> int:
         Internal media identifier.
     """
     return decode_identifier(prefix=IdentifierPrefix.MEDIA, value=media_id)
+
+
+def encode_pipeline_schedule_id(*, schedule_id: int) -> str:
+    """Encode a pipeline schedule identifier.
+
+    Args:
+        schedule_id: Internal schedule identifier.
+
+    Returns:
+        Opaque schedule identifier.
+    """
+    return encode_identifier(
+        prefix=IdentifierPrefix.PIPELINE_SCHEDULE,
+        value=schedule_id,
+    )
+
+
+def encode_scheduled_work_id(*, work_item_id: int) -> str:
+    """Encode a scheduled work item identifier.
+
+    Args:
+        work_item_id: Internal work item identifier.
+
+    Returns:
+        Opaque scheduled work identifier.
+    """
+    return encode_identifier(
+        prefix=IdentifierPrefix.SCHEDULED_WORK,
+        value=work_item_id,
+    )

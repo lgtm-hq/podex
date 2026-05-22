@@ -30,9 +30,11 @@ def test_create_transcript(db_session: Session) -> None:
 
     stored = db_session.query(Transcript).first()
     assert_that(stored).is_not_none()
+    assert stored is not None
     assert_that(stored.episode_id).is_equal_to(episode.id)
     assert_that(stored.provider).is_equal_to("youtube")
     assert_that(stored.raw_text).is_equal_to("Hello world")
+    assert stored.segments_json is not None
     assert_that(stored.segments_json[0]["text"]).is_equal_to("Hello")
     assert_that(stored.fetched_at).is_equal_to(fetched_at)
     assert_that(stored.episode.id).is_equal_to(episode.id)

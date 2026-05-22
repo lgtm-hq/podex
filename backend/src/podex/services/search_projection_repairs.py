@@ -253,7 +253,7 @@ def enqueue_extract_rerun_projection_repairs(
     """
     media_ids = [
         media_id
-        for media_id, in (
+        for (media_id,) in (
             db.query(Mention.media_id)
             .filter(Mention.episode_id == episode_id)
             .group_by(Mention.media_id)
@@ -302,14 +302,15 @@ def get_search_projection_repair_counts(
     Returns:
         Aggregate projection repair counts.
     """
-    rows = dict(
-        db.query(
+    rows: dict[str, int] = {
+        status: count
+        for status, count in db.query(
             SearchProjectionRepair.status,
             func.count(SearchProjectionRepair.id),
         )
         .group_by(SearchProjectionRepair.status)
         .all()
-    )
+    }
     return SearchProjectionRepairCountsData(
         pending=int(rows.get(SearchProjectionRepairStatus.PENDING.value, 0) or 0),
         failed=int(rows.get(SearchProjectionRepairStatus.FAILED.value, 0) or 0),

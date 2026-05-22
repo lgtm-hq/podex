@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 from dotenv import load_dotenv
@@ -156,7 +156,7 @@ def fetch_metadata_ytdlp(video_id: str) -> VideoMetadata:
         # Sort by preference (higher resolution first)
         sorted_thumbs = sorted(
             thumbnails,
-            key=lambda t: (t.get("height", 0) or 0),
+            key=lambda t: t.get("height", 0) or 0,
             reverse=True,
         )
         thumbnail_url = sorted_thumbs[0].get("url")
@@ -172,10 +172,7 @@ def fetch_metadata_ytdlp(video_id: str) -> VideoMetadata:
 
 def ensure_podcast(session: Session, slug: str, name: str) -> Podcast:
     """Get or create a podcast by slug."""
-    podcast = cast(
-        Podcast | None,
-        session.query(Podcast).filter(Podcast.slug == slug).first(),
-    )
+    podcast = session.query(Podcast).filter(Podcast.slug == slug).first()
     if podcast:
         return podcast
 
@@ -190,9 +187,8 @@ def get_or_create_episode(
     session: Session, podcast_id: int, metadata: VideoMetadata
 ) -> Episode:
     """Get existing episode or create new one."""
-    episode = cast(
-        Episode | None,
-        session.query(Episode).filter(Episode.youtube_id == metadata.video_id).first(),
+    episode = (
+        session.query(Episode).filter(Episode.youtube_id == metadata.video_id).first()
     )
     if episode:
         logger.info(f"Found existing episode: {episode.title}")
@@ -342,6 +338,12 @@ def run_cleanup(session: Session, episode: Episode) -> bool:
                     terminology.extend(ep_config.guest_context.terminology)
                 terminology.extend(ep_config.terminology)
 
+        if transcript.raw_text is None:
+            logger.warning("Transcript has no raw text, skipping cleanup")
+            episode.cleanup_status = "skipped"
+            session.commit()
+            return False
+
         with TranscriptCleaner(api_key=api_key) as cleaner:
             result = cleaner.cleanup_transcript(
                 transcript_text=transcript.raw_text,
@@ -415,6 +417,12 @@ def run_extraction(session: Session, episode: Episode) -> bool:
 
     try:
         min_confidence = float(os.getenv("EXTRACTION_MIN_CONFIDENCE", "0.5"))
+
+        if transcript.segments_json is None:
+            logger.warning("Transcript has no segments, skipping extraction")
+            episode.extraction_status = "skipped"
+            session.commit()
+            return False
 
         with LLMExtractor(api_key=api_key) as extractor:
             extractor_job.model = extractor.model

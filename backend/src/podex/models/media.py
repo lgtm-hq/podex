@@ -1,8 +1,8 @@
 """Media model."""
 
 from datetime import UTC, datetime
-from enum import Enum
-from typing import TYPE_CHECKING
+from enum import StrEnum
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, Boolean, DateTime, Float, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -10,10 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from podex.models.base import Base
 
 if TYPE_CHECKING:
+    from podex.models.media_alias import MediaAlias
     from podex.models.mention import Mention
 
 
-class MediaType(str, Enum):
+class MediaType(StrEnum):
     """Types of media that can be mentioned."""
 
     BOOK = "book"
@@ -51,10 +52,10 @@ class Media(Base):
     doi: Mapped[str | None] = mapped_column(String(100))
     semantic_scholar_id: Mapped[str | None] = mapped_column(String(50))
 
-    metadata_json: Mapped[dict | None] = mapped_column(JSON)
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
 
     # Multi-source verification tracking
-    verification_sources: Mapped[list | None] = mapped_column(JSON)
+    verification_sources: Mapped[list[str] | None] = mapped_column(JSON)
     doi_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
 
     # Enrichment tracking
@@ -65,6 +66,7 @@ class Media(Base):
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
 
     mentions: Mapped[list["Mention"]] = relationship(back_populates="media")
+    aliases: Mapped[list["MediaAlias"]] = relationship(back_populates="media")
 
     @property
     def mention_count(self) -> int:

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from podex.models import (
     Episode,
     Media,
+    MediaAlias,
     Mention,
     MentionCandidate,
     MentionCandidateProvenance,
@@ -17,6 +18,11 @@ from podex.models import (
 from podex.models.media import MediaType
 from podex.services.extraction_review import persist_extracted_candidates
 from podex.services.llm_extraction import ExtractedMedia
+from podex.services.media_alias_repository import ensure_media_alias
+from podex.services.review_queue import (
+    ReviewDecisionInputData,
+    approve_review_queue_item,
+)
 
 
 def test_persist_extracted_candidates_creates_candidate_and_review_item(
@@ -62,6 +68,50 @@ def test_persist_extracted_candidates_creates_candidate_and_review_item(
     assert_that(review_item.mention_candidate_id).is_equal_to(candidate.id)
     assert_that(review_item.priority).is_equal_to("medium")
     assert_that(db_session.query(Mention).count()).is_equal_to(0)
+
+
+def test_approve_review_item_reuses_canonical_media_alias(
+    db_session: Session,
+) -> None:
+    """Verify approval resolves candidates through existing canonical aliases."""
+    podcast = Podcast(name="Alias Podcast", slug="alias-podcast")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Alias Episode")
+    media = Media(type=MediaType.MOVIE.value, title="Star Wars")
+    db_session.add_all([episode, media])
+    db_session.flush()
+    ensure_media_alias(
+        db=db_session,
+        media=media,
+        alias="A New Hope",
+    )
+
+    candidate = MentionCandidate(
+        episode_id=episode.id,
+        media_type=MediaType.MOVIE.value,
+        raw_title="A New Hope",
+        normalized_title="a new hope",
+        confidence=0.91,
+    )
+    db_session.add(candidate)
+    db_session.flush()
+    review_item = ReviewItem(mention_candidate_id=candidate.id)
+    db_session.add(review_item)
+    db_session.commit()
+
+    approved = approve_review_queue_item(
+        db=db_session,
+        review_item_id=review_item.id,
+        payload=ReviewDecisionInputData(),
+    )
+    db_session.commit()
+
+    assert_that(approved).is_not_none()
+    assert_that(candidate.media_id).is_equal_to(media.id)
+    assert_that(db_session.query(Media).count()).is_equal_to(1)
+    assert_that(db_session.query(MediaAlias).count()).is_equal_to(1)
+    assert_that(db_session.query(MediaAlias).one().alias).is_equal_to("A New Hope")
 
 
 def test_persist_extracted_candidates_skips_existing_published_mentions(
@@ -183,7 +233,9 @@ def test_persist_extracted_candidates_updates_existing_open_candidate(
     )
     assert_that(provenance_events[1].change_summary).contains("suggested_author")
     assert_that(provenance_events[1].change_summary).contains("confidence")
-    assert_that(provenance_events[1].metadata_json["changed_fields"]).contains(
+    metadata = provenance_events[1].metadata_json
+    assert metadata is not None
+    assert_that(metadata["changed_fields"]).contains(
         "source_job_id",
     )
 

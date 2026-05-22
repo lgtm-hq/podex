@@ -60,21 +60,25 @@ class SearchSyncService:
         logger.info("search_sync_media_started")
 
         # Get mention counts per media
-        mention_counts = dict(
-            self.db.query(Mention.media_id, func.count(Mention.id))
+        mention_counts: dict[int, int] = {
+            media_id: count
+            for media_id, count in self.db.query(
+                Mention.media_id, func.count(Mention.id)
+            )
             .group_by(Mention.media_id)
             .all()
-        )
+        }
 
         # Get episode counts per media
-        episode_counts = dict(
-            self.db.query(
+        episode_counts: dict[int, int] = {
+            media_id: count
+            for media_id, count in self.db.query(
                 Mention.media_id,
                 func.count(func.distinct(Mention.episode_id)),
             )
             .group_by(Mention.media_id)
             .all()
-        )
+        }
 
         total = self.db.query(Media).count()
         synced = 0
@@ -125,14 +129,20 @@ class SearchSyncService:
         logger.info("search_sync_episodes_started")
 
         # Get mention counts per episode
-        mention_counts = dict(
-            self.db.query(Mention.episode_id, func.count(Mention.id))
+        mention_counts: dict[int, int] = {
+            episode_id: count
+            for episode_id, count in self.db.query(
+                Mention.episode_id, func.count(Mention.id)
+            )
             .group_by(Mention.episode_id)
             .all()
-        )
+        }
 
         # Get podcast names
-        podcast_names = dict(self.db.query(Podcast.id, Podcast.name).all())
+        podcast_names: dict[int, str] = {
+            podcast_id: name
+            for podcast_id, name in self.db.query(Podcast.id, Podcast.name).all()
+        }
 
         total = self.db.query(Episode).count()
         synced = 0
@@ -183,11 +193,14 @@ class SearchSyncService:
         logger.info("search_sync_podcasts_started")
 
         # Get episode counts per podcast
-        episode_counts = dict(
-            self.db.query(Episode.podcast_id, func.count(Episode.id))
+        episode_counts: dict[int, int] = {
+            podcast_id: count
+            for podcast_id, count in self.db.query(
+                Episode.podcast_id, func.count(Episode.id)
+            )
             .group_by(Episode.podcast_id)
             .all()
-        )
+        }
 
         total = self.db.query(Podcast).count()
         synced = 0

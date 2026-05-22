@@ -4,7 +4,6 @@ from typing import Any, Literal
 
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy.orm.query import RowReturningQuery
 
 from podex.api.query_helpers import (
     episode_count_by_media_subquery,
@@ -35,7 +34,7 @@ def escape_like_pattern(value: str) -> str:
 def get_media_count_subqueries(
     *,
     db: Session,
-) -> tuple[RowReturningQuery[Any], RowReturningQuery[Any]]:
+) -> tuple[Any, Any]:
     """Create reusable media count subqueries.
 
     Args:

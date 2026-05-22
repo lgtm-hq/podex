@@ -82,6 +82,8 @@ def update_admin_settings(
     if "debug" in payload.provided_fields:
         settings.debug = bool(payload.debug)
     if "rate_limit_per_minute" in payload.provided_fields:
+        if payload.rate_limit_per_minute is None:
+            raise ValueError("rate_limit_per_minute cannot be cleared")
         settings.rate_limit_per_minute = int(payload.rate_limit_per_minute)
     if "cors_origins" in payload.provided_fields:
         settings.cors_origins = list(payload.cors_origins or [])

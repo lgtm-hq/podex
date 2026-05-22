@@ -155,6 +155,9 @@ def main() -> None:
 
             for i, episode in enumerate(episodes, 1):
                 video_id = episode.youtube_id
+                if video_id is None:
+                    skipped_count += 1
+                    continue
                 podcast = episode.podcast
 
                 # Check if transcript already exists (extra safety)

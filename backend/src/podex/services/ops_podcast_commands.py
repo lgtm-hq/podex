@@ -113,10 +113,16 @@ def update_ops_podcast(
         return None
 
     if "name" in payload.provided_fields:
+        if payload.name is None:
+            raise ValueError("name cannot be cleared")
         podcast.name = payload.name
     if "slug" in payload.provided_fields:
+        if payload.slug is None:
+            raise ValueError("slug cannot be cleared")
         podcast.slug = payload.slug
     if "status" in payload.provided_fields:
+        if payload.status is None:
+            raise ValueError("status cannot be cleared")
         podcast.status = payload.status.value
     if "description" in payload.provided_fields:
         podcast.description = payload.description

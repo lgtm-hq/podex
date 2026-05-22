@@ -12,6 +12,7 @@ from podex.models import (
     JobStatus,
     JobType,
     Media,
+    MediaAliasSourceType,
     Mention,
     MentionCandidate,
     MentionCandidateProvenance,
@@ -28,6 +29,10 @@ from podex.services.extraction_review import (
     _changed_candidate_fields,
     _record_candidate_provenance,
     _snapshot_candidate,
+)
+from podex.services.media_alias_repository import (
+    ensure_media_alias,
+    find_canonical_media_match,
 )
 
 ReviewQueueRow: TypeAlias = tuple[
@@ -414,7 +419,7 @@ def _load_episode_extraction_jobs_map(
     return extraction_jobs_map
 
 
-def _review_item_query(*, db: Session) -> Query[ReviewQueueRow]:
+def _review_item_query(*, db: Session) -> Query[Any]:
     """Build the base review item query used by review queue services.
 
     Args:
@@ -592,21 +597,17 @@ def _ensure_published_mention(
         Persisted mention record.
     """
     if candidate.mention_id is not None:
-        existing = cast(
-            Mention | None,
-            db.query(Mention).filter(Mention.id == candidate.mention_id).first(),
-        )
+        existing = db.query(Mention).filter(Mention.id == candidate.mention_id).first()
         if existing is not None:
             return existing
 
-    existing = cast(
-        Mention | None,
+    existing = (
         db.query(Mention)
         .filter(Mention.episode_id == candidate.episode_id)
         .filter(Mention.media_id == media_id)
         .filter(Mention.timestamp_seconds == candidate.timestamp_seconds)
         .filter(Mention.context == candidate.context)
-        .first(),
+        .first()
     )
     if existing is not None:
         return existing
@@ -640,10 +641,7 @@ def _ensure_candidate_media(
     candidate_year = _candidate_year(candidate=candidate)
 
     if candidate.media_id is not None:
-        media = cast(
-            Media | None,
-            db.query(Media).filter(Media.id == candidate.media_id).first(),
-        )
+        media = db.query(Media).filter(Media.id == candidate.media_id).first()
         if media is not None:
             if candidate.suggested_author and not media.author:
                 media.author = candidate.suggested_author
@@ -651,7 +649,29 @@ def _ensure_candidate_media(
                 media.year = candidate_year
             if candidate.metadata_json is not None and media.metadata_json is None:
                 media.metadata_json = candidate.metadata_json
+            ensure_media_alias(
+                db=db,
+                media=media,
+                alias=candidate.raw_title,
+                source=MediaAliasSourceType.REVIEW,
+            )
             return media
+
+    alias_match = find_canonical_media_match(
+        db=db,
+        title=candidate.raw_title,
+        media_type=candidate.media_type,
+    )
+    if alias_match.media_id is not None:
+        media = db.query(Media).filter(Media.id == alias_match.media_id).one()
+        candidate.media_id = media.id
+        ensure_media_alias(
+            db=db,
+            media=media,
+            alias=candidate.raw_title,
+            source=MediaAliasSourceType.REVIEW,
+        )
+        return media
 
     media = Media(
         type=candidate.media_type,
@@ -663,6 +683,13 @@ def _ensure_candidate_media(
     db.add(media)
     db.flush()
     candidate.media = media
+    ensure_media_alias(
+        db=db,
+        media=media,
+        alias=candidate.raw_title,
+        source=MediaAliasSourceType.REVIEW,
+        is_primary=True,
+    )
     return media
 
 
@@ -766,6 +793,12 @@ def merge_review_queue_item(
     target_media = db.query(Media).filter(Media.id == payload.target_media_id).first()
     if target_media is None:
         raise ValueError("Target media not found")
+    ensure_media_alias(
+        db=db,
+        media=target_media,
+        alias=candidate.raw_title,
+        source=MediaAliasSourceType.REVIEW,
+    )
 
     mention = _ensure_published_mention(
         db=db,

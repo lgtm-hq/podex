@@ -6,8 +6,7 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# Pydantic plugin not available in linter Docker environment
-class Settings(BaseSettings):  # type: ignore[misc]
+class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     model_config = SettingsConfigDict(
@@ -34,6 +33,9 @@ class Settings(BaseSettings):  # type: ignore[misc]
 
     # Rate limiting (requests per minute per IP)
     rate_limit_per_minute: int = 100
+
+    # Public discovery read-model caching
+    stats_cache_ttl_seconds: int = 300
 
     # Media enrichment API keys
     tmdb_api_key: str = ""

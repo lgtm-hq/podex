@@ -9,7 +9,7 @@ from pathlib import Path
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from podex.config import get_settings
 from podex.database import SessionLocal
@@ -24,9 +24,8 @@ DEFAULT_PODCAST_NAME = "The Joe Rogan Experience"
 
 
 def ensure_podcast(session: Session) -> Podcast:
-    podcast = cast(
-        Podcast | None,
-        session.query(Podcast).filter(Podcast.slug == DEFAULT_PODCAST_SLUG).first(),
+    podcast = (
+        session.query(Podcast).filter(Podcast.slug == DEFAULT_PODCAST_SLUG).first()
     )
     if podcast:
         return podcast
@@ -38,9 +37,8 @@ def ensure_podcast(session: Session) -> Podcast:
 
 
 def upsert_episode(session: Session, podcast_id: int, video: YouTubeVideo) -> Episode:
-    episode = cast(
-        Episode | None,
-        session.query(Episode).filter(Episode.youtube_id == video.youtube_id).first(),
+    episode = (
+        session.query(Episode).filter(Episode.youtube_id == video.youtube_id).first()
     )
     if episode:
         episode.title = video.title

@@ -3,11 +3,18 @@
 import logging
 import sys
 import uuid
+from collections.abc import Callable, Iterable, Mapping, MutableMapping
+from typing import Any, cast
 
 import structlog
 from fastapi import Request
 
 from podex.config import get_settings
+
+Processor = Callable[
+    [Any, str, MutableMapping[str, Any]],
+    Mapping[str, Any] | str | bytes | bytearray | tuple[Any, ...],
+]
 
 
 def configure_logging() -> None:
@@ -18,7 +25,7 @@ def configure_logging() -> None:
     settings = get_settings()
 
     # Configure structlog processors
-    shared_processors = [
+    shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso"),
@@ -40,7 +47,7 @@ def configure_logging() -> None:
         ]
 
     structlog.configure(
-        processors=processors,
+        processors=cast(Iterable[Processor], processors),
         wrapper_class=structlog.make_filtering_bound_logger(
             logging.DEBUG if settings.debug else logging.INFO
         ),
@@ -66,7 +73,7 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     Returns:
         Configured structlog logger
     """
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
 
 
 def generate_request_id() -> str:

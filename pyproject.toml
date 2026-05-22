@@ -33,12 +33,16 @@ exclude = [
 ]
 
 [[tool.mypy.overrides]]
-module = "tests.*"
+module = ["tests.*", "backend.tests.*"]
 disallow_untyped_defs = false
 disallow_untyped_decorators = false
+# Pytest decorators are runtime decorators from a third-party library; keeping
+# decorator strictness disabled for test modules avoids false positives while
+# preserving typed test function signatures.
+disable_error_code = ["untyped-decorator"]
 
 [[tool.mypy.overrides]]
-module = "scripts.*"
+module = ["scripts.*", "backend.scripts.*"]
 disallow_untyped_defs = false
 check_untyped_defs = true
 

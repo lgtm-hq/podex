@@ -302,8 +302,8 @@ class MeilisearchClient:
         """
         try:
             index = self._client.index(index_name)
-            stats: dict[str, Any] = index.get_stats()
-            return stats
+            stats = index.get_stats()
+            return stats.model_dump()
         except MeilisearchError as e:
             logger.error(
                 "meilisearch_get_stats_failed",

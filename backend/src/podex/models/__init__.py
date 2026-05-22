@@ -5,6 +5,7 @@ from podex.models.base import Base
 from podex.models.episode import DiscoverySource, Episode
 from podex.models.ingestion_run import IngestionRun
 from podex.models.media import Media, MediaType
+from podex.models.media_alias import MediaAlias, MediaAliasSourceType
 from podex.models.mention import Mention
 from podex.models.mention_candidate import MentionCandidate, MentionCandidateState
 from podex.models.mention_candidate_provenance import (
@@ -13,6 +14,11 @@ from podex.models.mention_candidate_provenance import (
 )
 from podex.models.podcast import Podcast, PodcastStatus
 from podex.models.review_item import ReviewItem, ReviewItemStatus, ReviewPriority
+from podex.models.scheduled_work import (
+    PipelineSchedule,
+    ScheduledWorkItemModel,
+    ScheduledWorkStatus,
+)
 from podex.models.search_projection_repair import (
     SearchProjectionRepair,
     SearchProjectionRepairReason,
@@ -31,6 +37,8 @@ __all__ = [
     "JobStatus",
     "JobType",
     "Media",
+    "MediaAlias",
+    "MediaAliasSourceType",
     "MediaType",
     "MentionCandidate",
     "MentionCandidateState",
@@ -40,6 +48,7 @@ __all__ = [
     "IngestionRun",
     "Podcast",
     "PodcastStatus",
+    "PipelineSchedule",
     "ReviewItem",
     "ReviewItemStatus",
     "ReviewPriority",
@@ -47,6 +56,8 @@ __all__ = [
     "SearchProjectionRepairReason",
     "SearchProjectionRepairResourceType",
     "SearchProjectionRepairStatus",
+    "ScheduledWorkItemModel",
+    "ScheduledWorkStatus",
     "Transcript",
     "TranscriptionJob",
 ]

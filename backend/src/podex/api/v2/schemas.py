@@ -422,6 +422,33 @@ class OpsMediaMergeResponse(BaseModel):
     target: OpsMergedMediaSummary
 
 
+class OpsMediaMergeFieldChange(BaseModel):
+    """Field-level change preview for an ops media merge."""
+
+    field: str
+    source_value: Any
+    target_value: Any
+    merged_value: Any
+
+
+class OpsMediaMergeAliasAddition(BaseModel):
+    """Alias that would be added to the target by an ops media merge."""
+
+    alias: str
+    normalized_alias: str
+    source: str
+
+
+class OpsMediaMergePreviewResponse(BaseModel):
+    """Non-mutating preview for an ops media merge."""
+
+    source: OpsMergedMediaSummary
+    target: OpsMergedMediaSummary
+    field_changes: list[OpsMediaMergeFieldChange] = Field(default_factory=list)
+    alias_additions: list[OpsMediaMergeAliasAddition] = Field(default_factory=list)
+    mentions_to_move: int = 0
+
+
 class OpsReviewQueueCandidateProvenance(BaseModel):
     """Historical provenance entry nested inside a review candidate."""
 
@@ -588,6 +615,47 @@ class OpsPipelineActivityResponse(BaseModel):
     summary: PipelineSummary
     runs: list[OpsIngestionRunSummary]
     jobs: list[OpsTranscriptionJobSummary]
+
+
+class OpsPipelineScheduleSummary(BaseModel):
+    """Recurring pipeline schedule exposed to ops views."""
+
+    id: str
+    schedule_key: str
+    task_kind: str
+    interval_minutes: int
+    enabled: bool
+    metadata: dict[str, object] | None = None
+    last_scheduled_at: datetime | None = None
+    next_due_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class OpsScheduledWorkItemSummary(BaseModel):
+    """Scheduled work item exposed to ops views."""
+
+    id: str
+    schedule_id: str
+    ingestion_run_id: str | None = None
+    schedule_key: str
+    work_key: str
+    task_kind: str
+    status: str
+    due_at: datetime
+    interval_minutes: int
+    metadata: dict[str, object] | None = None
+    error_message: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class OpsScheduledWorkResponse(BaseModel):
+    """Scheduled pipeline work response for ops views."""
+
+    schedules: list[OpsPipelineScheduleSummary]
+    work_items: list[OpsScheduledWorkItemSummary]
 
 
 class OpsSearchProjectionIndexSummary(BaseModel):

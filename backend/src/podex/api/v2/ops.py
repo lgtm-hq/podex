@@ -17,8 +17,10 @@ from podex.api.v2.identifiers import (
     encode_media_id,
     encode_mention_candidate_id,
     encode_mention_id,
+    encode_pipeline_schedule_id,
     encode_podcast_id,
     encode_review_item_id,
+    encode_scheduled_work_id,
     encode_transcription_job_id,
 )
 from podex.api.v2.schemas import (
@@ -30,10 +32,14 @@ from podex.api.v2.schemas import (
     OpsEpisodeRerunRequest,
     OpsEpisodeRerunResponse,
     OpsIngestionRunSummary,
+    OpsMediaMergeAliasAddition,
+    OpsMediaMergeFieldChange,
+    OpsMediaMergePreviewResponse,
     OpsMediaMergeRequest,
     OpsMediaMergeResponse,
     OpsMergedMediaSummary,
     OpsPipelineActivityResponse,
+    OpsPipelineScheduleSummary,
     OpsPodcastCreateRequest,
     OpsPodcastListResponse,
     OpsPodcastSourceInput,
@@ -48,6 +54,8 @@ from podex.api.v2.schemas import (
     OpsReviewQueueItem,
     OpsReviewQueueListResponse,
     OpsReviewReclassifyRequest,
+    OpsScheduledWorkItemSummary,
+    OpsScheduledWorkResponse,
     OpsSearchProjectionIndexSummary,
     OpsSearchProjectionRepairCounts,
     OpsSearchProjectionRepairSummary,
@@ -67,6 +75,7 @@ from podex.models import (
     PodcastStatus,
     ReviewItemStatus,
     ReviewPriority,
+    ScheduledWorkStatus,
 )
 from podex.models.search_projection_repair import (
     SearchProjectionRepairReason,
@@ -80,9 +89,11 @@ from podex.services.audit_log import (
     record_audit_log,
 )
 from podex.services.ops_media_commands import (
+    OpsMediaMergePreviewData,
     OpsMediaMergeResultData,
     OpsMergedMediaSummaryData,
     merge_ops_media,
+    preview_ops_media_merge,
 )
 from podex.services.ops_pipeline_commands import (
     create_ops_ingestion_run,
@@ -122,6 +133,13 @@ from podex.services.review_queue import (
     merge_review_queue_item,
     reclassify_review_queue_item,
     reject_review_queue_item,
+)
+from podex.services.scheduled_work import (
+    PipelineScheduleSummaryData,
+    ScheduledWorkItemSummaryData,
+    list_pipeline_schedules,
+    list_scheduled_work_items,
+    plan_due_scheduled_work,
 )
 from podex.services.search import SearchSyncService, get_search_client
 from podex.services.search_projection_queries import (
@@ -249,6 +267,52 @@ def _sync_media_merge_projection(
             target_media_id=result.target.id,
             error=str(error),
         )
+
+
+def _to_ops_pipeline_schedule_summary(
+    *,
+    schedule: PipelineScheduleSummaryData,
+) -> OpsPipelineScheduleSummary:
+    """Convert a scheduled pipeline summary to the v2 ops schema."""
+    return OpsPipelineScheduleSummary(
+        id=encode_pipeline_schedule_id(schedule_id=schedule.id),
+        schedule_key=schedule.schedule_key,
+        task_kind=schedule.task_kind.value,
+        interval_minutes=schedule.interval_minutes,
+        enabled=schedule.enabled,
+        metadata=schedule.metadata_json,
+        last_scheduled_at=schedule.last_scheduled_at,
+        next_due_at=schedule.next_due_at,
+        created_at=schedule.created_at,
+        updated_at=schedule.updated_at,
+    )
+
+
+def _to_ops_scheduled_work_item_summary(
+    *,
+    item: ScheduledWorkItemSummaryData,
+) -> OpsScheduledWorkItemSummary:
+    """Convert a scheduled work item summary to the v2 ops schema."""
+    return OpsScheduledWorkItemSummary(
+        id=encode_scheduled_work_id(work_item_id=item.id),
+        schedule_id=encode_pipeline_schedule_id(schedule_id=item.schedule_id),
+        ingestion_run_id=(
+            encode_ingestion_run_id(ingestion_run_id=item.ingestion_run_id)
+            if item.ingestion_run_id is not None
+            else None
+        ),
+        schedule_key=item.schedule_key,
+        work_key=item.work_key,
+        task_kind=item.task_kind.value,
+        status=item.status.value,
+        due_at=item.due_at,
+        interval_minutes=item.interval_minutes,
+        metadata=item.metadata_json,
+        error_message=item.error_message,
+        created_at=item.created_at,
+        started_at=item.started_at,
+        completed_at=item.completed_at,
+    )
 
 
 def _to_ops_podcast_source_summary(
@@ -589,6 +653,42 @@ def _to_ops_media_merge_response(
     return OpsMediaMergeResponse(
         source_id=encode_media_id(media_id=result.source_id),
         target=_to_ops_merged_media_summary(media=result.target),
+    )
+
+
+def _to_ops_media_merge_preview_response(
+    *,
+    preview: OpsMediaMergePreviewData,
+) -> OpsMediaMergePreviewResponse:
+    """Convert a media merge preview to the v2 ops schema.
+
+    Args:
+        preview: Shared media merge preview.
+
+    Returns:
+        Media merge preview response payload.
+    """
+    return OpsMediaMergePreviewResponse(
+        source=_to_ops_merged_media_summary(media=preview.source),
+        target=_to_ops_merged_media_summary(media=preview.target),
+        field_changes=[
+            OpsMediaMergeFieldChange(
+                field=change.field,
+                source_value=change.source_value,
+                target_value=change.target_value,
+                merged_value=change.merged_value,
+            )
+            for change in preview.field_changes
+        ],
+        alias_additions=[
+            OpsMediaMergeAliasAddition(
+                alias=alias.alias,
+                normalized_alias=alias.normalized_alias,
+                source=alias.source.value,
+            )
+            for alias in preview.alias_additions
+        ],
+        mentions_to_move=preview.mentions_to_move,
     )
 
 
@@ -1589,6 +1689,49 @@ def merge_ops_media_route(
     return _to_ops_media_merge_response(result=merge_result)
 
 
+@router.get(
+    "/media/{media_id}/merge-preview",
+    response_model=OpsMediaMergePreviewResponse,
+)
+def preview_ops_media_merge_route(
+    media_id: str,
+    target_id: str = Query(...),
+    db: Session = Depends(get_db),
+) -> OpsMediaMergePreviewResponse:
+    """Preview one media merge without mutating catalog records.
+
+    Args:
+        media_id: Opaque media identifier to merge from.
+        target_id: Opaque target media identifier.
+        db: Database session.
+
+    Returns:
+        Merge preview for operator review.
+
+    Raises:
+        HTTPException: If either media record is missing or the merge is invalid.
+    """
+    try:
+        source_media_id = decode_media_id(media_id=media_id)
+        target_media_id = decode_media_id(media_id=target_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Media not found") from error
+
+    try:
+        preview = preview_ops_media_merge(
+            db=db,
+            source_media_id=source_media_id,
+            target_media_id=target_media_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    return _to_ops_media_merge_preview_response(preview=preview)
+
+
 @router.get("/audit-log", response_model=OpsAuditLogListResponse)
 def get_ops_audit_log(
     page: int = Query(1, ge=1),
@@ -1644,3 +1787,52 @@ def get_ops_search_projection(
         repair_counts=get_search_projection_repair_counts(db=db),
         repairs=list_recent_search_projection_repairs(db=db, limit=repair_limit),
     )
+
+
+@router.get("/scheduled-work", response_model=OpsScheduledWorkResponse)
+def get_ops_scheduled_work(
+    limit: int = Query(50, ge=1, le=100),
+    status: ScheduledWorkStatus | None = Query(None),
+    db: Session = Depends(get_db),
+) -> OpsScheduledWorkResponse:
+    """List recurring schedules and recent scheduled work for ops views.
+
+    Args:
+        limit: Maximum number of work items to return.
+        status: Optional scheduled work status filter.
+        db: Database session.
+
+    Returns:
+        Scheduled work response.
+    """
+    return OpsScheduledWorkResponse(
+        schedules=[
+            _to_ops_pipeline_schedule_summary(schedule=schedule)
+            for schedule in list_pipeline_schedules(db=db)
+        ],
+        work_items=[
+            _to_ops_scheduled_work_item_summary(item=item)
+            for item in list_scheduled_work_items(
+                db=db,
+                limit=limit,
+                status=status,
+            )
+        ],
+    )
+
+
+@router.post("/scheduled-work/plan", response_model=list[OpsScheduledWorkItemSummary])
+def plan_ops_scheduled_work(
+    db: Session = Depends(get_db),
+) -> list[OpsScheduledWorkItemSummary]:
+    """Plan currently due recurring work items.
+
+    Args:
+        db: Database session.
+
+    Returns:
+        Newly planned scheduled work items.
+    """
+    items = plan_due_scheduled_work(db=db)
+    db.commit()
+    return [_to_ops_scheduled_work_item_summary(item=item) for item in items]

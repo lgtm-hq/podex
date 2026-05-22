@@ -168,6 +168,7 @@ def list_ops_podcasts(
 
     total = query.count()
 
+    sort_column: Any
     if sort == "name":
         sort_column = Podcast.name
     elif sort == "episode_count":

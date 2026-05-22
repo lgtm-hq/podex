@@ -10,7 +10,7 @@ import logging
 import re
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -32,6 +32,11 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://podscripts.co"
 
 
+def _html_attr_to_str(value: object) -> str:
+    """Return a BeautifulSoup attribute value when it is a single string."""
+    return value if isinstance(value, str) else ""
+
+
 @dataclass
 class TranscriptAcquisitionResult:
     """Result from attempting to acquire a transcript."""
@@ -40,6 +45,52 @@ class TranscriptAcquisitionResult:
     result: TranscriptResult | None
     source: str
     error: str | None = None
+    should_store_raw: bool = True
+    source_retention_opt_out: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class TranscriptAcquisitionPolicy:
+    """Retention-aware source policy for transcript acquisition.
+
+    Args:
+        source_retention_opt_out: Whether the podcast/source suppresses raw storage.
+        allow_generated_after_opt_out: Whether generated transcripts may be created
+            after a source opted out of raw transcript retention.
+    """
+
+    source_retention_opt_out: bool = False
+    allow_generated_after_opt_out: bool = False
+
+    def allows_source(self, source: TranscriptSource) -> bool:
+        """Return whether an acquisition source may be attempted.
+
+        Args:
+            source: Candidate transcript source.
+
+        Returns:
+            ``True`` when the source may run under this policy.
+        """
+        return bool(
+            not self.source_retention_opt_out
+            or not source.produces_new_raw_transcript
+            or self.allow_generated_after_opt_out,
+        )
+
+    def apply(self, result: TranscriptAcquisitionResult) -> TranscriptAcquisitionResult:
+        """Attach retention storage flags to an acquisition result.
+
+        Args:
+            result: Source acquisition result.
+
+        Returns:
+            Result with retention-aware storage metadata.
+        """
+        return replace(
+            result,
+            should_store_raw=not self.source_retention_opt_out,
+            source_retention_opt_out=self.source_retention_opt_out,
+        )
 
 
 class TranscriptSource(ABC):
@@ -60,6 +111,11 @@ class TranscriptSource(ABC):
     def name(self) -> str:
         """Name of this transcript source."""
         ...
+
+    @property
+    def produces_new_raw_transcript(self) -> bool:
+        """Whether this source generates new raw transcript text from media."""
+        return False
 
 
 class PodscriptsSource(TranscriptSource):
@@ -101,6 +157,13 @@ class PodscriptsSource(TranscriptSource):
             )
 
         podcast_slug = episode.podcast.podscripts_slug
+        if podcast_slug is None:
+            return TranscriptAcquisitionResult(
+                success=False,
+                result=None,
+                source=self.name,
+                error="Podcast has no podscripts_slug configured",
+            )
 
         # Try to find the episode URL
         episode_url = self._find_episode_url(podcast_slug, episode)
@@ -186,7 +249,7 @@ class PodscriptsSource(TranscriptSource):
             episodes = []
 
             for link in soup.find_all("a", href=True):
-                href = link.get("href", "")
+                href = _html_attr_to_str(link.get("href", ""))
                 if (
                     f"/podcasts/{podcast_slug}/" in href
                     and href != f"/podcasts/{podcast_slug}"
@@ -238,7 +301,7 @@ class PodscriptsSource(TranscriptSource):
             found_any = False
 
             for link in soup.find_all("a", href=True):
-                href = link.get("href", "")
+                href = _html_attr_to_str(link.get("href", ""))
                 if (
                     f"/podcasts/{podcast_slug}/" in href
                     and href != f"/podcasts/{podcast_slug}"
@@ -395,6 +458,11 @@ class WhisperSource(TranscriptSource):
     def name(self) -> str:
         return f"whisper:{self.config.backend}"
 
+    @property
+    def produces_new_raw_transcript(self) -> bool:
+        """Whether Whisper creates new raw transcript text from source audio."""
+        return True
+
     def supports(self, episode: Episode) -> bool:
         """Check if we can transcribe this episode (needs YouTube ID)."""
         return bool(episode.youtube_id)
@@ -410,6 +478,13 @@ class WhisperSource(TranscriptSource):
             )
 
         try:
+            if episode.youtube_id is None:
+                return TranscriptAcquisitionResult(
+                    success=False,
+                    result=None,
+                    source=self.name,
+                    error="Episode has no youtube_id",
+                )
             transcriber = WhisperTranscriber(self.config)
             result = transcriber.transcribe(
                 episode.youtube_id,
@@ -451,7 +526,9 @@ class TranscriptAcquirer:
         sources: list[TranscriptSource] | None = None,
         whisper_config: WhisperConfig | None = None,
         initial_prompt: str | None = None,
+        acquisition_policy: TranscriptAcquisitionPolicy | None = None,
     ) -> None:
+        self.acquisition_policy = acquisition_policy or TranscriptAcquisitionPolicy()
         if sources is not None:
             self.sources = sources
         else:
@@ -474,6 +551,17 @@ class TranscriptAcquirer:
         errors: list[str] = []
 
         for source in self.sources:
+            if not self.acquisition_policy.allows_source(source):
+                errors.append(
+                    f"{source.name}: skipped by retention acquisition policy",
+                )
+                logger.info(
+                    "Skipping %s for episode %s because raw retention is suppressed",
+                    source.name,
+                    episode.id,
+                )
+                continue
+
             if not source.supports(episode):
                 logger.debug(
                     f"Source {source.name} does not support episode {episode.id}"
@@ -485,7 +573,7 @@ class TranscriptAcquirer:
 
             if result.success:
                 logger.info(f"Got transcript from {source.name}")
-                return result
+                return self.acquisition_policy.apply(result)
 
             error_msg = f"{source.name}: {result.error}"
             errors.append(error_msg)

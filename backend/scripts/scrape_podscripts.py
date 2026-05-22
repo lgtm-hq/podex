@@ -53,6 +53,12 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://podscripts.co"
 
+
+def html_attr_to_str(value: object) -> str:
+    """Return a BeautifulSoup attribute value when it is a single string."""
+    return value if isinstance(value, str) else ""
+
+
 # Common podcast slug mappings (podscripts slug -> our slug)
 PODCAST_SLUG_MAP = {
     "the-joe-rogan-experience": "jre",
@@ -112,7 +118,7 @@ class PodscriptsScraper:
 
         # Find episode links - they're typically in a list format
         for link in soup.find_all("a", href=True):
-            href = link.get("href", "")
+            href = html_attr_to_str(link.get("href", ""))
             expected_prefix = f"/podcasts/{self.podcast_slug}/"
             if expected_prefix in href and href != f"/podcasts/{self.podcast_slug}":
                 # Extract episode info from URL and link text

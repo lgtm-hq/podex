@@ -175,9 +175,8 @@ def main() -> None:
                     stats["candidates_created"] += summary.candidates_created
                     stats["candidates_updated"] += summary.candidates_updated
                     stats["review_items_created"] += summary.review_items_created
-                    stats[
-                        "skipped_existing_mentions"
-                    ] += summary.skipped_existing_mentions
+                    skipped_existing = summary.skipped_existing_mentions
+                    stats["skipped_existing_mentions"] += skipped_existing
 
                     # Mark as completed
                     episode.extraction_status = "completed"

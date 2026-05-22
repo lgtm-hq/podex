@@ -3,8 +3,7 @@
 from sqlalchemy.orm import DeclarativeBase
 
 
-# SQLAlchemy plugin not available in linter Docker environment
-class Base(DeclarativeBase):  # type: ignore[misc]
+class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
 
     pass
