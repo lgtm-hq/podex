@@ -1,13 +1,14 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import { getEpisode, getEpisodeMentions } from '../../lib/api';
+import type { EpisodeWithStats, MediaType, MentionWithMedia } from '../../lib/types';
 
 const { id } = Astro.params;
 const episodeId = parseInt(id as string);
 
-let episode = null;
-let mentions: any[] = [];
-let error = null;
+let episode: EpisodeWithStats | null = null;
+let mentions: MentionWithMedia[] = [];
+let error: unknown = null;
 
 try {
   [episode, mentions] = await Promise.all([
@@ -51,7 +52,15 @@ function formatTimestamp(seconds: number): string {
 }
 
 // Group mentions by media
-const uniqueMedia = new Map();
+interface EpisodeMentionGroup {
+  id: number;
+  title: string;
+  type: MediaType;
+  author: string | null;
+  mentions: MentionWithMedia[];
+}
+
+const uniqueMedia = new Map<number, EpisodeMentionGroup>();
 mentions.forEach((mention) => {
   if (!uniqueMedia.has(mention.media_id)) {
     uniqueMedia.set(mention.media_id, {
@@ -62,7 +71,7 @@ mentions.forEach((mention) => {
       mentions: [],
     });
   }
-  uniqueMedia.get(mention.media_id).mentions.push(mention);
+  uniqueMedia.get(mention.media_id)?.mentions.push(mention);
 });
 const mediaList = Array.from(uniqueMedia.values());
 ---
@@ -169,9 +178,9 @@ const mediaList = Array.from(uniqueMedia.values());
                         <p class="text-sm text-text-muted">by {media.author}</p>
                       )}
                       <div class="mt-2 flex flex-col gap-2">
-                        {media.mentions.map((mention: any) => (
+                        {media.mentions.map((mention) => (
                           <div class="flex flex-col gap-1">
-                            {mention.youtube_timestamp_url ? (
+                            {mention.timestamp_seconds != null && mention.youtube_timestamp_url ? (
                               <a
                                 href={mention.youtube_timestamp_url}
                                 target="_blank"

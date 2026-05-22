@@ -3,13 +3,14 @@ import BaseLayout from '../layouts/BaseLayout.astro';
 import StatsCard from '../components/StatsCard.astro';
 import MediaCard from '../components/MediaCard.astro';
 import { getOverviewStats, getStatsByType, getTopMentioned, getTopMedia } from '../lib/api';
+import type { MediaItem, OverviewStats, TopMentioned, TypeStats } from '../lib/types';
 
-let stats = null;
-let typeStats: any[] = [];
-let topMentioned: any[] = [];
-let topBooks: any[] = [];
-let topMovies: any[] = [];
-let error = null;
+let stats: OverviewStats | null = null;
+let typeStats: TypeStats[] = [];
+let topMentioned: TopMentioned[] = [];
+let topBooks: MediaItem[] = [];
+let topMovies: MediaItem[] = [];
+let error: unknown = null;
 
 try {
   [stats, typeStats, topMentioned, topBooks, topMovies] = await Promise.all([

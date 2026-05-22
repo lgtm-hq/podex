@@ -4,9 +4,9 @@
  * Displays awards information (Oscar wins/nominations, etc.)
  */
 interface Props {
-  awards?: string;
-  oscarWins?: number;
-  oscarNominations?: number;
+  awards?: string | null;
+  oscarWins?: number | null;
+  oscarNominations?: number | null;
 }
 
 const { awards, oscarWins, oscarNominations } = Astro.props;

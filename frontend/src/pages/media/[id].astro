@@ -6,12 +6,13 @@ import ExternalLinks from '../../components/ExternalLinks.astro';
 import AwardsBadge from '../../components/AwardsBadge.astro';
 import VerificationBadge from '../../components/VerificationBadge.astro';
 import { getMediaById } from '../../lib/api';
+import type { CastMember, MediaDetail } from '../../lib/types';
 
 const { id } = Astro.params;
 const mediaId = parseInt(id as string);
 
-let media = null;
-let error = null;
+let media: MediaDetail | null = null;
+let error: unknown = null;
 
 try {
   media = await getMediaById(mediaId);
@@ -333,7 +334,7 @@ const getPlaceholderIcon = (type: string) => {
                   {hasCast && media.cast && (
                     <p class="text-text-muted">
                       <span class="font-medium text-text-secondary">Cast:</span>{' '}
-                      {media.cast.map((c: { name: string; character?: string }) =>
+                      {media.cast.map((c: CastMember) =>
                         c.character ? `${c.name} (${c.character})` : c.name
                       ).join(', ')}
                     </p>

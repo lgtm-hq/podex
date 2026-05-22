@@ -4,16 +4,16 @@
  * Displays external links to IMDB, TMDB, Wikipedia, Google Books, academic sources, etc.
  */
 interface Props {
-  imdbUrl?: string;
-  tmdbUrl?: string;
-  wikipediaUrl?: string;
-  googleBooksUrl?: string;
-  openLibraryUrl?: string;
-  amazonSearchUrl?: string;
+  imdbUrl?: string | null;
+  tmdbUrl?: string | null;
+  wikipediaUrl?: string | null;
+  googleBooksUrl?: string | null;
+  openLibraryUrl?: string | null;
+  amazonSearchUrl?: string | null;
   // Academic links
-  doiUrl?: string;
-  pubmedUrl?: string;
-  semanticScholarUrl?: string;
+  doiUrl?: string | null;
+  pubmedUrl?: string | null;
+  semanticScholarUrl?: string | null;
 }
 
 const {

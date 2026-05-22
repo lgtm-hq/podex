@@ -7,8 +7,8 @@ interface Props {
   id: number;
   type: 'book' | 'movie' | 'documentary' | 'tv_show' | 'study' | 'podcast' | 'article' | 'standup_special' | 'person' | 'place';
   title: string;
-  author?: string;
-  coverUrl?: string;
+  author?: string | null;
+  coverUrl?: string | null;
   mentionCount: number;
   episodeCount: number;
   rating?: number;
