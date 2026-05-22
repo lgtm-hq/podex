@@ -11,6 +11,7 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 from sqlalchemy import text
 
+from podex.api.rate_limits import EndpointRateLimitDecision, endpoint_rate_limiter
 from podex.api.router import api_router
 from podex.api.v2.router import api_v2_router
 from podex.config import get_settings
@@ -40,6 +41,62 @@ app.add_exception_handler(
     RateLimitExceeded,
     cast(Callable[[Request, Exception], Response], _rate_limit_exceeded_handler),
 )
+
+
+def _rate_limit_headers(
+    *,
+    decision: EndpointRateLimitDecision,
+) -> dict[str, str]:
+    """Build standard rate-limit response headers.
+
+    Args:
+        decision: Endpoint rate-limit decision.
+
+    Returns:
+        Headers describing the active rate-limit bucket.
+    """
+    return {
+        "X-RateLimit-Bucket": decision.rule_name,
+        "X-RateLimit-Limit": str(decision.limit),
+        "X-RateLimit-Remaining": str(decision.remaining),
+        "X-RateLimit-Reset": str(decision.reset_seconds),
+    }
+
+
+@app.middleware("http")
+async def endpoint_rate_limit_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Apply endpoint-level rate limits before route handling.
+
+    Args:
+        request: Incoming HTTP request.
+        call_next: Next middleware or route handler.
+
+    Returns:
+        Route response, or a 429 response when a bucket is exhausted.
+    """
+    decision = endpoint_rate_limiter.check(
+        request=request,
+        settings=get_settings(),
+    )
+    if decision is not None and not decision.allowed:
+        headers = _rate_limit_headers(decision=decision)
+        headers["Retry-After"] = str(decision.reset_seconds)
+        return JSONResponse(
+            status_code=429,
+            content={
+                "detail": "Rate limit exceeded",
+                "bucket": decision.rule_name,
+            },
+            headers=headers,
+        )
+
+    response = await call_next(request)
+    if decision is not None:
+        response.headers.update(_rate_limit_headers(decision=decision))
+    return response
 
 
 # Request logging middleware

@@ -9,6 +9,10 @@ exclude_dirs = ["tests", "backend/tests"]
 # B314/B405: XML parsing (defusedxml not needed for RSS feeds from trusted sources)
 skips = ["B101", "B404", "B603", "B607", "B108", "B314", "B405"]
 
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["backend/tests"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true

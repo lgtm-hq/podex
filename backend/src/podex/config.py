@@ -32,7 +32,12 @@ class Settings(BaseSettings):
     api_key: str = ""
 
     # Rate limiting (requests per minute per IP)
+    rate_limit_enabled: bool = True
     rate_limit_per_minute: int = 100
+    public_search_rate_limit_per_minute: int = 30
+    auth_rate_limit_per_minute: int = 10
+    ops_rate_limit_per_minute: int = 60
+    admin_rate_limit_per_minute: int = 30
 
     # Public discovery read-model caching
     stats_cache_ttl_seconds: int = 300

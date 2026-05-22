@@ -8,6 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from podex.api.rate_limits import endpoint_rate_limiter
 from podex.database import get_db
 from podex.main import app
 from podex.models import Base
@@ -20,6 +21,16 @@ engine = create_engine(
     poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+
+@pytest.fixture(autouse=True)
+def reset_endpoint_rate_limiter() -> Generator[None, None, None]:
+    """Reset process-local rate-limit buckets around every test."""
+    endpoint_rate_limiter.clear()
+    try:
+        yield
+    finally:
+        endpoint_rate_limiter.clear()
 
 
 @pytest.fixture
