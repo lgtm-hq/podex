@@ -10,8 +10,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from podex.models.base import Base
 
 if TYPE_CHECKING:
+    from podex.models.derivative_generation_run import DerivativeGenerationRun
+    from podex.models.episode_summary import EpisodeSummary
     from podex.models.mention import Mention
     from podex.models.podcast import Podcast
+    from podex.models.semantic_chunk import SemanticChunk
     from podex.models.transcript import Transcript
     from podex.models.transcription_job import TranscriptionJob
 
@@ -57,6 +60,15 @@ class Episode(Base):
     podcast: Mapped["Podcast"] = relationship(back_populates="episodes")
     mentions: Mapped[list["Mention"]] = relationship(back_populates="episode")
     transcripts: Mapped[list["Transcript"]] = relationship(back_populates="episode")
+    semantic_chunks: Mapped[list["SemanticChunk"]] = relationship(
+        back_populates="episode",
+    )
+    summaries: Mapped[list["EpisodeSummary"]] = relationship(
+        back_populates="episode",
+    )
+    derivative_runs: Mapped[list["DerivativeGenerationRun"]] = relationship(
+        back_populates="episode",
+    )
     transcription_jobs: Mapped[list["TranscriptionJob"]] = relationship(
         back_populates="episode",
     )

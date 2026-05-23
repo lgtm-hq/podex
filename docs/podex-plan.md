@@ -715,16 +715,16 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
 
 ### Phase 2.5: Derivative Data Layer
 
-- **Status:** Not started
+- **Status:** Implemented
 - **Roadmap parent:** #60
 - **Work items:**
-  - [ ] Semantic chunks + embeddings pipeline on Postgres + pgvector. (#24)
-  - [ ] Graph triples + entity relations. (#25)
-  - [ ] Per-episode and per-media summary models. (#66)
-  - [ ] Derivative generation pipeline orchestration with idempotent, replay-safe, version-tracked behavior. (#67)
-  - [ ] Time-boxed LightRAG spike evaluating hybrid graph-plus-vector retrieval vs. a hand-rolled layer. (#26)
-  - [ ] Wrap adopted retrieval framework behind ports.
-  - [ ] Prove derivative coverage is sufficient for all public query classes before retention purge activates.
+  - [x] Semantic chunks + embeddings pipeline on Postgres + pgvector. (#24)
+  - [x] Graph triples + entity relations. (#25)
+  - [x] Per-episode and per-media summary models. (#66)
+  - [x] Derivative generation pipeline orchestration with idempotent, replay-safe, version-tracked behavior. (#67)
+  - [x] Time-boxed LightRAG spike evaluating hybrid graph-plus-vector retrieval vs. a hand-rolled layer. (#26)
+  - [x] Wrap adopted retrieval framework behind ports.
+  - [x] Prove derivative coverage is sufficient for all public query classes before retention purge activates.
 
 ### Phase 3: Ops Console
 
