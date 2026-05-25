@@ -10,7 +10,17 @@ from podex.api.query_helpers import (
     episode_count_by_media_subquery,
     mention_count_by_media_subquery,
 )
-from podex.models import Media, MediaAlias, MediaAliasSourceType, MediaType, Mention
+from podex.models import (
+    Media,
+    MediaAlias,
+    MediaAliasSourceType,
+    MediaExternalRef,
+    MediaExternalRefSource,
+    MediaRelation,
+    MediaType,
+    Mention,
+)
+from podex.services.graph_relations import upsert_media_external_ref
 from podex.services.media_alias_repository import ensure_media_alias
 from podex.services.media_aliases import normalize_media_alias
 
@@ -66,6 +76,124 @@ class OpsMediaMergePreviewData:
     field_changes: list[OpsMediaMergeFieldChangeData]
     alias_additions: list[OpsMediaMergeAliasChangeData]
     mentions_to_move: int
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaAliasData:
+    """Alias attached to a canonical media record."""
+
+    alias: str
+    normalized_alias: str
+    source: str
+    is_primary: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaExternalRefData:
+    """External reference attached to a canonical media record."""
+
+    source: str
+    external_id: str
+    url: str | None
+    label: str | None
+    description: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaRelationData:
+    """Typed relationship involving a canonical media record."""
+
+    direction: str
+    relation_type: str
+    related_media: OpsMergedMediaSummaryData
+    source: str
+    confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaMentionData:
+    """Published mention available for media split recovery."""
+
+    id: int
+    episode_id: int
+    episode_title: str
+    timestamp_seconds: int | None
+    context: str | None
+    confidence: float
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaDetailData:
+    """Canonical media record details for ops management."""
+
+    summary: OpsMergedMediaSummaryData
+    google_books_id: str | None
+    open_library_id: str | None
+    imdb_id: str | None
+    tmdb_id: int | None
+    wikipedia_id: str | None
+    pubmed_id: str | None
+    doi: str | None
+    semantic_scholar_id: str | None
+    metadata_json: dict[str, Any] | None
+    verification_sources: list[str]
+    aliases: list[OpsMediaAliasData]
+    external_refs: list[OpsMediaExternalRefData]
+    relations: list[OpsMediaRelationData]
+    mentions: list[OpsMediaMentionData]
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateOpsMediaInputData:
+    """Partial editable fields for canonical media correction."""
+
+    provided_fields: frozenset[str] = frozenset()
+    type: MediaType | None = None
+    title: str | None = None
+    author: str | None = None
+    cover_url: str | None = None
+    year: int | None = None
+    description: str | None = None
+    google_books_id: str | None = None
+    open_library_id: str | None = None
+    imdb_id: str | None = None
+    tmdb_id: int | None = None
+    wikipedia_id: str | None = None
+    pubmed_id: str | None = None
+    doi: str | None = None
+    semantic_scholar_id: str | None = None
+    metadata_json: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpsertOpsMediaExternalRefInputData:
+    """External reference fields provided by an operator."""
+
+    source: MediaExternalRefSource
+    external_id: str
+    url: str | None = None
+    label: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SplitOpsMediaInputData:
+    """Replacement media and mention assignment for split recovery."""
+
+    mention_ids: tuple[int, ...]
+    type: MediaType
+    title: str
+    author: str | None = None
+    description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OpsMediaSplitResultData:
+    """Original and newly created records after media split recovery."""
+
+    source: OpsMediaDetailData
+    created: OpsMediaDetailData
+    mentions_moved: int
 
 
 def _get_ops_media_summary(
@@ -154,6 +282,322 @@ def _merge_scalar_field_names() -> tuple[str, ...]:
         "enriched_at",
         "enrichment_source",
         "enrichment_confidence",
+    )
+
+
+def get_ops_media_detail(
+    *,
+    db: Session,
+    media_id: int,
+) -> OpsMediaDetailData | None:
+    """Load canonical media record detail for operator management.
+
+    Args:
+        db: Database session.
+        media_id: Internal media identifier.
+
+    Returns:
+        Media detail when found, otherwise ``None``.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    summary = _get_ops_media_summary(db=db, media_id=media_id)
+    if media is None or summary is None:
+        return None
+
+    aliases = (
+        db.query(MediaAlias)
+        .filter(MediaAlias.media_id == media_id)
+        .order_by(MediaAlias.is_primary.desc(), MediaAlias.id.asc())
+        .all()
+    )
+    external_refs = (
+        db.query(MediaExternalRef)
+        .filter(MediaExternalRef.media_id == media_id)
+        .order_by(MediaExternalRef.source.asc(), MediaExternalRef.id.asc())
+        .all()
+    )
+    mentions = (
+        db.query(Mention)
+        .filter(Mention.media_id == media_id)
+        .order_by(Mention.id.asc())
+        .all()
+    )
+    relations: list[OpsMediaRelationData] = []
+    for relation in (
+        db.query(MediaRelation)
+        .filter(MediaRelation.subject_media_id == media_id)
+        .order_by(MediaRelation.id.asc())
+        .all()
+    ):
+        related = _get_ops_media_summary(db=db, media_id=relation.object_media_id)
+        if related is not None:
+            relations.append(
+                OpsMediaRelationData(
+                    direction="outgoing",
+                    relation_type=relation.relation_type,
+                    related_media=related,
+                    source=relation.source,
+                    confidence=relation.confidence,
+                )
+            )
+    for relation in (
+        db.query(MediaRelation)
+        .filter(MediaRelation.object_media_id == media_id)
+        .order_by(MediaRelation.id.asc())
+        .all()
+    ):
+        related = _get_ops_media_summary(db=db, media_id=relation.subject_media_id)
+        if related is not None:
+            relations.append(
+                OpsMediaRelationData(
+                    direction="incoming",
+                    relation_type=relation.relation_type,
+                    related_media=related,
+                    source=relation.source,
+                    confidence=relation.confidence,
+                )
+            )
+
+    return OpsMediaDetailData(
+        summary=summary,
+        google_books_id=media.google_books_id,
+        open_library_id=media.open_library_id,
+        imdb_id=media.imdb_id,
+        tmdb_id=media.tmdb_id,
+        wikipedia_id=media.wikipedia_id,
+        pubmed_id=media.pubmed_id,
+        doi=media.doi,
+        semantic_scholar_id=media.semantic_scholar_id,
+        metadata_json=media.metadata_json,
+        verification_sources=list(media.verification_sources or []),
+        aliases=[
+            OpsMediaAliasData(
+                alias=alias.alias,
+                normalized_alias=alias.normalized_alias,
+                source=alias.source,
+                is_primary=alias.is_primary,
+            )
+            for alias in aliases
+        ],
+        external_refs=[
+            OpsMediaExternalRefData(
+                source=reference.source,
+                external_id=reference.external_id,
+                url=reference.url,
+                label=reference.label,
+                description=reference.description,
+            )
+            for reference in external_refs
+        ],
+        relations=relations,
+        mentions=[
+            OpsMediaMentionData(
+                id=mention.id,
+                episode_id=mention.episode_id,
+                episode_title=mention.episode.title,
+                timestamp_seconds=mention.timestamp_seconds,
+                context=mention.context,
+                confidence=mention.confidence,
+            )
+            for mention in mentions
+        ],
+    )
+
+
+def update_ops_media(
+    *,
+    db: Session,
+    media_id: int,
+    payload: UpdateOpsMediaInputData,
+) -> OpsMediaDetailData | None:
+    """Update editable canonical media fields.
+
+    Args:
+        db: Database session.
+        media_id: Internal media identifier.
+        payload: Partial field update payload.
+
+    Returns:
+        Updated media detail when found, otherwise ``None``.
+
+    Raises:
+        ValueError: If a required display field is cleared.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if media is None:
+        return None
+
+    old_title = media.title
+    if "title" in payload.provided_fields:
+        if payload.title is None or not payload.title.strip():
+            raise ValueError("title cannot be cleared")
+        media.title = payload.title.strip()
+    if "type" in payload.provided_fields:
+        if payload.type is None:
+            raise ValueError("type cannot be cleared")
+        media.type = payload.type.value
+
+    for field_name in (
+        "author",
+        "cover_url",
+        "year",
+        "description",
+        "google_books_id",
+        "open_library_id",
+        "imdb_id",
+        "tmdb_id",
+        "wikipedia_id",
+        "pubmed_id",
+        "doi",
+        "semantic_scholar_id",
+        "metadata_json",
+    ):
+        if field_name in payload.provided_fields:
+            setattr(media, field_name, getattr(payload, field_name))
+
+    if media.title != old_title:
+        ensure_media_alias(
+            db=db,
+            media=media,
+            alias=old_title,
+            source=MediaAliasSourceType.MANUAL,
+        )
+    ensure_media_alias(
+        db=db,
+        media=media,
+        alias=media.title,
+        source=MediaAliasSourceType.MANUAL,
+        is_primary=True,
+    )
+    db.flush()
+    return get_ops_media_detail(db=db, media_id=media_id)
+
+
+def add_ops_media_alias(
+    *,
+    db: Session,
+    media_id: int,
+    alias: str,
+) -> OpsMediaDetailData | None:
+    """Add one normalized alias to a canonical media record.
+
+    Args:
+        db: Database session.
+        media_id: Internal media identifier.
+        alias: Operator-provided alternate title.
+
+    Returns:
+        Updated media detail when found, otherwise ``None``.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if media is None:
+        return None
+    ensure_media_alias(
+        db=db,
+        media=media,
+        alias=alias,
+        source=MediaAliasSourceType.MANUAL,
+    )
+    db.flush()
+    return get_ops_media_detail(db=db, media_id=media_id)
+
+
+def upsert_ops_media_external_ref(
+    *,
+    db: Session,
+    media_id: int,
+    payload: UpsertOpsMediaExternalRefInputData,
+) -> OpsMediaDetailData | None:
+    """Add or update one canonical media external reference.
+
+    Args:
+        db: Database session.
+        media_id: Internal media identifier.
+        payload: External reference details.
+
+    Returns:
+        Updated media detail when found, otherwise ``None``.
+    """
+    media = db.query(Media).filter(Media.id == media_id).first()
+    if media is None:
+        return None
+    upsert_media_external_ref(
+        db=db,
+        media=media,
+        source=payload.source,
+        external_id=payload.external_id,
+        url=payload.url,
+        label=payload.label,
+        description=payload.description,
+    )
+    db.flush()
+    return get_ops_media_detail(db=db, media_id=media_id)
+
+
+def split_ops_media(
+    *,
+    db: Session,
+    media_id: int,
+    payload: SplitOpsMediaInputData,
+) -> OpsMediaSplitResultData | None:
+    """Move selected mentions from a canonical record into a new record.
+
+    Args:
+        db: Database session.
+        media_id: Existing canonical record to correct.
+        payload: New record metadata and mentions to move.
+
+    Returns:
+        Updated source and newly created record when found, otherwise ``None``.
+
+    Raises:
+        RuntimeError: If resulting detail cannot be loaded.
+        ValueError: If no valid mentions are selected or the title is empty.
+    """
+    source = db.query(Media).filter(Media.id == media_id).first()
+    if source is None:
+        return None
+    if not payload.title.strip():
+        raise ValueError("title cannot be empty")
+    if not payload.mention_ids:
+        raise ValueError("At least one mention must be selected")
+
+    mentions = (
+        db.query(Mention)
+        .filter(Mention.id.in_(payload.mention_ids))
+        .filter(Mention.media_id == media_id)
+        .all()
+    )
+    if len(mentions) != len(set(payload.mention_ids)):
+        raise ValueError("Selected mentions must belong to the source media")
+
+    created_media = Media(
+        type=payload.type.value,
+        title=payload.title.strip(),
+        author=payload.author.strip() if payload.author else None,
+        description=payload.description.strip() if payload.description else None,
+    )
+    db.add(created_media)
+    db.flush()
+    ensure_media_alias(
+        db=db,
+        media=created_media,
+        alias=created_media.title,
+        source=MediaAliasSourceType.MANUAL,
+        is_primary=True,
+    )
+    for mention in mentions:
+        mention.media = created_media
+    db.flush()
+
+    source_detail = get_ops_media_detail(db=db, media_id=media_id)
+    created_detail = get_ops_media_detail(db=db, media_id=created_media.id)
+    if source_detail is None or created_detail is None:
+        raise RuntimeError("Split media records could not be reloaded")
+    return OpsMediaSplitResultData(
+        source=source_detail,
+        created=created_detail,
+        mentions_moved=len(mentions),
     )
 
 

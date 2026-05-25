@@ -14,6 +14,7 @@ class ScheduledTaskKind(StrEnum):
     INGESTION = auto()
     REINDEX = auto()
     DIGEST = auto()
+    RETENTION = auto()
 
 
 @dataclass(frozen=True, slots=True)

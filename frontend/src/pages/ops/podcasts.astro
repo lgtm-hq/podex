@@ -1,0 +1,26 @@
+---
+import PodcastManager from '../../components/PodcastManager';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Podcast Manager" description="Manage podcast sources and ingestion status in Podex operations">
+  <main class="min-h-screen bg-background">
+    <section class="border-b border-border-subtle bg-surface/30">
+      <div class="container py-8 md:py-10">
+        <div class="flex flex-col gap-5 md:flex-row md:items-end md:justify-between">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-[0.24em] text-accent">Operations / Catalog</p>
+            <h1 class="mt-3 text-4xl md:text-5xl">Podcast manager</h1>
+            <p class="mt-3 max-w-2xl text-text-secondary">
+              Add sources, tune discovery coverage, and pause catalog intake without direct database edits.
+            </p>
+          </div>
+          <a href="/ops" class="btn btn-secondary">Dashboard</a>
+        </div>
+      </div>
+    </section>
+    <div class="container py-8">
+      <PodcastManager client:load />
+    </div>
+  </main>
+</BaseLayout>

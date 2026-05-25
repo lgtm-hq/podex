@@ -5,6 +5,8 @@
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import EpisodeCard from '../../components/EpisodeCard.astro';
+import StatePanel from '../../components/StatePanel.astro';
+import { FollowPodcastButton } from '../../components/FollowPodcastButton';
 import { getPodcast, getPodcastEpisodes } from '../../lib/api';
 import type { Podcast, EpisodeWithStats, PaginatedResponse } from '../../lib/types';
 
@@ -39,24 +41,32 @@ const hasPrevPage = page > 1;
 function buildPageUrl(newPage: number): string {
   return newPage > 1 ? `/sources/${slug}?page=${newPage}` : `/sources/${slug}`;
 }
+
+const structuredData = podcast ? {
+  '@context': 'https://schema.org',
+  '@type': 'PodcastSeries',
+  name: podcast.name,
+  description: podcast.description,
+  image: podcast.cover_url,
+  url: new URL(`/sources/${podcast.slug}`, Astro.url).toString(),
+} : undefined;
 ---
 
-<BaseLayout title={podcast?.name || 'Source'}>
+<BaseLayout
+  title={podcast?.name || 'Source'}
+  description={podcast?.description ?? 'A podcast source indexed by Podex'}
+  image={podcast?.cover_url}
+  structuredData={structuredData}
+>
   <main class="py-12 md:py-20">
     <div class="container">
       {error || !podcast ? (
-        <div class="card p-12 text-center">
-          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl">⚠️</span>
-          </div>
-          <h2 class="text-lg font-semibold mb-2">Source not found</h2>
-          <p class="text-text-secondary mb-6">
-            {error || "The podcast you're looking for doesn't exist."}
-          </p>
-          <a href="/sources" class="btn btn-secondary">
-            View all sources
-          </a>
-        </div>
+        <StatePanel
+          title={error ? 'Unable to load this source' : 'Source not found'}
+          message={error || "The podcast you're looking for doesn't exist."}
+          variant={error ? 'error' : 'empty'}
+          retryHref="/sources"
+        />
       ) : (
         <>
           {/* Header */}
@@ -109,6 +119,9 @@ function buildPageUrl(newPage: number): string {
                     <div class="stat-label">Mentions Found</div>
                   </div>
                 </div>
+                <div class="mt-6">
+                  <FollowPodcastButton client:load podcastId={podcast.id} slug={podcast.slug} />
+                </div>
               </div>
             </div>
           </div>
@@ -123,15 +136,10 @@ function buildPageUrl(newPage: number): string {
             </div>
 
             {episodesData.items.length === 0 ? (
-              <div class="card p-12 text-center">
-                <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
-                  <span class="text-3xl">📻</span>
-                </div>
-                <h3 class="text-lg font-semibold mb-2">No episodes yet</h3>
-                <p class="text-text-secondary">
-                  Episodes will appear here once they're imported.
-                </p>
-              </div>
+              <StatePanel
+                title="No episodes yet"
+                message="Episodes will appear here once they are imported."
+              />
             ) : (
               <>
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

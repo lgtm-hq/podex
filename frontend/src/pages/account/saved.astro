@@ -1,0 +1,23 @@
+---
+import AccountNavigation from '../../components/AccountNavigation.astro';
+import { AccountHome } from '../../components/AccountHome';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Saved References" description="Manage your saved Podex references">
+  <main class="min-h-screen bg-background">
+    <section class="border-b border-border-subtle bg-surface/30">
+      <div class="container py-10 md:py-14">
+        <p class="font-mono text-xs uppercase tracking-[0.24em] text-accent">Account</p>
+        <h1 class="mt-3 text-4xl">Saved references</h1>
+        <p class="mt-3 text-text-secondary">Return to the books, films, and shows you kept.</p>
+      </div>
+    </section>
+    <AccountNavigation active="saved" />
+    <div class="container py-10">
+      <div class="max-w-2xl">
+        <AccountHome client:load section="saved" />
+      </div>
+    </div>
+  </main>
+</BaseLayout>

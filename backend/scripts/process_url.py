@@ -28,7 +28,7 @@ import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import parse_qs, urlparse
 
 from dotenv import load_dotenv
@@ -43,6 +43,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 import contextlib
 
+from podex.config import get_settings
 from podex.database import SessionLocal
 from podex.models import (
     Episode,
@@ -56,6 +57,11 @@ from podex.services.extraction_review import persist_extracted_candidates
 from podex.services.llm_extraction import LLMExtractor
 from podex.services.llm_transcript_cleanup import TranscriptCleaner
 from podex.services.prompt_config import PromptConfigManager
+from podex.services.transcript_artifacts import (
+    build_transcript_artifact_store,
+    load_transcript_processing_payload,
+    persist_transcript_acquisition,
+)
 from podex.services.transcript_source import TranscriptAcquirer
 from podex.services.whisper_transcriber import WhisperConfig
 
@@ -174,7 +180,7 @@ def ensure_podcast(session: Session, slug: str, name: str) -> Podcast:
     """Get or create a podcast by slug."""
     podcast = session.query(Podcast).filter(Podcast.slug == slug).first()
     if podcast:
-        return podcast
+        return cast(Podcast, podcast)
 
     new_podcast = Podcast(name=name, slug=slug)
     session.add(new_podcast)
@@ -192,7 +198,7 @@ def get_or_create_episode(
     )
     if episode:
         logger.info(f"Found existing episode: {episode.title}")
-        return episode
+        return cast(Episode, episode)
 
     new_episode = Episode(
         podcast_id=podcast_id,
@@ -246,15 +252,12 @@ def run_transcription(session: Session, episode: Episode) -> bool:
         result = acquisition.result
         assert result is not None  # Guaranteed by acquisition.success check above
 
-        # Store transcript
-        transcript = Transcript(
-            episode_id=episode.id,
-            provider=result.provider,
-            raw_text=result.raw_text,
-            segments_json=result.segments,
-            fetched_at=result.fetched_at,
+        persist_transcript_acquisition(
+            db=session,
+            episode=episode,
+            acquisition=acquisition,
+            artifact_store=build_transcript_artifact_store(settings=get_settings()),
         )
-        session.add(transcript)
         episode.transcript_status = "completed"
         session.commit()
 
@@ -290,7 +293,7 @@ def run_cleanup(session: Session, episode: Episode) -> bool:
     transcript = (
         session.query(Transcript)
         .filter(Transcript.episode_id == episode.id)
-        .filter(Transcript.raw_text.isnot(None))
+        .order_by(Transcript.id.desc())
         .first()
     )
 
@@ -338,15 +341,20 @@ def run_cleanup(session: Session, episode: Episode) -> bool:
                     terminology.extend(ep_config.guest_context.terminology)
                 terminology.extend(ep_config.terminology)
 
-        if transcript.raw_text is None:
-            logger.warning("Transcript has no raw text, skipping cleanup")
+        payload = load_transcript_processing_payload(
+            db=session,
+            transcript=transcript,
+            artifact_store=build_transcript_artifact_store(settings=get_settings()),
+        )
+        if payload is None or not payload.raw_text:
+            logger.warning("Transcript has no retained raw text, skipping cleanup")
             episode.cleanup_status = "skipped"
             session.commit()
             return False
 
         with TranscriptCleaner(api_key=api_key) as cleaner:
             result = cleaner.cleanup_transcript(
-                transcript_text=transcript.raw_text,
+                transcript_text=payload.raw_text,
                 podcast_name=podcast.name,
                 host_name=host_name,
                 guest_name=guest_name,
@@ -386,7 +394,7 @@ def run_extraction(session: Session, episode: Episode) -> bool:
     transcript = (
         session.query(Transcript)
         .filter(Transcript.episode_id == episode.id)
-        .filter(Transcript.segments_json.isnot(None))
+        .order_by(Transcript.id.desc())
         .first()
     )
 
@@ -418,15 +426,20 @@ def run_extraction(session: Session, episode: Episode) -> bool:
     try:
         min_confidence = float(os.getenv("EXTRACTION_MIN_CONFIDENCE", "0.5"))
 
-        if transcript.segments_json is None:
-            logger.warning("Transcript has no segments, skipping extraction")
+        payload = load_transcript_processing_payload(
+            db=session,
+            transcript=transcript,
+            artifact_store=build_transcript_artifact_store(settings=get_settings()),
+        )
+        if payload is None or not payload.segments:
+            logger.warning("Transcript has no retained segments, skipping extraction")
             episode.extraction_status = "skipped"
             session.commit()
             return False
 
         with LLMExtractor(api_key=api_key) as extractor:
             extractor_job.model = extractor.model
-            result = extractor.extract_from_transcript(transcript.segments_json)
+            result = extractor.extract_from_transcript(payload.segments)
 
         if not result.items:
             logger.info("No media found in transcript")
@@ -439,7 +452,7 @@ def run_extraction(session: Session, episode: Episode) -> bool:
             db=session,
             episode=episode,
             items=result.items,
-            segments=transcript.segments_json,
+            segments=payload.segments,
             min_confidence=min_confidence,
             extraction_source="llm_extract",
             source_job_id=extractor_job.id,

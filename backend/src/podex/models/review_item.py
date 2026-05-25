@@ -22,6 +22,7 @@ class ReviewItemStatus(StrEnum):
     APPROVED = auto()
     REJECTED = auto()
     MERGED = auto()
+    SPLIT = auto()
 
 
 class ReviewPriority(StrEnum):
@@ -138,5 +139,19 @@ class ReviewItem(Base):
         self.assigned_to = actor_name or self.assigned_to
         self.decision_note = note
         self.target_media_id = target_media_id
+        self.updated_at = now
+        self.decided_at = now
+
+    def mark_split(
+        self,
+        *,
+        actor_name: str | None = None,
+        note: str | None = None,
+    ) -> None:
+        """Mark the item as split into replacement review candidates."""
+        now = datetime.now(UTC)
+        self.status = ReviewItemStatus.SPLIT.value
+        self.assigned_to = actor_name or self.assigned_to
+        self.decision_note = note
         self.updated_at = now
         self.decided_at = now

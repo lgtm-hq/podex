@@ -4,19 +4,22 @@
  * Lists all podcasts we're analyzing (input sources)
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import StatePanel from '../../components/StatePanel.astro';
 import { getPodcasts, getOverviewStats } from '../../lib/api';
 import type { Podcast, OverviewStats } from '../../lib/types';
 
 let podcasts: Podcast[] = [];
 let stats: OverviewStats | null = null;
+let error: unknown = null;
 
 try {
   [podcasts, stats] = await Promise.all([
     getPodcasts(),
     getOverviewStats(),
   ]);
-} catch (error) {
-  console.error('Failed to fetch podcasts:', error);
+} catch (cause) {
+  console.error('Failed to fetch podcasts:', cause);
+  error = cause;
 }
 ---
 
@@ -55,7 +58,14 @@ try {
       )}
 
       <!-- Podcasts grid -->
-      {podcasts.length > 0 ? (
+      {error ? (
+        <StatePanel
+          title="Unable to load sources"
+          message="Source coverage could not be loaded right now."
+          variant="error"
+          retryHref="/sources"
+        />
+      ) : podcasts.length > 0 ? (
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
           {podcasts.map((podcast) => (
             <a
@@ -115,15 +125,10 @@ try {
           ))}
         </div>
       ) : (
-        <div class="card p-12 text-center">
-          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl">🎙️</span>
-          </div>
-          <h2 class="text-lg font-semibold mb-2">No sources yet</h2>
-          <p class="text-text-secondary">
-            Podcast sources will appear here once they're added to the system.
-          </p>
-        </div>
+        <StatePanel
+          title="No sources yet"
+          message="Podcast sources will appear here once they are added to the system."
+        />
       )}
     </div>
   </main>

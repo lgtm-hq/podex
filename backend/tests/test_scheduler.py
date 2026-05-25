@@ -19,6 +19,7 @@ from podex.services.scheduler import (
         ScheduledTaskKind.INGESTION,
         ScheduledTaskKind.REINDEX,
         ScheduledTaskKind.DIGEST,
+        ScheduledTaskKind.RETENTION,
     ],
 )
 def test_compute_due_work_items_supports_core_task_kinds(

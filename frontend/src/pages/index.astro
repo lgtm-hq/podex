@@ -5,6 +5,7 @@
  */
 import BaseLayout from '../layouts/BaseLayout.astro';
 import MediaCard from '../components/MediaCard.astro';
+import StatePanel from '../components/StatePanel.astro';
 import SearchBar from '../components/SearchBar';
 import { getOverviewStats, getTopMedia, getPodcasts } from '../lib/api';
 import type { OverviewStats, MediaItem, Podcast } from '../lib/types';
@@ -12,6 +13,7 @@ import type { OverviewStats, MediaItem, Podcast } from '../lib/types';
 let stats: OverviewStats | null = null;
 let topMedia: MediaItem[] = [];
 let sources: Podcast[] = [];
+let degraded = false;
 
 try {
   [stats, topMedia, sources] = await Promise.all([
@@ -20,6 +22,7 @@ try {
     getPodcasts(),
   ]);
 } catch (error) {
+  degraded = true;
   console.error('Failed to fetch data:', error);
 }
 
@@ -99,6 +102,17 @@ const mediaTypes = [
         </div>
       </div>
     </section>
+
+    {degraded && (
+      <div class="container pb-10">
+        <StatePanel
+          title="Discovery data is temporarily unavailable"
+          message="Search is still available while featured references and source totals reload."
+          variant="notice"
+          retryHref="/"
+        />
+      </div>
+    )}
 
     <!-- Browse by Type -->
     <section class="py-16 border-t border-border-subtle">

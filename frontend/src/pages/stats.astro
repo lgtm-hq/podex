@@ -2,6 +2,7 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 import StatsCard from '../components/StatsCard.astro';
 import MediaCard from '../components/MediaCard.astro';
+import StatePanel from '../components/StatePanel.astro';
 import { getOverviewStats, getStatsByType, getTopMentioned, getTopMedia } from '../lib/api';
 import type { MediaItem, OverviewStats, TopMentioned, TypeStats } from '../lib/types';
 
@@ -51,9 +52,17 @@ const typeColors: Record<string, string> = {
     <h1 class="text-3xl font-bold mb-8">Statistics</h1>
 
     {error ? (
-      <div class="card p-8 text-center">
-        <p class="text-text-muted">Failed to load statistics. Make sure the API is running.</p>
-      </div>
+      <StatePanel
+        title="Unable to load statistics"
+        message="Catalog trends and totals could not be loaded right now."
+        variant="error"
+        retryHref="/stats"
+      />
+    ) : !stats && typeStats.length === 0 && topMentioned.length === 0 ? (
+      <StatePanel
+        title="No statistics yet"
+        message="Statistics appear after published references and mentions are available."
+      />
     ) : (
       <>
         {/* Overview Stats */}

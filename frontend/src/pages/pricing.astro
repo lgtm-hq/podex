@@ -1,0 +1,46 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+---
+
+<BaseLayout title="Pricing" description="Podex plans for discovery and personalized alerts">
+  <main class="py-12 md:py-16">
+    <div class="container max-w-4xl">
+      <header class="mb-10 max-w-2xl">
+        <p class="font-mono text-xs uppercase tracking-[0.24em] text-accent">Plans</p>
+        <h1 class="mt-3 text-4xl text-text">Discover freely. Follow with Plus.</h1>
+        <p class="mt-4 text-lg text-text-secondary">
+          Public discovery stays open. Personalized tracking will be offered as a hosted plan
+          after launch review is complete.
+        </p>
+      </header>
+      <div class="grid gap-5 md:grid-cols-2">
+        <section class="rounded-lg border border-border-subtle p-6">
+          <p class="text-xs uppercase text-text-muted">Free</p>
+          <h2 class="mt-3 text-2xl text-text">Discovery</h2>
+          <p class="mt-2 text-3xl font-semibold text-text">$0</p>
+          <ul class="mt-7 space-y-3 text-text-secondary">
+            <li>Browse public sources and references</li>
+            <li>Search mentions and source context</li>
+            <li>Explore episodes and trends</li>
+          </ul>
+        </section>
+        <section class="rounded-lg border border-accent/50 bg-surface p-6">
+          <p class="text-xs uppercase text-accent">Hosted plan</p>
+          <h2 class="mt-3 text-2xl text-text">Podex Plus</h2>
+          <p class="mt-2 text-text-muted">Pricing announced before launch</p>
+          <ul class="mt-7 space-y-3 text-text-secondary">
+            <li>Saved references and followed sources</li>
+            <li>Alert rules and email digests</li>
+            <li>Monthly personalization usage allowance</li>
+          </ul>
+          <p class="mt-7 text-sm text-text-muted">
+            Upgrades are not yet available while policy and billing readiness checks are in progress.
+          </p>
+        </section>
+      </div>
+      <p class="mt-9 text-sm text-text-muted">
+        Plan terms, limits, renewal, and cancellation information will be published before any paid enrollment.
+      </p>
+    </div>
+  </main>
+</BaseLayout>

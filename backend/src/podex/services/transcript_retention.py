@@ -313,7 +313,13 @@ def _age_at(
     Returns:
         Transcript age clamped to zero for clock skew.
     """
-    return max(now - acquired_at, timedelta())
+    normalized_acquired_at = acquired_at
+    normalized_now = now
+    if acquired_at.tzinfo is None and now.tzinfo is not None:
+        normalized_now = now.replace(tzinfo=None)
+    elif acquired_at.tzinfo is not None and now.tzinfo is None:
+        normalized_acquired_at = acquired_at.replace(tzinfo=None)
+    return max(normalized_now - normalized_acquired_at, timedelta())
 
 
 def _stable_score(

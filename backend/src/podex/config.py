@@ -19,8 +19,15 @@ class Settings(BaseSettings):
     debug: bool = False
 
     database_url: str = "sqlite:///./podex.db"
+    transcript_artifact_storage_backend: str = "encrypted_filesystem"
+    transcript_artifact_storage_path: Path = Path("./data/transcript-artifacts")
+    transcript_artifact_encryption_key: str = ""
+    transcript_artifact_s3_bucket: str = ""
+    transcript_artifact_s3_endpoint_url: str = ""
+    transcript_artifact_s3_region_name: str = ""
+    transcript_artifact_s3_access_key_id: str = ""
+    transcript_artifact_s3_secret_access_key: str = ""
 
-    api_v1_prefix: str = "/api/v1"
     api_v2_prefix: str = "/api/v2"
 
     cors_origins: list[str] = ["http://localhost:4321", "http://localhost:3000"]
@@ -38,6 +45,28 @@ class Settings(BaseSettings):
     auth_rate_limit_per_minute: int = 10
     ops_rate_limit_per_minute: int = 60
     admin_rate_limit_per_minute: int = 30
+
+    public_web_url: str = "http://localhost:4321"
+    auth_magic_link_ttl_minutes: int = 15
+    auth_session_ttl_days: int = 30
+    auth_session_cookie_name: str = "podex_session"
+    auth_session_cookie_secure: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_starttls: bool = True
+    paid_tier_enabled: bool = False
+    paid_tier_enforced: bool = False
+    paid_api_requests_per_month: int = 500
+    paid_llm_requests_per_month: int = 25
+    billing_provider_name: str = ""
+    billing_checkout_url: str = ""
+    ops_review_pending_alert_threshold: int = 50
+    ops_projection_pending_alert_threshold: int = 25
+    ops_projection_oldest_pending_minutes: int = 60
+    ops_alert_delivery_pending_threshold: int = 25
 
     # Public discovery read-model caching
     stats_cache_ttl_seconds: int = 300

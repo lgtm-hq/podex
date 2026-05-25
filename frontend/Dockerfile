@@ -3,14 +3,16 @@ FROM oven/bun:1 AS builder
 WORKDIR /app
 
 # Accept build arg for API URL
-ARG PUBLIC_API_URL=http://backend:8000/api/v1
+ARG PUBLIC_API_URL=http://backend:8000/api/v2
 ENV PUBLIC_API_URL=${PUBLIC_API_URL}
+ARG PUBLIC_WEB_URL=http://localhost:4321
+ENV PUBLIC_WEB_URL=${PUBLIC_WEB_URL}
 
 # Copy package files
-COPY package.json bun.lockb* ./
+COPY package.json bun.lock ./
 
 # Install dependencies
-RUN bun install
+RUN bun install --frozen-lockfile
 
 # Copy application code
 COPY . .

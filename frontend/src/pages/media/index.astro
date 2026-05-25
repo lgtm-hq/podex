@@ -5,6 +5,7 @@
  */
 import BaseLayout from '../../layouts/BaseLayout.astro';
 import MediaGrid from '../../components/MediaGrid.astro';
+import StatePanel from '../../components/StatePanel.astro';
 import FilterPanel from '../../components/FilterPanel';
 import Pagination from '../../components/Pagination.astro';
 import SearchBar from '../../components/SearchBar';
@@ -119,21 +120,17 @@ if (order !== 'desc') paginationParams.order = order;
 
       <!-- Results -->
       {error ? (
-        <div class="card p-12 text-center">
-          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl">⚠️</span>
-          </div>
-          <h2 class="text-lg font-semibold mb-2">Unable to load references</h2>
-          <p class="text-text-secondary">Make sure the backend API is running.</p>
-        </div>
+        <StatePanel
+          title="Unable to load references"
+          message="References could not be loaded right now."
+          variant="error"
+          retryHref="/media"
+        />
       ) : mediaData.items.length === 0 ? (
-        <div class="card p-12 text-center">
-          <div class="w-16 h-16 rounded-2xl bg-surface-elevated flex items-center justify-center mx-auto mb-4">
-            <span class="text-3xl">🔍</span>
-          </div>
-          <h2 class="text-lg font-semibold mb-2">No results found</h2>
-          <p class="text-text-secondary">Try adjusting your filters or search query.</p>
-        </div>
+        <StatePanel
+          title="No results found"
+          message="Try adjusting your filters or search query."
+        />
       ) : (
         <>
           <MediaGrid items={mediaData.items} />

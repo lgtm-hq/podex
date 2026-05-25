@@ -23,13 +23,30 @@ The required values are:
 
 - `POSTGRES_PASSWORD`
 - `DATABASE_URL`
+- `TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY`
+- `TRANSCRIPT_ARTIFACT_S3_BUCKET`
 - `MEILI_MASTER_KEY`
 - `API_KEY`
 - `CORS_ORIGINS`
 - `PUBLIC_API_URL`
+- `PUBLIC_WEB_URL`
+- `SMTP_HOST`
+- `SMTP_FROM_EMAIL`
+
+Set `SMTP_USERNAME` and `SMTP_PASSWORD` when required by the delivery provider.
+Magic-link account sign-in is unavailable until SMTP delivery is configured.
 
 `PUBLIC_API_URL` is baked into the Astro server build and should use the browser
-reachable backend URL, including `/api/v1` until the frontend migrates to v2.
+reachable backend URL, including the `/api/v2` prefix used by the Astro client.
+`PUBLIC_WEB_URL` is baked into discovery metadata and must be the public frontend
+origin used for canonical links, structured data, and the sitemap.
+
+Transcript raw-artifact payloads are encrypted by the backend before upload to a
+private S3-compatible bucket. For AWS S3, set `TRANSCRIPT_ARTIFACT_S3_REGION_NAME`
+and provide credentials through the host or workload credential provider chain.
+For another S3-compatible provider, also set `TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL`
+and, when required, the access-key variables in `.env.staging`. The bucket must
+not allow public access.
 
 ## Deploy
 

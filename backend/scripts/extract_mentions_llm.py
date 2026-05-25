@@ -22,6 +22,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from podex.config import get_settings
 from podex.database import SessionLocal
 from podex.models import IngestionRun, JobType, Transcript, TranscriptionJob
 from podex.services.episode_iterator import (
@@ -30,6 +31,10 @@ from podex.services.episode_iterator import (
 )
 from podex.services.extraction_review import persist_extracted_candidates
 from podex.services.llm_extraction import LLMExtractor
+from podex.services.transcript_artifacts import (
+    build_transcript_artifact_store,
+    load_transcript_processing_payload,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,6 +71,8 @@ def main() -> None:
         logger.info(
             f"Episode range: {episode_min or 'start'} to {episode_max or 'end'}"
         )
+
+    artifact_store = build_transcript_artifact_store(settings=get_settings())
 
     with LLMExtractor(api_key=api_key) as extractor, SessionLocal() as session:
         # Create ingestion run
@@ -126,7 +133,7 @@ def main() -> None:
                 transcript = (
                     session.query(Transcript)
                     .filter(Transcript.episode_id == episode.id)
-                    .filter(Transcript.segments_json.isnot(None))
+                    .order_by(Transcript.id.desc())
                     .first()
                 )
 
@@ -143,14 +150,19 @@ def main() -> None:
                 session.commit()
 
                 try:
-                    segments = transcript.segments_json or []
-                    if not segments:
-                        logger.warning("  No segments in transcript")
+                    payload = load_transcript_processing_payload(
+                        db=session,
+                        transcript=transcript,
+                        artifact_store=artifact_store,
+                    )
+                    if payload is None or not payload.segments:
+                        logger.warning("  No retained segments in transcript")
                         episode.extraction_status = "skipped"
                         job.skip(reason="Transcript had no segments")
                         session.commit()
                         stats["skipped"] += 1
                         continue
+                    segments = payload.segments
 
                     # Extract media - ONE API call per transcript
                     result = extractor.extract_from_transcript(segments)

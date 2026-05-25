@@ -137,20 +137,20 @@ podex/
 
 ## API Endpoints
 
-| Method | Endpoint                           | Description                |
-| ------ | ---------------------------------- | -------------------------- |
-| GET    | `/api/v1/podcasts`                 | List all podcasts          |
-| GET    | `/api/v1/podcasts/{slug}`          | Get podcast by slug        |
-| GET    | `/api/v1/podcasts/{slug}/episodes` | Get podcast episodes       |
-| GET    | `/api/v1/episodes`                 | List all episodes          |
-| GET    | `/api/v1/episodes/{id}`            | Get episode by ID          |
-| GET    | `/api/v1/episodes/{id}/mentions`   | Get mentions in episode    |
-| GET    | `/api/v1/media`                    | List all media (paginated) |
-| GET    | `/api/v1/media/{id}`               | Get media detail           |
-| GET    | `/api/v1/media/search?q=`          | Search media               |
-| GET    | `/api/v1/media/top`                | Top mentioned media        |
-| GET    | `/api/v1/stats/overview`           | Overall statistics         |
-| GET    | `/api/v1/stats/by-type`            | Stats by media type        |
+| Method | Endpoint                           | Description              |
+| ------ | ---------------------------------- | ------------------------ |
+| GET    | `/api/v2/search?q=`                | Grouped discovery search |
+| GET    | `/api/v2/podcasts`                 | List public podcasts     |
+| GET    | `/api/v2/podcasts/{slug}`          | Get podcast detail       |
+| GET    | `/api/v2/podcasts/{slug}/episodes` | Get podcast episodes     |
+| GET    | `/api/v2/episodes`                 | List public episodes     |
+| GET    | `/api/v2/episodes/{id}`            | Get episode detail       |
+| GET    | `/api/v2/media`                    | List public media        |
+| GET    | `/api/v2/media/{id}`               | Get media detail         |
+| GET    | `/api/v2/trends`                   | Discovery statistics     |
+| GET    | `/api/v2/collections`              | Editorial collections    |
+
+The retired `/api/v1` surface is no longer mounted.
 
 ## Themes
 
@@ -211,7 +211,7 @@ CORS_ORIGINS=["http://localhost:4321"]
 ### Frontend (.env)
 
 ```bash
-PUBLIC_API_URL=http://localhost:8000/api/v1
+PUBLIC_API_URL=http://localhost:8000/api/v2
 ```
 
 ## License

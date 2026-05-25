@@ -1,11 +1,19 @@
 """Tests for persisted transcript retention commands."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
-from podex.models import Episode, Podcast, Transcript
+from podex.models import (
+    Episode,
+    Podcast,
+    Transcript,
+    TranscriptArtifact,
+    TranscriptDigest,
+)
+from podex.services.transcript_artifacts import StoredTranscriptArtifactData
 from podex.services.transcript_retention import (
     TranscriptLifecycleTier,
     TranscriptRetentionPolicy,
@@ -102,6 +110,86 @@ def test_purge_transcript_if_eligible_removes_raw_fields(
     assert_that(transcript.cleaned_text).is_none()
     assert_that(transcript.segments_json).is_none()
     assert_that(transcript.retention_tier).is_equal_to("purged")
+    digest = db_session.query(TranscriptDigest).one()
+    assert_that(digest.transcript_id).is_equal_to(transcript.id)
+    assert_that(digest.summary_text).is_equal_to("digest")
+    assert_that(digest.source_text_hash).is_not_empty()
+
+
+def test_purge_transcript_if_eligible_deletes_external_raw_artifact(
+    db_session: Session,
+) -> None:
+    """Verify purge removes an externally stored raw object as one operation."""
+
+    class RecordingStore:
+        """Capture artifact deletes during purge."""
+
+        deleted: list[str] = []
+
+        def put_json(
+            self,
+            *,
+            storage_key: str,
+            payload: dict[str, object],
+        ) -> StoredTranscriptArtifactData:
+            """Satisfy the storage protocol for this deletion-only test."""
+            return StoredTranscriptArtifactData(
+                storage_key=storage_key,
+                storage_backend="fake",
+                encryption_key_id="key",
+                byte_size=0,
+            )
+
+        def delete(self, *, storage_key: str) -> None:
+            """Capture a deleted storage key."""
+            self.deleted.append(storage_key)
+
+        def get_json(self, *, storage_key: str) -> dict[str, Any]:
+            """Satisfy the storage protocol for this deletion-only test."""
+            raise AssertionError(f"Unexpected artifact read for {storage_key}")
+
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    transcript = _create_transcript(
+        db_session=db_session,
+        fetched_at=now - timedelta(days=45),
+    )
+    artifact = TranscriptArtifact(
+        transcript_id=transcript.id,
+        episode_id=transcript.episode_id,
+        storage_key=f"transcripts/{transcript.episode_id}/{transcript.id}/raw.json.enc",
+        storage_backend="fake",
+        encryption_key_id="key",
+        provider=transcript.provider,
+        source_text_hash="hash",
+        content_type="application/json",
+        byte_size=12,
+        stored_at=now,
+    )
+    db_session.add(artifact)
+    evaluate_transcript_retention(
+        db=db_session,
+        transcript=transcript,
+        extraction_confidence=0.95,
+        policy=TranscriptRetentionPolicy(
+            hot_retention_period=timedelta(days=7),
+            warm_retention_period=timedelta(days=30),
+            retention_sample_rate=0,
+        ),
+        now=now,
+    )
+    store = RecordingStore()
+
+    purged = purge_transcript_if_eligible(
+        db=db_session,
+        transcript=transcript,
+        artifact_store=store,
+        now=now,
+    )
+    db_session.commit()
+
+    assert_that(purged).is_true()
+    assert_that(store.deleted).contains(artifact.storage_key)
+    assert_that(artifact.purged_at).is_equal_to(now.replace(tzinfo=None))
 
 
 def test_source_opt_out_allows_immediate_retention_suppression(
@@ -125,3 +213,30 @@ def test_source_opt_out_allows_immediate_retention_suppression(
     assert_that(result.decision.purge_eligible).is_true()
     assert_that(transcript.source_retention_opt_out).is_true()
     assert_that(transcript.purge_eligible_at).is_equal_to(now.replace(tzinfo=None))
+
+
+def test_existing_calibration_sample_remains_exempt_during_evaluation(
+    db_session: Session,
+) -> None:
+    """Verify retention evaluation cannot discard an assigned corpus member."""
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    transcript = _create_transcript(
+        db_session=db_session,
+        fetched_at=now - timedelta(days=45),
+    )
+    transcript.retention_exempt_sample = True
+
+    result = evaluate_transcript_retention(
+        db=db_session,
+        transcript=transcript,
+        extraction_confidence=0.95,
+        policy=TranscriptRetentionPolicy(
+            hot_retention_period=timedelta(days=7),
+            warm_retention_period=timedelta(days=30),
+            retention_sample_rate=0,
+        ),
+        now=now,
+    )
+
+    assert_that(transcript.retention_exempt_sample).is_true()
+    assert_that(result.decision.purge_eligible).is_false()

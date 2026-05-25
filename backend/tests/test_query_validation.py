@@ -17,19 +17,19 @@ class TestPaginationValidation:
         "endpoint,params,expected_status",
         [
             # Invalid page values
-            ("/api/v1/episodes", "page=0&per_page=10", 422),
-            ("/api/v1/episodes", "page=-1&per_page=10", 422),
+            ("/api/v2/episodes", "page=0&per_page=10", 422),
+            ("/api/v2/episodes", "page=-1&per_page=10", 422),
             # Invalid per_page values
-            ("/api/v1/episodes", "page=1&per_page=0", 422),
-            ("/api/v1/episodes", "page=1&per_page=-1", 422),
-            ("/api/v1/episodes", "page=1&per_page=101", 422),
+            ("/api/v2/episodes", "page=1&per_page=0", 422),
+            ("/api/v2/episodes", "page=1&per_page=-1", 422),
+            ("/api/v2/episodes", "page=1&per_page=101", 422),
             # Valid values
-            ("/api/v1/episodes", "page=1&per_page=20", 200),
-            ("/api/v1/episodes", "page=1&per_page=100", 200),
+            ("/api/v2/episodes", "page=1&per_page=20", 200),
+            ("/api/v2/episodes", "page=1&per_page=100", 200),
             # Media endpoint
-            ("/api/v1/media", "page=0&per_page=10", 422),
-            ("/api/v1/media", "page=1&per_page=0", 422),
-            ("/api/v1/media", "page=1&per_page=20", 200),
+            ("/api/v2/media", "page=0&per_page=10", 422),
+            ("/api/v2/media", "page=1&per_page=0", 422),
+            ("/api/v2/media", "page=1&per_page=20", 200),
         ],
     )
     def test_pagination_validation(
@@ -60,7 +60,7 @@ class TestPodcastEpisodesPagination:
     def test_podcast_episodes_pagination(
         self, client: TestClient, podcast: Podcast, params: str, expected_status: int
     ) -> None:
-        response = client.get(f"/api/v1/podcasts/test/episodes?{params}")
+        response = client.get(f"/api/v2/podcasts/test/episodes?{params}")
         assert_that(response.status_code).is_equal_to(expected_status)
 
 
@@ -91,7 +91,7 @@ class TestMediaSortAndOrderValidation:
     def test_sort_and_order_validation(
         self, client: TestClient, params: str, expected_status: int
     ) -> None:
-        response = client.get(f"/api/v1/media?{params}")
+        response = client.get(f"/api/v2/media?{params}")
         assert_that(response.status_code).is_equal_to(expected_status)
 
 
@@ -119,5 +119,5 @@ class TestMediaTypeValidation:
     def test_media_type_validation(
         self, client: TestClient, type_value: str, expected_status: int
     ) -> None:
-        response = client.get(f"/api/v1/media?type={type_value}")
+        response = client.get(f"/api/v2/media?type={type_value}")
         assert_that(response.status_code).is_equal_to(expected_status)

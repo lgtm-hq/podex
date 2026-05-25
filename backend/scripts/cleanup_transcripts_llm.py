@@ -22,6 +22,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from podex.config import get_settings
 from podex.database import SessionLocal
 from podex.models import IngestionRun, Transcript
 from podex.services.episode_iterator import (
@@ -30,6 +31,10 @@ from podex.services.episode_iterator import (
 )
 from podex.services.llm_transcript_cleanup import TranscriptCleaner
 from podex.services.prompt_config import PromptConfigManager
+from podex.services.transcript_artifacts import (
+    build_transcript_artifact_store,
+    load_transcript_processing_payload,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -59,6 +64,7 @@ def main() -> None:
 
     # Initialize services
     prompt_manager = PromptConfigManager()
+    artifact_store = build_transcript_artifact_store(settings=get_settings())
 
     with TranscriptCleaner(api_key=api_key) as cleaner, SessionLocal() as session:
         # Create ingestion run
@@ -111,7 +117,7 @@ def main() -> None:
                     transcript = (
                         session.query(Transcript)
                         .filter(Transcript.episode_id == episode.id)
-                        .filter(Transcript.raw_text.isnot(None))
+                        .order_by(Transcript.id.desc())
                         .first()
                     )
 
@@ -149,8 +155,15 @@ def main() -> None:
                                 terminology.extend(ep_config.guest_context.terminology)
                             terminology.extend(ep_config.terminology)
 
-                    if transcript.raw_text is None:
-                        logger.warning("Transcript has no raw text, skipping cleanup")
+                    payload = load_transcript_processing_payload(
+                        db=session,
+                        transcript=transcript,
+                        artifact_store=artifact_store,
+                    )
+                    if payload is None or not payload.raw_text:
+                        logger.warning(
+                            "Transcript has no retained raw text, skipping cleanup"
+                        )
                         episode.cleanup_status = "skipped"
                         session.commit()
                         stats["skipped"] += 1
@@ -158,7 +171,7 @@ def main() -> None:
 
                     # Run cleanup
                     result = cleaner.cleanup_transcript(
-                        transcript_text=transcript.raw_text,
+                        transcript_text=payload.raw_text,
                         podcast_name=podcast.name,
                         host_name=host_name,
                         guest_name=guest_name,

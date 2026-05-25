@@ -45,6 +45,14 @@ services:
       - "8000:8000"
     environment:
       - DATABASE_URL=postgresql://podex:podex@db:5432/podex
+      - TRANSCRIPT_ARTIFACT_STORAGE_BACKEND=${TRANSCRIPT_ARTIFACT_STORAGE_BACKEND:-encrypted_filesystem}
+      - TRANSCRIPT_ARTIFACT_STORAGE_PATH=/app/data/transcript-artifacts
+      - TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY=${TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY:-}
+      - TRANSCRIPT_ARTIFACT_S3_BUCKET=${TRANSCRIPT_ARTIFACT_S3_BUCKET:-}
+      - TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL=${TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL:-}
+      - TRANSCRIPT_ARTIFACT_S3_REGION_NAME=${TRANSCRIPT_ARTIFACT_S3_REGION_NAME:-}
+      - TRANSCRIPT_ARTIFACT_S3_ACCESS_KEY_ID=${TRANSCRIPT_ARTIFACT_S3_ACCESS_KEY_ID:-}
+      - TRANSCRIPT_ARTIFACT_S3_SECRET_ACCESS_KEY=${TRANSCRIPT_ARTIFACT_S3_SECRET_ACCESS_KEY:-}
       - DEBUG=false
       # CORS: Set to your production domain(s) in production
       # Example for production: CORS_ORIGINS=["https://podex.example.com"]
@@ -53,6 +61,17 @@ services:
       - API_KEY=${API_KEY:-}
       # Rate limiting: requests per minute per IP
       - RATE_LIMIT_PER_MINUTE=${RATE_LIMIT_PER_MINUTE:-100}
+      - PUBLIC_WEB_URL=${PUBLIC_WEB_URL:-http://localhost:4321}
+      - AUTH_MAGIC_LINK_TTL_MINUTES=${AUTH_MAGIC_LINK_TTL_MINUTES:-15}
+      - AUTH_SESSION_TTL_DAYS=${AUTH_SESSION_TTL_DAYS:-30}
+      - AUTH_SESSION_COOKIE_NAME=${AUTH_SESSION_COOKIE_NAME:-podex_session}
+      - AUTH_SESSION_COOKIE_SECURE=${AUTH_SESSION_COOKIE_SECURE:-false}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USERNAME=${SMTP_USERNAME:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM_EMAIL=${SMTP_FROM_EMAIL:-}
+      - SMTP_STARTTLS=${SMTP_STARTTLS:-true}
     volumes:
       - ./data:/app/data
       - backend-data:/app/backend-data
@@ -72,12 +91,14 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        - PUBLIC_API_URL=http://localhost:8000/api/v1
+        - PUBLIC_API_URL=http://localhost:8000/api/v2
+        - PUBLIC_WEB_URL=${PUBLIC_WEB_URL:-http://localhost:4321}
     container_name: podex-frontend
     ports:
       - "4321:4321"
     environment:
-      - PUBLIC_API_URL=http://backend:8000/api/v1
+      - PUBLIC_API_URL=http://backend:8000/api/v2
+      - PUBLIC_WEB_URL=${PUBLIC_WEB_URL:-http://localhost:4321}
     depends_on:
       backend:
         condition: service_healthy

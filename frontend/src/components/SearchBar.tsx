@@ -4,12 +4,14 @@ interface SearchBarProps {
   placeholder?: string;
   onSearch?: (query: string) => void;
   debounceMs?: number;
+  targetPath?: string;
 }
 
 export default function SearchBar({
   placeholder = "Search media...",
   onSearch,
   debounceMs,
+  targetPath = "/search",
 }: SearchBarProps) {
   const [query, setQuery] = useState("");
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -39,12 +41,11 @@ export default function SearchBar({
         if (onSearch) {
           onSearch(query.trim());
         } else {
-          // Default behavior: navigate to search page
-          window.location.href = `/media?q=${encodeURIComponent(query.trim())}`;
+          window.location.href = `${targetPath}?q=${encodeURIComponent(query.trim())}`;
         }
       }
     },
-    [query, onSearch],
+    [query, onSearch, targetPath],
   );
 
   return (

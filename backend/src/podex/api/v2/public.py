@@ -8,14 +8,18 @@ from sqlalchemy.orm import Session
 from podex.api.v2.identifiers import (
     decode_episode_id,
     decode_media_id,
+    decode_mention_id,
     decode_podcast_id,
     encode_episode_id,
     encode_media_id,
     encode_mention_id,
     encode_podcast_id,
+    encode_takedown_request_id,
 )
 from podex.api.v2.schemas import (
     PodcastEpisodeListResponse,
+    PublicEditorialCollectionDetail,
+    PublicEditorialCollectionSummary,
     PublicEpisodeDetail,
     PublicEpisodeListResponse,
     PublicEpisodeMediaMention,
@@ -29,15 +33,28 @@ from podex.api.v2.schemas import (
     PublicMentionOccurrence,
     PublicPodcastDetail,
     PublicPodcastSummary,
+    PublicRelatedMedia,
     PublicSearchResultGroup,
     PublicSearchResultItem,
+    PublicSearchSelectionRequest,
+    PublicSearchSelectionResponse,
+    PublicTakedownRequestCreateRequest,
+    PublicTakedownRequestCreateResponse,
     PublicTrendingMediaItem,
     PublicTrendsByTypeSummary,
     PublicTrendsOverview,
     PublicTrendsResponse,
 )
 from podex.database import get_db
-from podex.models import MediaType
+from podex.models import (
+    AuditAction,
+    EditorialCollection,
+    Episode,
+    MediaType,
+    Mention,
+    Podcast,
+    TakedownSubjectType,
+)
 from podex.schemas import (
     EpisodeBrief,
     EpisodeWithStats,
@@ -47,16 +64,29 @@ from podex.schemas import (
     MentionWithMedia,
     PodcastWithStats,
 )
+from podex.services.audit_log import record_audit_log
 from podex.services.public_catalog import (
     get_podcast_with_stats,
     list_podcast_episodes_with_stats,
     list_podcasts_with_stats,
+)
+from podex.services.public_collections import (
+    EditorialCollectionDetailData,
+    get_published_collection,
+    list_published_collections,
 )
 from podex.services.public_episodes import (
     EpisodeDetailData,
     get_episode_detail_by_id,
     get_episode_mentions,
     list_episodes_with_stats,
+)
+from podex.services.public_explanations import (
+    EpisodeExplanationData,
+    MediaExplanationData,
+    RelatedMediaData,
+    get_episode_explanation,
+    get_media_explanation,
 )
 from podex.services.public_media import (
     get_media_detail_by_id,
@@ -76,6 +106,14 @@ from podex.services.public_search import (
     global_search as run_global_search,
 )
 from podex.services.search import get_search_client
+from podex.services.search_analytics import (
+    record_search_query,
+    record_search_selection,
+)
+from podex.services.takedown_requests import (
+    TakedownRequestInputData,
+    create_takedown_request,
+)
 from podex.services.trend_queries import (
     MediaTypeStatsData,
     OverviewStatsData,
@@ -85,6 +123,33 @@ from podex.services.trend_queries import (
 )
 
 router = APIRouter(tags=["v2-public"])
+
+
+def _decode_takedown_subject(
+    *,
+    db: Session,
+    subject_type: TakedownSubjectType,
+    subject_id: str,
+) -> int:
+    """Validate a public takedown target and return its internal identifier."""
+    try:
+        if subject_type is TakedownSubjectType.PODCAST:
+            internal_id = decode_podcast_id(podcast_id=subject_id)
+            exists = db.query(Podcast).filter(Podcast.id == internal_id).first()
+        elif subject_type is TakedownSubjectType.EPISODE:
+            internal_id = decode_episode_id(episode_id=subject_id)
+            exists = db.query(Episode).filter(Episode.id == internal_id).first()
+        else:
+            internal_id = decode_mention_id(mention_id=subject_id)
+            exists = db.query(Mention).filter(Mention.id == internal_id).first()
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail="Takedown subject not found",
+        ) from error
+    if exists is None:
+        raise HTTPException(status_code=404, detail="Takedown subject not found")
+    return internal_id
 
 
 def _to_public_trends_overview(
@@ -278,6 +343,38 @@ def _to_public_media_summary(*, media: MediaResponse) -> PublicMediaSummary:
     )
 
 
+def _to_public_collection_summary(
+    *,
+    collection: EditorialCollection,
+    item_count: int,
+) -> PublicEditorialCollectionSummary:
+    """Convert a published editorial collection to its public listing payload."""
+    return PublicEditorialCollectionSummary(
+        slug=collection.slug,
+        title=collection.title,
+        description=collection.description,
+        curator_name=collection.curator_name,
+        featured=collection.featured,
+        item_count=item_count,
+        updated_at=collection.updated_at,
+    )
+
+
+def _to_public_collection_detail(
+    *,
+    detail: EditorialCollectionDetailData,
+) -> PublicEditorialCollectionDetail:
+    """Convert a published collection and its ordered records for public use."""
+    summary = _to_public_collection_summary(
+        collection=detail.collection,
+        item_count=len(detail.items),
+    )
+    return PublicEditorialCollectionDetail(
+        **summary.model_dump(),
+        items=[_to_public_media_summary(media=item) for item in detail.items],
+    )
+
+
 def _to_public_media_reference(*, mention: MentionWithMedia) -> PublicMediaReference:
     """Convert a mention payload into a nested public media reference.
 
@@ -317,7 +414,32 @@ def _to_public_episode_media_mention(
     )
 
 
-def _to_public_media_detail(*, media: MediaDetail) -> PublicMediaDetail:
+def _to_public_related_media(*, relation: RelatedMediaData) -> PublicRelatedMedia:
+    """Convert a persisted media relationship to its public explanation shape."""
+    return PublicRelatedMedia(
+        id=encode_media_id(media_id=relation.media.id),
+        type=MediaType(relation.media.type),
+        title=relation.media.title,
+        author=relation.media.author,
+        cover_url=relation.media.cover_url,
+        relation_type=relation.relation_type,
+        direction=relation.direction,
+        source=relation.source,
+        confidence=relation.confidence,
+        evidence_text=relation.evidence_text,
+        provenance_episode_id=(
+            encode_episode_id(episode_id=relation.provenance_episode_id)
+            if relation.provenance_episode_id is not None
+            else None
+        ),
+    )
+
+
+def _to_public_media_detail(
+    *,
+    media: MediaDetail,
+    explanation: MediaExplanationData,
+) -> PublicMediaDetail:
     """Convert a detailed media payload to the v2 public shape.
 
     Args:
@@ -331,6 +453,11 @@ def _to_public_media_detail(*, media: MediaDetail) -> PublicMediaDetail:
         **summary.model_dump(),
         mentions=[
             _to_public_mention_occurrence(mention=mention) for mention in media.mentions
+        ],
+        derivative_summary=explanation.derivative_summary,
+        related_media=[
+            _to_public_related_media(relation=relation)
+            for relation in explanation.related_media
         ],
         google_books_id=media.google_books_id,
         open_library_id=media.open_library_id,
@@ -360,6 +487,7 @@ def _to_public_episode_detail(
     *,
     episode: EpisodeDetailData,
     mentions: list[MentionWithMedia],
+    explanation: EpisodeExplanationData,
 ) -> PublicEpisodeDetail:
     """Convert detailed episode data into the v2 public shape.
 
@@ -384,6 +512,8 @@ def _to_public_episode_detail(
         transcript_status=episode.transcript_status,
         extraction_status=episode.extraction_status,
         cleanup_status=episode.cleanup_status,
+        derivative_summary=explanation.derivative_summary,
+        derivative_mentioned_media_titles=explanation.mentioned_media_titles,
         created_at=episode.created_at,
         mention_count=episode.mention_count,
         mentions=[
@@ -478,23 +608,47 @@ def _to_public_global_search_response(
 def search_public_catalog(
     q: str = Query(..., min_length=1, max_length=200, description="Search query"),
     limit: int = Query(10, ge=1, le=50, description="Results per type"),
+    db: Session = Depends(get_db),
 ) -> PublicGlobalSearchResponse:
     """Run grouped public search across media, episodes, and podcasts.
 
     Args:
         q: Search query.
         limit: Maximum results per resource type.
+        db: Database session.
 
     Returns:
         Grouped public search response.
     """
-    return _to_public_global_search_response(
-        result=run_global_search(
-            client=get_search_client(),
-            query_text=q,
-            limit=limit,
-        )
+    result = run_global_search(
+        client=get_search_client(),
+        query_text=q,
+        limit=limit,
     )
+    record_search_query(
+        db=db,
+        query=result.query,
+        result_count=sum(group.total for group in result.results),
+        processing_time_ms=result.processing_time_ms,
+    )
+    db.commit()
+    return _to_public_global_search_response(result=result)
+
+
+@router.post("/search/selection", response_model=PublicSearchSelectionResponse)
+def record_public_search_selection(
+    payload: PublicSearchSelectionRequest,
+    db: Session = Depends(get_db),
+) -> PublicSearchSelectionResponse:
+    """Record an anonymous selected result for relevance analysis."""
+    record_search_selection(
+        db=db,
+        query=payload.query,
+        selected_type=payload.result_type,
+        selected_id=payload.result_id,
+    )
+    db.commit()
+    return PublicSearchSelectionResponse(recorded=True)
 
 
 @router.get("/trends", response_model=PublicTrendsResponse)
@@ -519,6 +673,29 @@ def get_public_trends_view(
         media_type=type,
     )
     return _to_public_trends_response(trends=trends)
+
+
+@router.get("/collections", response_model=list[PublicEditorialCollectionSummary])
+def list_public_collections(
+    db: Session = Depends(get_db),
+) -> list[PublicEditorialCollectionSummary]:
+    """List published editorial collections for public discovery."""
+    return [
+        _to_public_collection_summary(collection=collection, item_count=item_count)
+        for collection, item_count in list_published_collections(db=db)
+    ]
+
+
+@router.get("/collections/{slug}", response_model=PublicEditorialCollectionDetail)
+def get_public_collection(
+    slug: str,
+    db: Session = Depends(get_db),
+) -> PublicEditorialCollectionDetail:
+    """Return a published editorial collection by stable slug."""
+    detail = get_published_collection(db=db, slug=slug)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Collection not found")
+    return _to_public_collection_detail(detail=detail)
 
 
 @router.get("/podcasts", response_model=list[PublicPodcastSummary])
@@ -673,7 +850,12 @@ def get_public_episode(
     if episode is None or mentions is None:
         raise HTTPException(status_code=404, detail="Episode not found")
 
-    return _to_public_episode_detail(episode=episode, mentions=mentions)
+    explanation = get_episode_explanation(db=db, episode_id=internal_episode_id)
+    return _to_public_episode_detail(
+        episode=episode,
+        mentions=mentions,
+        explanation=explanation,
+    )
 
 
 @router.get(
@@ -772,7 +954,8 @@ def get_public_media(
     if media is None:
         raise HTTPException(status_code=404, detail="Media not found")
 
-    return _to_public_media_detail(media=media)
+    explanation = get_media_explanation(db=db, media_id=internal_media_id)
+    return _to_public_media_detail(media=media, explanation=explanation)
 
 
 @router.get("/media/{media_id}/mentions", response_model=list[PublicMentionOccurrence])
@@ -803,3 +986,51 @@ def get_public_media_mentions(
 
     mentions = get_media_mentions(db=db, media_id=internal_media_id)
     return [_to_public_mention_occurrence(mention=mention) for mention in mentions]
+
+
+@router.post(
+    "/takedown-requests",
+    response_model=PublicTakedownRequestCreateResponse,
+    status_code=201,
+)
+def create_public_takedown_request(
+    payload: PublicTakedownRequestCreateRequest,
+    db: Session = Depends(get_db),
+) -> PublicTakedownRequestCreateResponse:
+    """Submit a creator or rights-holder takedown request for review."""
+    internal_subject_id = _decode_takedown_subject(
+        db=db,
+        subject_type=payload.subject_type,
+        subject_id=payload.subject_id,
+    )
+    request = create_takedown_request(
+        db=db,
+        payload=TakedownRequestInputData(
+            subject_type=payload.subject_type,
+            subject_id=internal_subject_id,
+            requester_type=payload.requester_type,
+            requester_name=payload.requester_name,
+            requester_email=payload.requester_email,
+            basis=payload.basis,
+            requested_actions=list(payload.requested_actions),
+        ),
+    )
+    record_audit_log(
+        db=db,
+        action=AuditAction.SUBMIT_TAKEDOWN_REQUEST,
+        resource_type="takedown_request",
+        resource_id=request.id,
+        summary=f"Received takedown request for {payload.subject_type.value}",
+        metadata_json={
+            "subject_type": payload.subject_type.value,
+            "subject_id": internal_subject_id,
+            "requester_type": payload.requester_type.value,
+            "requested_actions": list(payload.requested_actions),
+        },
+    )
+    db.commit()
+    return PublicTakedownRequestCreateResponse(
+        id=encode_takedown_request_id(takedown_request_id=request.id),
+        status=request.status,
+        submitted_at=request.created_at,
+    )

@@ -14,20 +14,20 @@ Trust is a product feature, not a backend detail. Podex emphasizes provenance, c
 
 ### Current Status
 
-- **Overall status:** Phase 1 is complete and Podex is in late Phase 2: the backend now has v2 public, ops, and admin contracts plus a candidate-backed review pipeline, while the shipped frontend still relies primarily on `/api/v1` and no ops UI is live yet.
-- **Current focus:** Finish Phase 2 by operationalizing the foundations already in the repo: recurring ingestion + reindex automation, retention-aware transcript handling, canonicalization/enrichment hardening, and production deployment readiness.
+- **Overall status:** Phase 1, Phase 2, Phase 2.5, and Phase 3 are complete in the implementation plan; Podex now has dashboard, podcast management, pipeline inspection, review tooling, canonical media management, search operations, audited transcript retention, and coordinated takedown/creator opt-out workflows built on the v2 ops contracts.
+- **Current focus:** All planned implementation phases are complete; paid activation and any open-core relicensing remain blocked on recorded external legal/owner approval.
 
 ### Current Product Reality
 
-- **Backend:** `/api/v2` public discovery, ops/admin contracts, review queue + audit log flows, replay-safe extraction provenance, and search projection repair hooks are all landed.
-- **Frontend:** The public Astro site ships source, media, episode, and stats routes plus shared search/filter components, but it still calls the legacy v1 API client.
-- **Not yet shipped:** The ops console UI, account product, derivative data layer, and public-web migration to typed v2 contracts remain upcoming roadmap work.
+- **Backend:** `/api/v2` public discovery, ops/admin contracts, review queue + audit log flows, replay-safe extraction provenance, search projection repair hooks, encrypted local/S3-compatible transcript artifact adapters, artifact-backed cleanup/extraction reads, passwordless account sessions, saves, follows, alert-rule evaluation, SMTP-backed digest delivery, persisted notification preferences, and launch-gated subscription/quota enforcement are all landed.
+- **Frontend:** The public Astro site ships source, media, episode, stats, pricing, public Terms and Privacy pages, account sign-in/verification, dedicated saved/following/alerts/settings destinations with digest and membership controls, media save and source follow actions, and ops routes for dashboard, podcast, pipeline, review, audited canonical media editing, search projection/tuning, retention sampling, and transcript lifecycle preview/purge/re-acquisition workflows backed by the v2 API client.
+- **Not yet shipped:** Recorded external counsel review/sign-off remains a paid-launch blocker; any change from the existing MIT license remains subject to owner and legal approval.
 
 ### Issue Tracking Overview
 
 Retroactive parents grouping already-landed work: [#31](https://github.com/lgtm-hq/podex/issues/31) v2 API foundation, [#32](https://github.com/lgtm-hq/podex/issues/32) shared services, [#33](https://github.com/lgtm-hq/podex/issues/33) v2 public discovery, [#34](https://github.com/lgtm-hq/podex/issues/34) v2 ops + admin, [#35](https://github.com/lgtm-hq/podex/issues/35) candidate-backed extraction, [#36](https://github.com/lgtm-hq/podex/issues/36) backend tests.
 
-Roadmap parents for upcoming phases: [#58](https://github.com/lgtm-hq/podex/issues/58) foundational, [#59](https://github.com/lgtm-hq/podex/issues/59) Phase 2, [#60](https://github.com/lgtm-hq/podex/issues/60) Phase 2.5, [#61](https://github.com/lgtm-hq/podex/issues/61) Phase 3, [#62](https://github.com/lgtm-hq/podex/issues/62) Phase 4, [#63](https://github.com/lgtm-hq/podex/issues/63) Phase 5, [#64](https://github.com/lgtm-hq/podex/issues/64) Phase 6.
+Roadmap parents: [#58](https://github.com/lgtm-hq/podex/issues/58) foundational, [#59](https://github.com/lgtm-hq/podex/issues/59) Phase 2, [#60](https://github.com/lgtm-hq/podex/issues/60) Phase 2.5, [#61](https://github.com/lgtm-hq/podex/issues/61) Phase 3, [#62](https://github.com/lgtm-hq/podex/issues/62) Phase 4, [#63](https://github.com/lgtm-hq/podex/issues/63) Phase 5, [#64](https://github.com/lgtm-hq/podex/issues/64) Phase 6. The Phase 2 and Phase 2.5 parent issues may remain open for issue-tracker cleanup even though their implementation checklists are complete here.
 
 ### Completed So Far
 
@@ -61,7 +61,7 @@ Roadmap parents for upcoming phases: [#58](https://github.com/lgtm-hq/podex/issu
 - [x] Added a typed review reclassification mutation so pending candidates can be corrected before approval while preserving provenance and audit history. (#52)
 - [x] Added backend tests covering the first v2 discovery and ops activity slices. (#57)
 
-### In Progress
+### Recently Completed
 
 - [x] Expand the v2 public surface with media-focused endpoints. (#47)
 - [x] Expand the v2 public surface with search-focused endpoints. (#44)
@@ -71,13 +71,15 @@ Roadmap parents for upcoming phases: [#58](https://github.com/lgtm-hq/podex/issu
 - [x] Continue broadening `/api/v2` discovery coverage into richer discovery surfaces such as trends, collections, or related-entity views. (#46)
 - [x] Begin Phase 2 extraction workflow hardening by persisting replay-safe mention candidates and review queue items from transcript extraction. (#54)
 
-### Not Started
+### Current Phase
 
-- [ ] Phase 2.5: Derivative Data Layer (#60)
-- [ ] Phase 3: Ops Console (#61)
-- [ ] Phase 4: Account Product (#62)
-- [ ] Phase 5: Public Product Polish (#63)
-- [ ] Phase 6: Stabilization
+- [x] Phase 3: Ops Console (#61) — complete.
+
+### Later Phases
+
+- [ ] Phase 4: Account Product (#62) — product implementation complete; external legal review gate remains open before paid activation.
+- [x] Phase 5: Public Product Polish (#63) - complete.
+- [x] Phase 6: Stabilization (#64) - complete.
 
 ## 2. Product Definition
 
@@ -305,7 +307,7 @@ Podcast and source configuration evolves from YAML-based initial import toward d
 
 ### API Direction
 
-The public contract evolves from a mostly `/api/v1` CRUD-oriented surface to a clearer `/api/v2` product contract that separates public discovery, accounts, and ops concerns.
+The public contract is a typed `/api/v2` product surface separating public discovery, accounts, and ops concerns; the legacy `/api/v1` surface is retired.
 
 ### Public API Families
 
@@ -352,8 +354,30 @@ The public contract evolves from a mostly `/api/v1` CRUD-oriented surface to a c
 - `POST /api/v2/ops/review-queue/{id}/approve`
 - `POST /api/v2/ops/review-queue/{id}/reject`
 - `POST /api/v2/ops/review-queue/{id}/merge`
+- `POST /api/v2/ops/review-queue/{id}/reclassify`
+- `POST /api/v2/ops/review-queue/{id}/split`
 - `POST /api/v2/ops/episodes/{id}/rerun`
+- `GET /api/v2/ops/media/{id}/merge-preview`
+- `GET /api/v2/ops/media/{id}`
+- `PATCH /api/v2/ops/media/{id}`
+- `POST /api/v2/ops/media/{id}/aliases`
+- `POST /api/v2/ops/media/{id}/external-refs`
+- `POST /api/v2/ops/media/{id}/split`
 - `POST /api/v2/ops/media/{id}/merge`
+- `GET /api/v2/ops/search`
+- `POST /api/v2/ops/search/reindex`
+- `POST /api/v2/ops/search/tuning/preview`
+- `POST /api/v2/ops/search/tuning`
+- `GET /api/v2/ops/retention/sampling`
+- `POST /api/v2/ops/retention/sampling/recalculate`
+- `GET /api/v2/ops/retention/transcripts`
+- `POST /api/v2/ops/retention/transcripts/{id}/preview`
+- `POST /api/v2/ops/retention/transcripts/{id}/evaluate`
+- `POST /api/v2/ops/retention/transcripts/{id}/purge`
+- `POST /api/v2/ops/retention/transcripts/{id}/reacquire`
+- `POST /api/v2/takedown-requests`
+- `GET /api/v2/ops/takedown-requests`
+- `POST /api/v2/ops/takedown-requests/{id}/decision`
 - `GET /api/v2/ops/audit-log`
 - `GET /api/v2/admin/settings`
 - `PATCH /api/v2/admin/settings`
@@ -618,7 +642,7 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
 - Auth and account lifecycle flows.
 - Saves, follows, and alerts CRUD behavior.
 - Ops review decisions and rerun endpoints.
-- Backward compatibility expectations while `/api/v1` remains active.
+- Explicit verification that retired `/api/v1` routes remain unavailable.
 
 ### Integration Tests
 
@@ -680,10 +704,10 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
 
 ### Phase 2: Catalog and Pipeline Maturity
 
-- **Status:** In progress
+- **Status:** Complete
 - **Retro parent:** #35 (candidate-backed extraction workflow)
-- **Roadmap parent:** #59 (Phase 2 remaining work)
-- **Completed so far:**
+- **Roadmap parent:** #59 (Phase 2 implementation)
+- **Completed:**
   - [x] Route extracted mentions into replay-safe review candidates instead of publishing immediately. (#54)
   - [x] Persist transcript-derived timestamp/context spans and extraction-job provenance on candidates. (#55)
   - [x] Preserve immutable candidate provenance history across reruns and review-side reclassification. (#55)
@@ -698,12 +722,7 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
   - [x] Promote active-podcast episode discovery into recurring scheduled ingestion work with ingestion-run execution tracking. (#65, #11)
   - [x] Add transcript retention columns plus retention evaluation and raw-transcript purge commands. (#9, #27, #74)
   - [x] Add persisted media aliases and wire alias-backed canonical matching into review publish and merge decisions. (#12)
-- **Landed foundations informing the remaining work:**
-  - Multi-source episode discovery and dedup services already exist across Podscripts, RSS, and Spotify, but they are not yet fully promoted into recurring operator-visible workflows. (#65, #11)
-  - Transcript acquisition already supports provider fallback, but retention-aware policy and lifecycle management are still open. (#9)
-  - Canonical media merge and enrichment backends already exist, but alias modeling, operator ergonomics, and broader verification coverage are still incomplete. (#12, #13)
-  - Performance indexes and structured logging foundations are already in the repo, but endpoint-level rate limiting, cache strategy, metrics, and deployment hardening still need completion. (#14, #15, #16, #21)
-- **Remaining work (tracked under #59):**
+- **Completed follow-through (tracked under #59):**
   - [x] Promote episode discovery + dedup into recurring ingestion workflows and clearer operator visibility. (#65)
   - [x] Finish retention-aware transcript acquisition provider hooks and lifecycle automation. (#9)
   - [x] Add recurring reindex + digest execution on top of the shared schedule/work-item model. (#11)
@@ -715,7 +734,7 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
 
 ### Phase 2.5: Derivative Data Layer
 
-- **Status:** Implemented
+- **Status:** Complete
 - **Roadmap parent:** #60
 - **Work items:**
   - [x] Semantic chunks + embeddings pipeline on Postgres + pgvector. (#24)
@@ -728,66 +747,91 @@ Cross-cutting backend test coverage against these scenarios is tracked under #20
 
 ### Phase 3: Ops Console
 
-- **Status:** Not started
+- **Status:** Complete
 - **Roadmap parent:** #61
 - **Work items:**
-  - [ ] Ops dashboard (pipelines + queue + provider health). (#68)
-  - [ ] Podcast manager UI (add, edit, pause, archive). (#69)
-  - [ ] Pipeline run inspection views. (#70)
-  - [ ] Review queue UI (approve, reject, merge, split, reclassify). (#71)
-  - [ ] Canonical media management UI (merge preview, aliases, metadata). (#72)
-  - [ ] Search tooling UI (reindex, synonym tuning, projection diagnostics). (#73)
-  - [ ] Stratified retention sampling algorithm + implementation. (#74)
-  - [ ] Tiered transcript retention + confidence-gated purge (hot/warm/cold/purged + `TranscriptDigest`). (#27)
-  - [ ] DMCA takedown intake + creator opt-out registry. (#28)
+  - [x] Ops dashboard (pipelines + queue + provider health). (#68)
+  - [x] Podcast manager UI (add, edit, pause, archive). (#69)
+  - [x] Pipeline run inspection views. (#70)
+  - [x] Review queue UI (approve, reject, merge, split, reclassify). (#71)
+  - [x] Canonical media management UI (merge preview, aliases, metadata, split recovery). (#72)
+  - [x] Search tooling UI (reindex, synonym tuning, projection diagnostics). (#73)
+  - [x] Stratified retention sampling algorithm + implementation. (#74)
+  - [x] Tiered transcript retention + confidence-gated purge (hot/warm/cold/purged + `TranscriptDigest`). (#27)
+  - [x] DMCA takedown intake + creator opt-out registry. (#28)
+- **#27 complete:** Lifecycle preview/evaluation/purge, durable digests, encrypted filesystem and S3-compatible artifact adapters, purge-time artifact deletion, audited re-acquisition into a new hot transcript, persisted source-scoped policies, future-acquisition opt-out enforcement, scheduled policy evaluation, and artifact-backed cleanup/extraction processing are implemented.
+- **#28 complete:** Public takedown submission, privileged ops review/decision state, audit logging, ops intake controls, approved suppression of raw artifacts and derivatives/mentions, search projection removal, and source-level creator opt-out registration are implemented.
 
 ### Phase 4: Account Product
 
-- **Status:** Not started
+- **Status:** In progress
 - **Roadmap parent:** #62
 - **Work items:**
-  - [ ] Passwordless magic-link auth + sessions. (#75)
-  - [ ] Saves CRUD. (#76)
-  - [ ] Follows CRUD. (#77)
-  - [ ] Alerts CRUD + rule engine. (#78)
-  - [ ] Digests + notification delivery. (#79)
-  - [ ] Account pages (saved, follows, alerts, settings). (#80)
-  - [ ] Terms of Service + Privacy Policy pages. (#81)
+  - [x] Passwordless magic-link auth + sessions. (#75)
+  - [x] Saves CRUD. (#76)
+  - [x] Follows CRUD. (#77)
+  - [x] Alerts CRUD + rule engine. (#78)
+  - [x] Digests + notification delivery. (#79)
+  - [x] Account pages (saved, follows, alerts, settings). (#80)
+  - [x] Terms of Service + Privacy Policy pages. (#81)
   - [ ] Pre-launch legal review engagement. (#82)
-  - [ ] Paid subscription tier + per-user quota. (#30)
-  - [ ] Personalization features connect only to published catalog records.
+  - [x] Paid subscription tier + per-user quota. (#30)
+  - [x] Personalization features connect only to published catalog records.
   - [ ] Completed legal review + published policy pages treated as explicit gates for paid-tier launch.
+- **#75 complete:** Configurable SMTP magic-link delivery, hashed single-use challenges, secure revocable session cookies, authenticated `/api/v2/me`, and sign-in/verification/account-entry pages are implemented.
+- **#76 complete:** Authenticated saved-reference CRUD persists only public catalog media, with media-detail save toggles and account-page list/removal controls.
+- **#77 complete:** Authenticated followed-source CRUD persists only public podcasts, with source-page follow toggles and account-page list/removal controls.
+- **#78 complete:** Alert rule CRUD and deterministic evaluation monitor saved media for new mentions and followed podcasts for new episodes, producing durable events only when public counts advance.
+- **#79 complete:** SMTP-backed digest delivery consumes generated alert events exactly once, records delivered digest history, and exposes account delivery controls.
+- **#80 complete:** Dedicated account overview, saved, following, alerts, and settings destinations are wired to persisted notification preferences, including digest enablement and frequency controls.
+- **#81 complete:** Public Terms of Service and Privacy Policy pages are published in the site shell with persistent footer entry points; their content remains subject to the explicit legal-review gate.
+- **#82 prepared, awaiting external action:** `docs/legal-review-brief.md` captures the evidence package, review questions, sign-off record, and paid-launch gate; written counsel advice is required before this item can be checked complete.
+- **#30 complete:** Launch-gated hosted subscription state, external checkout adapter boundary, monthly API/LLM quota contracts, paid-feature enforcement, account membership presentation, and public pricing page are implemented; paid enrollment is disabled by default pending review.
+- **Next:** Continue into Phase 5 public product polish while the non-code legal review gate remains pending. (#17, #18)
 
 ### Phase 5: Public Product Polish
 
-- **Status:** Not started
+- **Status:** Complete
 - **Roadmap parent:** #63
 - **Work items:**
-  - [ ] Loading, empty, and degraded-state components across public + ops surfaces. (#17)
-  - [ ] v2 search experience with typed client + filters + URL state. (#18)
-  - [ ] Editorial collections experience. (#83)
-  - [ ] Detail page provenance + related entities + explanation layers. (#84)
-  - [ ] Ranking + search relevance tuning. (#85)
-  - [ ] SEO + sitemap + structured data. (#86)
+  - [x] Loading, empty, and degraded-state components across public + ops surfaces. (#17)
+  - [x] v2 search experience with typed client + filters + URL state. (#18)
+  - [x] Editorial collections experience. (#83)
+  - [x] Detail page provenance + related entities + explanation layers. (#84)
+  - [x] Ranking + search relevance tuning. (#85)
+  - [x] SEO + sitemap + structured data. (#86)
+- **#17 complete:** Shared Astro and React state panels now surface consistent empty, loading, and degraded behavior across primary discovery, account, and ops routes, including visible home-page degradation when upstream data is unavailable.
+- **#18 complete:** `/search` consumes grouped typed v2 search results, offers references/episodes/sources filters, preserves query/filter URL state, and is linked from the public shell and search controls.
+- **#83 complete:** Published-only editorial collections are persisted with ordered public media placements, exposed through typed v2 list/detail endpoints, and rendered as linked public collection experiences.
+- **#84 complete:** Ready derivative summaries and typed graph relationships now project into public media and episode details, with user-facing explanation, source evidence, and related-reference sections.
+- **#85 complete:** Existing reviewed index-tuning controls are now informed by anonymous normalized public query and result-selection signals, including an ops relevance report for empty-result and selection patterns.
+- **#86 complete:** Canonical and social metadata are centralized in the public shell, entity detail pages publish JSON-LD, and deployable `robots.txt` and `sitemap.xml` routes expose static and API-backed discovery pages.
+- **Next:** Keep paid activation disabled until external legal review is recorded, and obtain approval before any open-core relicensing.
 
 ### Phase 6: Stabilization
 
-- **Status:** Not started
+- **Status:** Complete
 - **Roadmap parent:** #64
 - **Work items:**
-  - [ ] Load test core search + ingestion paths. (#87)
-  - [ ] Metrics for review throughput, projection lag, and alert delivery. (#88)
-  - [ ] Alerting + operational playbooks. (#89)
-  - [ ] Retire legacy `/api/v1` surface. (#90)
+  - [x] Load test core search + ingestion paths. (#87)
+  - [x] Metrics for review throughput, projection lag, and alert delivery. (#88)
+  - [x] Alerting + operational playbooks. (#89)
+  - [x] Retire legacy `/api/v1` surface. (#90)
+- **#87 complete:** A bounded-concurrency HTTP load harness exercises public search and ingestion activity reads with latency/error thresholds, while opt-in pipeline triggers and a staging runbook cover intentional write-path testing without silently creating work.
+- **#88 complete:** A typed ops metrics endpoint and dashboard panels report 24-hour review throughput, pending projection age/failures, and generated/delivered/pending account notification activity.
+- **#89 complete:** Threshold-driven operational alerts surface review backlog, projection lag/failures, and notification-delivery backlog in the ops dashboard, with configurable limits and documented response playbooks.
+- **#90 complete:** The application no longer mounts legacy `/api/v1` routes, obsolete router modules and endpoint tests are removed, v2 validation remains covered, and a regression assertion preserves the retirement contract.
+- **Next:** Keep paid activation and licensing changes gated on the documented external approvals.
 
 ### Foundational pre-work
 
-- **Status:** Not started
+- **Status:** Evaluation complete; adoption pending approval
 - **Roadmap parent:** #58
 - **Work items:**
-  - [ ] Open-core license decision + repo split evaluation (AGPL vs BSL, monorepo vs split). (#29)
+  - [x] Open-core license and repo split evaluation with recorded recommendation. (#29)
+  - [ ] Owner/legal approval and adoption of any change from the existing MIT license.
 
-These items gate paid-tier launch and open-core publishing. They sit outside any single phase because they influence packaging, licensing, and legal posture across the whole product.
+`docs/open-core-license-evaluation.md` recommends AGPL for future open-core code and retaining a boundary-defined monorepo initially. The current MIT license remains unchanged unless and until ownership and legal review authorize a new licensing release.
 
 ## 12. Assumptions and Defaults
 

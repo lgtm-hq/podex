@@ -183,6 +183,30 @@ class ReviewReclassifyInputData(ReviewDecisionInputData):
     clear_suggested_author: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewSplitCandidateInputData:
+    """Replacement candidate entered when splitting one review item."""
+
+    media_type: str
+    raw_title: str
+    suggested_author: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewSplitInputData(ReviewDecisionInputData):
+    """Input for splitting a pending candidate into replacement items."""
+
+    candidates: tuple[ReviewSplitCandidateInputData, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewSplitResultData:
+    """Original split item plus newly created queue items."""
+
+    original: ReviewQueueItemData
+    items: list[ReviewQueueItemData]
+
+
 def _normalize_candidate_title(*, value: str | None) -> str | None:
     """Normalize a candidate title for matching-oriented storage.
 
@@ -576,6 +600,7 @@ def _assert_review_item_is_open(*, review_item: ReviewItem) -> None:
         ReviewItemStatus.APPROVED.value,
         ReviewItemStatus.REJECTED.value,
         ReviewItemStatus.MERGED.value,
+        ReviewItemStatus.SPLIT.value,
     }:
         raise ValueError("Review item has already been decided")
 
@@ -902,3 +927,92 @@ def reclassify_review_queue_item(
     db.flush()
 
     return get_review_queue_item_by_id(db=db, review_item_id=review_item_id)
+
+
+def split_review_queue_item(
+    *,
+    db: Session,
+    review_item_id: int,
+    payload: ReviewSplitInputData,
+) -> ReviewSplitResultData | None:
+    """Split one pending candidate into replacement review items.
+
+    Args:
+        db: Database session.
+        review_item_id: Internal review item identifier.
+        payload: Replacement candidate definitions and decision metadata.
+
+    Returns:
+        The terminal original item and newly queued replacements when found.
+
+    Raises:
+        ValueError: If the item is decided or fewer than two valid
+            replacement candidates are supplied.
+    """
+    row = _get_review_item_row(db=db, review_item_id=review_item_id)
+    if row is None:
+        return None
+
+    review_item, candidate, _episode, _podcast, _source_job = row
+    _assert_review_item_is_open(review_item=review_item)
+
+    if len(payload.candidates) < 2:
+        raise ValueError("A split requires at least two replacement candidates")
+
+    new_review_ids: list[int] = []
+    for replacement in payload.candidates:
+        raw_title = replacement.raw_title.strip()
+        if not raw_title:
+            raise ValueError("Replacement title cannot be empty")
+
+        child = MentionCandidate(
+            episode_id=candidate.episode_id,
+            source_job_id=candidate.source_job_id,
+            media_type=replacement.media_type,
+            raw_title=raw_title,
+            normalized_title=_normalize_candidate_title(value=raw_title),
+            suggested_author=(
+                replacement.suggested_author.strip()
+                if replacement.suggested_author and replacement.suggested_author.strip()
+                else None
+            ),
+            timestamp_seconds=candidate.timestamp_seconds,
+            context=candidate.context,
+            confidence=candidate.confidence,
+            extraction_source=candidate.extraction_source,
+            metadata_json=candidate.metadata_json,
+        )
+        db.add(child)
+        db.flush()
+        _record_candidate_provenance(
+            db=db,
+            candidate=child,
+            event_type=MentionCandidateProvenanceEventType.CREATED,
+            change_summary=f"Split from review item {review_item.id}",
+            changed_fields=[],
+        )
+        child_review = ReviewItem(
+            mention_candidate_id=child.id,
+            priority=review_item.priority,
+            assigned_to=payload.actor_name,
+        )
+        db.add(child_review)
+        db.flush()
+        new_review_ids.append(child_review.id)
+
+    candidate.state = MentionCandidateState.SPLIT.value
+    candidate.reviewed_at = datetime.now(UTC)
+    review_item.mark_split(actor_name=payload.actor_name, note=payload.note)
+    db.flush()
+
+    original = get_review_queue_item_by_id(db=db, review_item_id=review_item_id)
+    if original is None:
+        raise RuntimeError("Split review item could not be reloaded")
+
+    replacement_items = [
+        item
+        for child_review_id in new_review_ids
+        if (item := get_review_queue_item_by_id(db=db, review_item_id=child_review_id))
+        is not None
+    ]
+    return ReviewSplitResultData(original=original, items=replacement_items)

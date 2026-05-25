@@ -30,8 +30,12 @@ class SearchProjectionRepairReason(StrEnum):
 
     EXTRACT_RERUN = auto()
     MEDIA_MERGE = auto()
+    MEDIA_SPLIT = auto()
+    MEDIA_UPDATE = auto()
+    MANUAL_REINDEX = auto()
     REVIEW_PUBLISH = auto()
     SCHEDULED_REINDEX = auto()
+    TAKEDOWN_SUPPRESSION = auto()
 
 
 class SearchProjectionRepair(Base):

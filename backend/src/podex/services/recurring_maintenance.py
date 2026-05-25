@@ -1,25 +1,29 @@
-"""Recurring reindex and transcript digest maintenance services."""
+"""Recurring search, digest, and transcript retention maintenance services."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    AuditAction,
     Episode,
     IngestionRun,
     Media,
+    MentionCandidate,
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
     Transcript,
+    TranscriptSourceRetentionPolicy,
 )
 from podex.models.search_projection_repair import (
     SearchProjectionRepairReason,
     SearchProjectionRepairResourceType,
     SearchProjectionRepairStatus,
 )
+from podex.services.audit_log import record_audit_log
 from podex.services.scheduled_work import (
     PipelineScheduleInputData,
     PipelineScheduleSummaryData,
@@ -28,9 +32,12 @@ from podex.services.scheduled_work import (
 )
 from podex.services.scheduler import ScheduledTaskKind
 from podex.services.search_projection_repairs import ensure_search_projection_repair
+from podex.services.transcript_retention_commands import evaluate_transcript_retention
+from podex.services.transcript_retention_policies import to_retention_policy
 
 REINDEX_WORK_KIND = "search_reindex"
 TRANSCRIPT_DIGEST_WORK_KIND = "transcript_digest"
+TRANSCRIPT_RETENTION_WORK_KIND = "transcript_retention"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +60,7 @@ class MaintenanceWorkRunData:
 
 ReindexRunner = Callable[[Session], int]
 DigestRunner = Callable[[Session, datetime], int]
+RetentionRunner = Callable[[Session, datetime], int]
 
 
 def reconcile_recurring_maintenance_schedules(
@@ -60,14 +68,16 @@ def reconcile_recurring_maintenance_schedules(
     db: Session,
     reindex_interval_minutes: int = 1440,
     digest_interval_minutes: int = 360,
+    retention_interval_minutes: int = 360,
     now: datetime | None = None,
 ) -> MaintenanceScheduleResultData:
-    """Ensure recurring reindex and digest schedules exist.
+    """Ensure recurring reindex, digest, and retention schedules exist.
 
     Args:
         db: Database session.
         reindex_interval_minutes: Cadence for search reindex repair scheduling.
         digest_interval_minutes: Cadence for missing transcript digest generation.
+        retention_interval_minutes: Cadence for saved-policy retention evaluation.
         now: Deterministic timestamp for next-due calculation.
 
     Returns:
@@ -82,6 +92,17 @@ def reconcile_recurring_maintenance_schedules(
                 task_kind=ScheduledTaskKind.REINDEX,
                 interval_minutes=reindex_interval_minutes,
                 metadata_json={"kind": REINDEX_WORK_KIND},
+                start_at=effective_now,
+            ),
+            now=effective_now,
+        ),
+        upsert_pipeline_schedule(
+            db=db,
+            payload=PipelineScheduleInputData(
+                schedule_key="maintenance:transcript-retention",
+                task_kind=ScheduledTaskKind.RETENTION,
+                interval_minutes=retention_interval_minutes,
+                metadata_json={"kind": TRANSCRIPT_RETENTION_WORK_KIND},
                 start_at=effective_now,
             ),
             now=effective_now,
@@ -106,6 +127,7 @@ def plan_recurring_maintenance_work(
     db: Session,
     reindex_interval_minutes: int = 1440,
     digest_interval_minutes: int = 360,
+    retention_interval_minutes: int = 360,
     now: datetime | None = None,
 ) -> list[ScheduledWorkItemModel]:
     """Reconcile maintenance schedules and persist currently due work.
@@ -114,6 +136,7 @@ def plan_recurring_maintenance_work(
         db: Database session.
         reindex_interval_minutes: Cadence for search reindex repair scheduling.
         digest_interval_minutes: Cadence for missing transcript digest generation.
+        retention_interval_minutes: Cadence for saved-policy retention evaluation.
         now: Deterministic timestamp for planning.
 
     Returns:
@@ -124,6 +147,7 @@ def plan_recurring_maintenance_work(
         db=db,
         reindex_interval_minutes=reindex_interval_minutes,
         digest_interval_minutes=digest_interval_minutes,
+        retention_interval_minutes=retention_interval_minutes,
         now=effective_now,
     )
     planned = plan_due_scheduled_work(db=db, now=effective_now)
@@ -141,15 +165,17 @@ def run_due_maintenance_work(
     db: Session,
     reindex_runner: ReindexRunner | None = None,
     digest_runner: DigestRunner | None = None,
+    retention_runner: RetentionRunner | None = None,
     limit: int = 10,
     now: datetime | None = None,
 ) -> list[MaintenanceWorkRunData]:
-    """Run pending recurring reindex and digest work items.
+    """Run pending recurring search, digest, and retention work items.
 
     Args:
         db: Database session.
         reindex_runner: Optional reindex runner for tests or alternate execution.
         digest_runner: Optional digest runner for tests or alternate execution.
+        retention_runner: Optional retention runner for tests or alternate execution.
         limit: Maximum pending maintenance items to run.
         now: Deterministic timestamp for run bookkeeping.
 
@@ -159,12 +185,19 @@ def run_due_maintenance_work(
     effective_now = now or datetime.now(UTC)
     effective_reindex_runner = reindex_runner or enqueue_full_reindex_repairs
     effective_digest_runner = digest_runner or generate_missing_transcript_digests
+    effective_retention_runner = (
+        retention_runner or evaluate_saved_transcript_retention_policies
+    )
     pending_items = (
         db.query(ScheduledWorkItemModel)
         .filter(ScheduledWorkItemModel.status == ScheduledWorkStatus.PENDING.value)
         .filter(
             ScheduledWorkItemModel.task_kind.in_(
-                [ScheduledTaskKind.REINDEX.value, ScheduledTaskKind.DIGEST.value],
+                [
+                    ScheduledTaskKind.REINDEX.value,
+                    ScheduledTaskKind.DIGEST.value,
+                    ScheduledTaskKind.RETENTION.value,
+                ],
             ),
         )
         .order_by(ScheduledWorkItemModel.due_at.asc(), ScheduledWorkItemModel.id.asc())
@@ -176,7 +209,11 @@ def run_due_maintenance_work(
     for work_item in pending_items:
         metadata = work_item.metadata_json or {}
         kind = metadata.get("kind")
-        if kind not in {REINDEX_WORK_KIND, TRANSCRIPT_DIGEST_WORK_KIND}:
+        if kind not in {
+            REINDEX_WORK_KIND,
+            TRANSCRIPT_DIGEST_WORK_KIND,
+            TRANSCRIPT_RETENTION_WORK_KIND,
+        }:
             continue
 
         run = IngestionRun(status="in_progress", started_at=effective_now)
@@ -188,11 +225,12 @@ def run_due_maintenance_work(
         db.flush()
 
         try:
-            processed_count = (
-                effective_reindex_runner(db)
-                if kind == REINDEX_WORK_KIND
-                else effective_digest_runner(db, effective_now)
-            )
+            if kind == REINDEX_WORK_KIND:
+                processed_count = effective_reindex_runner(db)
+            elif kind == TRANSCRIPT_DIGEST_WORK_KIND:
+                processed_count = effective_digest_runner(db, effective_now)
+            else:
+                processed_count = effective_retention_runner(db, effective_now)
         except Exception as exc:
             run.status = "failed"
             run.error_summary = str(exc)
@@ -304,6 +342,86 @@ def generate_missing_transcript_digests(
     return len(transcripts)
 
 
+def evaluate_saved_transcript_retention_policies(
+    db: Session,
+    now: datetime,
+    limit: int = 100,
+) -> int:
+    """Evaluate transcripts whose source has a persisted retention policy.
+
+    Args:
+        db: Database session.
+        now: Retention evaluation timestamp.
+        limit: Maximum transcripts to evaluate.
+
+    Returns:
+        Number of transcript lifecycle decisions persisted.
+    """
+    configured_transcripts = (
+        db.query(Transcript, TranscriptSourceRetentionPolicy)
+        .join(Episode, Episode.id == Transcript.episode_id)
+        .join(
+            TranscriptSourceRetentionPolicy,
+            and_(
+                TranscriptSourceRetentionPolicy.podcast_id == Episode.podcast_id,
+                TranscriptSourceRetentionPolicy.source_key == Transcript.provider,
+            ),
+        )
+        .filter(Transcript.purged_at.is_(None))
+        .order_by(Transcript.fetched_at.asc(), Transcript.id.asc())
+        .limit(limit)
+        .all()
+    )
+
+    for transcript, record in configured_transcripts:
+        result = evaluate_transcript_retention(
+            db=db,
+            transcript=transcript,
+            extraction_confidence=_latest_extraction_confidence(
+                db=db,
+                transcript=transcript,
+            ),
+            source_retention_opt_out=record.source_retention_opt_out,
+            policy=to_retention_policy(record=record),
+            now=now,
+        )
+        record_audit_log(
+            db=db,
+            action=AuditAction.EVALUATE_TRANSCRIPT_RETENTION,
+            resource_type="transcript",
+            resource_id=transcript.id,
+            actor_name="system:retention-maintenance",
+            summary=(
+                "Automatically evaluated transcript retention as "
+                f"{result.decision.tier.value}"
+            ),
+            metadata_json={
+                "policy_version": record.policy_version,
+                "source_key": record.source_key,
+                "source_retention_opt_out": record.source_retention_opt_out,
+                "purge_eligible": result.decision.purge_eligible,
+            },
+        )
+
+    db.flush()
+    return len(configured_transcripts)
+
+
+def _latest_extraction_confidence(
+    *,
+    db: Session,
+    transcript: Transcript,
+) -> float | None:
+    """Return the highest mention-candidate confidence for one episode."""
+    row = (
+        db.query(MentionCandidate.confidence)
+        .filter(MentionCandidate.episode_id == transcript.episode_id)
+        .order_by(MentionCandidate.confidence.desc())
+        .first()
+    )
+    return row[0] if row is not None else None
+
+
 def _compact_digest_text(text: str, max_length: int = 1000) -> str:
     """Build a bounded digest from transcript text."""
     compacted = " ".join(text.split())
@@ -319,5 +437,10 @@ def _is_maintenance_metadata(
     """Check whether scheduled work metadata describes maintenance work."""
     return bool(
         metadata
-        and metadata.get("kind") in {REINDEX_WORK_KIND, TRANSCRIPT_DIGEST_WORK_KIND},
+        and metadata.get("kind")
+        in {
+            REINDEX_WORK_KIND,
+            TRANSCRIPT_DIGEST_WORK_KIND,
+            TRANSCRIPT_RETENTION_WORK_KIND,
+        },
     )

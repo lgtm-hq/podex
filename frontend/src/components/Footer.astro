@@ -10,7 +10,10 @@ const navLinks = [
   { href: '/media', label: 'References' },
   { href: '/episodes', label: 'Episodes' },
   { href: '/stats', label: 'Stats' },
+  { href: '/search', label: 'Search' },
+  { href: '/collections', label: 'Collections' },
   { href: '/about', label: 'About' },
+  { href: '/pricing', label: 'Pricing' },
 ];
 
 const mediaTypes = [
@@ -82,6 +85,16 @@ const mediaTypes = [
               Statistics
             </a>
           </li>
+          <li>
+            <a href="/legal/privacy" class="text-sm text-text-secondary hover:text-text transition-colors">
+              Privacy Policy
+            </a>
+          </li>
+          <li>
+            <a href="/legal/terms" class="text-sm text-text-secondary hover:text-text transition-colors">
+              Terms of Service
+            </a>
+          </li>
         </ul>
       </div>
     </div>
@@ -91,9 +104,10 @@ const mediaTypes = [
       <p class="text-sm text-text-muted">
         &copy; {currentYear} Podex. Built with Whisper AI.
       </p>
-      <p class="text-xs text-text-muted">
-        Powered by Astro, FastAPI, and Groq
-      </p>
+      <div class="flex gap-4 text-xs text-text-muted">
+        <a href="/legal/privacy" class="hover:text-text transition-colors">Privacy</a>
+        <a href="/legal/terms" class="hover:text-text transition-colors">Terms</a>
+      </div>
     </div>
   </div>
 </footer>

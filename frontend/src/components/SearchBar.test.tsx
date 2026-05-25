@@ -77,7 +77,7 @@ describe("SearchBar", () => {
     const input = screen.getByPlaceholderText("Search media...");
     await user.type(input, "my search{enter}");
 
-    expect(window.location.href).toBe("/media?q=my%20search");
+    expect(window.location.href).toBe("/search?q=my%20search");
   });
 
   it("should not submit empty queries", async () => {

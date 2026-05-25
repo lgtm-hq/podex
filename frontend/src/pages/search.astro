@@ -1,0 +1,23 @@
+---
+import { SearchExperience } from '../components/SearchExperience';
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+type SearchFilter = 'all' | 'media' | 'episode' | 'podcast';
+const allowedFilters = new Set<SearchFilter>(['all', 'media', 'episode', 'podcast']);
+const query = Astro.url.searchParams.get('q')?.trim() ?? '';
+const rawFilter = Astro.url.searchParams.get('type') as SearchFilter | null;
+const filter = rawFilter && allowedFilters.has(rawFilter) ? rawFilter : 'all';
+---
+
+<BaseLayout title="Search" description="Search Podex references, episodes, and podcast sources">
+  <main class="py-12 md:py-16">
+    <div class="container max-w-4xl">
+      <header class="mb-10">
+        <p class="font-mono text-xs uppercase tracking-[0.24em] text-accent">Discovery</p>
+        <h1 class="mt-3 text-4xl text-text">Search Podex</h1>
+        <p class="mt-3 text-text-secondary">Explore references together with the episodes and sources behind them.</p>
+      </header>
+      <SearchExperience client:load initialQuery={query} initialFilter={filter} />
+    </div>
+  </main>
+</BaseLayout>

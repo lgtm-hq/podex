@@ -12,7 +12,6 @@ from slowapi.util import get_remote_address
 from sqlalchemy import text
 
 from podex.api.rate_limits import EndpointRateLimitDecision, endpoint_rate_limiter
-from podex.api.router import api_router
 from podex.api.v2.router import api_v2_router
 from podex.config import get_settings
 from podex.database import engine
@@ -165,7 +164,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(api_router, prefix=settings.api_v1_prefix)
 app.include_router(api_v2_router, prefix=settings.api_v2_prefix)
 
 

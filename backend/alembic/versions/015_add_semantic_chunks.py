@@ -21,7 +21,7 @@ branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
 
-class PgVectorMigrationType(UserDefinedType[str]):
+class PgVectorMigrationType(UserDefinedType[str]):  # type: ignore[misc]
     """Migration-local fixed-dimension pgvector type with SQLite fallback."""
 
     cache_ok = True
@@ -40,7 +40,7 @@ class PgVectorMigrationType(UserDefinedType[str]):
         return "TEXT"
 
 
-@compiles(PgVectorMigrationType, "postgresql")
+@compiles(PgVectorMigrationType, "postgresql")  # type: ignore[untyped-decorator]
 def _compile_pgvector_migration_type(
     type_: PgVectorMigrationType,
     compiler: object,
@@ -50,7 +50,7 @@ def _compile_pgvector_migration_type(
     return f"vector({type_.dimensions})"
 
 
-@compiles(PgVectorMigrationType)
+@compiles(PgVectorMigrationType)  # type: ignore[untyped-decorator]
 def _compile_default_migration_type(
     type_: PgVectorMigrationType,
     compiler: object,

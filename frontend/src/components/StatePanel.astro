@@ -1,0 +1,21 @@
+---
+interface Props {
+  title: string;
+  message: string;
+  variant?: 'empty' | 'error' | 'notice';
+  retryHref?: string;
+}
+
+const { title, message, variant = 'empty', retryHref } = Astro.props;
+const styles = variant === 'error'
+  ? 'border-red-500/30 bg-red-500/10'
+  : 'border-border-subtle bg-surface';
+---
+
+<section class:list={['rounded-lg border p-6 text-center', styles]} role={variant === 'error' ? 'alert' : 'status'}>
+  <h2 class="text-lg font-semibold text-text">{title}</h2>
+  <p class="mx-auto mt-2 max-w-xl text-sm text-text-secondary">{message}</p>
+  {retryHref && (
+    <a class="btn btn-secondary mt-5" href={retryHref}>Retry</a>
+  )}
+</section>

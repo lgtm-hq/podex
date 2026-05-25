@@ -312,6 +312,44 @@ class MeilisearchClient:
             )
             return {}
 
+    def get_index_settings(self, index_name: str) -> dict[str, Any]:
+        """Get configurable settings for an index."""
+        try:
+            settings = self._client.index(index_name).get_settings()
+            return settings.model_dump()
+        except MeilisearchError as e:
+            logger.error(
+                "meilisearch_get_settings_failed",
+                index=index_name,
+                error=str(e),
+            )
+            return {}
+
+    def update_index_settings(
+        self,
+        index_name: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update configurable settings for an index."""
+        if not self._enabled:
+            return {"status": "disabled"}
+
+        try:
+            task = self._client.index(index_name).update_settings(settings)
+            logger.info(
+                "meilisearch_settings_updated",
+                index=index_name,
+                task_uid=task.task_uid,
+            )
+            return {"task_uid": task.task_uid, "status": "enqueued"}
+        except MeilisearchError as e:
+            logger.error(
+                "meilisearch_settings_update_failed",
+                index=index_name,
+                error=str(e),
+            )
+            raise
+
 
 @lru_cache
 def get_search_client() -> MeilisearchClient:

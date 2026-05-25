@@ -68,6 +68,11 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["podex.config", "podex.models.*", "alembic.versions.*"]
+# SQLAlchemy and Pydantic base/decorator types are dynamic without their plugins.
+disable_error_code = ["misc", "untyped-decorator"]
+
 # API modules use slowapi decorators which are untyped
 [[tool.mypy.overrides]]
 module = ["podex.api.*", "podex.main"]
@@ -82,8 +87,8 @@ module = "podex.services.*"
 warn_return_any = false
 disallow_untyped_defs = false
 check_untyped_defs = true
-# type-arg: SQLAlchemy generics without plugin; no-untyped-def: external lib callbacks
-disable_error_code = ["type-arg", "no-untyped-def"]
+# type-arg: SQLAlchemy generics without plugin; import-untyped: optional YAML stubs.
+disable_error_code = ["type-arg", "no-untyped-def", "import-untyped"]
 
 # Enrichment submodules - same rationale as services
 [[tool.mypy.overrides]]

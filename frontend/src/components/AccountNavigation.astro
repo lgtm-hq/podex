@@ -1,0 +1,33 @@
+---
+interface Props {
+  active: 'overview' | 'saved' | 'follows' | 'alerts' | 'settings';
+}
+
+const { active } = Astro.props;
+const links = [
+  { id: 'overview', href: '/account', label: 'Overview' },
+  { id: 'saved', href: '/account/saved', label: 'Saved' },
+  { id: 'follows', href: '/account/follows', label: 'Following' },
+  { id: 'alerts', href: '/account/alerts', label: 'Alerts' },
+  { id: 'settings', href: '/account/settings', label: 'Settings' },
+] as const;
+---
+
+<nav aria-label="Account" class="border-b border-border-subtle">
+  <div class="container flex gap-1 overflow-x-auto py-3">
+    {links.map((link) => (
+      <a
+        aria-current={link.id === active ? 'page' : undefined}
+        class:list={[
+          'rounded-md px-4 py-2 text-sm transition-colors',
+          link.id === active
+            ? 'bg-accent/10 font-medium text-accent'
+            : 'text-text-secondary hover:bg-surface hover:text-text',
+        ]}
+        href={link.href}
+      >
+        {link.label}
+      </a>
+    ))}
+  </div>
+</nav>

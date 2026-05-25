@@ -1,6 +1,6 @@
 """Tests for version 2 API endpoints."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import Any
 
@@ -12,13 +12,23 @@ from sqlalchemy.orm import Session
 from podex.api.v2 import admin as v2_admin_api
 from podex.api.v2 import ops as v2_ops_api
 from podex.api.v2 import public as v2_public_api
+from podex.config import Settings
 from podex.models import (
+    AccountAlertEvent,
+    AccountAlertRule,
+    AccountDigest,
+    AccountUser,
     AuditLog,
+    DerivativeSummaryKind,
+    EditorialCollection,
+    EditorialCollectionItem,
     Episode,
+    EpisodeSummary,
     IngestionRun,
     JobStatus,
     JobType,
     Media,
+    MediaRelationType,
     MediaType,
     Mention,
     MentionCandidate,
@@ -29,11 +39,32 @@ from podex.models import (
     ReviewItem,
     ReviewItemStatus,
     ReviewPriority,
+    SearchAnalyticsEvent,
     SearchProjectionRepair,
     SearchProjectionRepairReason,
+    SearchProjectionRepairResourceType,
     SearchProjectionRepairStatus,
+    SemanticChunk,
+    TakedownRequest,
+    Transcript,
+    TranscriptArtifact,
+    TranscriptDigest,
     TranscriptionJob,
+    TranscriptSourceRetentionPolicy,
 )
+from podex.services.derivative_summaries import (
+    stable_source_text_hash,
+    upsert_episode_summary,
+    upsert_media_summary,
+)
+from podex.services.graph_relations import (
+    GraphTripleInputData,
+    upsert_graph_triple,
+    upsert_media_relation,
+)
+from podex.services.transcript_artifacts import StoredTranscriptArtifactData
+from podex.services.transcript_source import TranscriptAcquisitionResult
+from podex.services.whisper_transcriber import TranscriptResult
 
 
 @pytest.fixture
@@ -450,6 +481,151 @@ def test_get_ops_dashboard_v2(
     assert_that(data["pipelines"]["projection_repairs_pending"]).is_zero()
     assert_that(data["pipelines"]["projection_repairs_failed"]).is_zero()
     assert_that(data["search"]["enabled"]).is_true()
+
+
+def test_get_ops_operational_metrics_reports_review_projection_and_alert_health(
+    client: TestClient,
+    db_session: Session,
+    sample_v2_data: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify ops health metrics summarize throughput, lag, and delivery."""
+    now = datetime.now(UTC)
+    episode = db_session.query(Episode).filter(Episode.title == "Episode 1").one()
+    media = db_session.query(Media).filter(Media.title == "Test Book").one()
+    candidate = MentionCandidate(
+        episode_id=episode.id,
+        media_type=MediaType.BOOK.value,
+        raw_title="Reviewed Book",
+        confidence=0.9,
+    )
+    pending_candidate = MentionCandidate(
+        episode_id=episode.id,
+        media_type=MediaType.BOOK.value,
+        raw_title="Pending Book",
+        confidence=0.8,
+    )
+    db_session.add_all([candidate, pending_candidate])
+    db_session.flush()
+    db_session.add_all(
+        [
+            ReviewItem(
+                mention_candidate_id=candidate.id,
+                status=ReviewItemStatus.APPROVED.value,
+                created_at=now - timedelta(minutes=20),
+                decided_at=now - timedelta(minutes=5),
+            ),
+            ReviewItem(
+                mention_candidate_id=pending_candidate.id,
+                status=ReviewItemStatus.PENDING.value,
+            ),
+        ]
+    )
+    db_session.add_all(
+        [
+            SearchProjectionRepair(
+                resource_type=SearchProjectionRepairResourceType.MEDIA.value,
+                resource_id=media.id,
+                status=SearchProjectionRepairStatus.PENDING.value,
+                reason=SearchProjectionRepairReason.MANUAL_REINDEX.value,
+                created_at=now - timedelta(minutes=15),
+            ),
+            SearchProjectionRepair(
+                resource_type=SearchProjectionRepairResourceType.MEDIA.value,
+                resource_id=media.id,
+                status=SearchProjectionRepairStatus.FAILED.value,
+                reason=SearchProjectionRepairReason.MANUAL_REINDEX.value,
+            ),
+        ]
+    )
+    user = AccountUser(email="metrics@example.com")
+    db_session.add(user)
+    db_session.flush()
+    rule = AccountAlertRule(
+        user_id=user.id,
+        target_type="media",
+        target_id=media.id,
+        event_type="new_mention",
+    )
+    digest = AccountDigest(
+        user_id=user.id,
+        subject="Updates",
+        body_text="One update",
+        event_count=1,
+        delivered_at=now,
+    )
+    db_session.add_all([rule, digest])
+    db_session.flush()
+    db_session.add_all(
+        [
+            AccountAlertEvent(
+                rule_id=rule.id,
+                previous_count=0,
+                observed_count=1,
+                digest_id=digest.id,
+            ),
+            AccountAlertEvent(
+                rule_id=rule.id,
+                previous_count=1,
+                observed_count=2,
+            ),
+        ]
+    )
+    db_session.commit()
+
+    response = client.get("/api/v2/ops/metrics")
+
+    assert_that(response.status_code).is_equal_to(200)
+    data = response.json()
+    assert_that(data["review"]["decisions_last_24h"]).is_equal_to(1)
+    assert_that(data["review"]["median_decision_minutes_last_24h"]).is_equal_to(15)
+    assert_that(data["projection"]["pending_repairs"]).is_equal_to(1)
+    assert_that(data["projection"]["failed_repairs"]).is_equal_to(1)
+    assert_that(data["projection"]["oldest_pending_age_seconds"]).is_greater_than(0)
+    assert_that(data["review"]["pending_items"]).is_equal_to(1)
+    assert_that(data["alerts"]["generated_events_last_24h"]).is_equal_to(2)
+    assert_that(data["alerts"]["delivered_events_last_24h"]).is_equal_to(1)
+    assert_that(data["alerts"]["pending_events"]).is_equal_to(1)
+
+    monkeypatch.setattr(
+        v2_ops_api,
+        "get_settings",
+        lambda: Settings(
+            ops_review_pending_alert_threshold=1,
+            ops_projection_pending_alert_threshold=1,
+            ops_projection_oldest_pending_minutes=1,
+            ops_alert_delivery_pending_threshold=1,
+        ),
+    )
+    alerts = client.get("/api/v2/ops/alerts")
+    alert_keys = {alert["key"] for alert in alerts.json()["alerts"]}
+
+    assert_that(alerts.status_code).is_equal_to(200)
+    assert_that(alert_keys).contains(
+        "review_backlog",
+        "projection_backlog",
+        "projection_age",
+        "projection_failures",
+        "delivery_backlog",
+    )
+
+
+def test_get_ops_operational_alerts_require_pending_repair_for_age_alert(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Avoid reporting stale projection age when no repair is pending."""
+    monkeypatch.setattr(
+        v2_ops_api,
+        "get_settings",
+        lambda: Settings(ops_projection_oldest_pending_minutes=0),
+    )
+
+    response = client.get("/api/v2/ops/alerts")
+    alert_keys = {alert["key"] for alert in response.json()["alerts"]}
+
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(alert_keys).does_not_contain("projection_age")
 
 
 def test_get_ops_pipeline_activity_v2(
@@ -991,6 +1167,62 @@ def test_reclassify_ops_review_item_v2_updates_candidate_and_logs_audit(
     )
 
 
+def test_split_ops_review_item_v2_creates_replacement_candidates_and_logs_audit(
+    client: TestClient,
+    db_session: Session,
+    sample_review_queue_data: dict[str, Any],
+) -> None:
+    """Verify splitting a candidate creates auditable pending replacements."""
+    response = client.post(
+        "/api/v2/ops/review-queue/rev_1/split",
+        json={
+            "actor_name": "operator-4",
+            "note": "Contains two distinct references",
+            "candidates": [
+                {"type": "book", "raw_title": "First Reference"},
+                {
+                    "type": "movie",
+                    "raw_title": "Second Reference",
+                    "suggested_author": "Second Director",
+                },
+            ],
+        },
+    )
+
+    assert_that(response.status_code).is_equal_to(200)
+    data = response.json()
+    assert_that(data["original"]["status"]).is_equal_to(ReviewItemStatus.SPLIT.value)
+    assert_that(data["original"]["candidate"]["state"]).is_equal_to(
+        MentionCandidateState.SPLIT.value,
+    )
+    assert_that(data["items"]).is_length(2)
+    assert_that(data["items"][0]["status"]).is_equal_to(ReviewItemStatus.PENDING.value)
+    assert_that(data["items"][0]["candidate"]["raw_title"]).is_equal_to(
+        "First Reference",
+    )
+    assert_that(data["items"][1]["candidate"]["type"]).is_equal_to("movie")
+    assert_that(
+        data["items"][1]["candidate"]["provenance"][0]["change_summary"]
+    ).is_equal_to(
+        "Split from review item 1",
+    )
+
+    original_candidate = (
+        db_session.query(MentionCandidate)
+        .filter(MentionCandidate.id == sample_review_queue_data["candidate"].id)
+        .one()
+    )
+    assert_that(original_candidate.state).is_equal_to(MentionCandidateState.SPLIT.value)
+    assert_that(db_session.query(ReviewItem).count()).is_equal_to(3)
+    assert_that(db_session.query(Mention).count()).is_zero()
+
+    audit_response = client.get("/api/v2/ops/audit-log?resource_type=review_item")
+    assert_that(audit_response.status_code).is_equal_to(200)
+    assert_that(audit_response.json()["items"][0]["action"]).is_equal_to(
+        "split_review_item",
+    )
+
+
 def test_merge_ops_review_item_v2_uses_existing_media(
     client: TestClient,
     db_session: Session,
@@ -1220,6 +1452,70 @@ def test_get_public_media_detail_v2(
     assert_that(data["mentions"][0]["episode"]["id"]).is_equal_to("ep_1")
 
 
+def test_public_detail_explanations_expose_ready_summaries_and_relation_provenance(
+    client: TestClient,
+    db_session: Session,
+    sample_v2_data: dict[str, Any],
+) -> None:
+    """Verify public details project durable summaries and supporting relations."""
+    media = db_session.query(Media).filter(Media.title == "Test Book").one()
+    episode = db_session.query(Episode).filter(Episode.title == "Episode 1").one()
+    related = Media(type=MediaType.MOVIE.value, title="Test Adaptation")
+    db_session.add(related)
+    db_session.flush()
+    upsert_media_summary(
+        db=db_session,
+        media=media,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="derivatives-v1",
+        prompt_version="summary-v1",
+        source_model="model-v1",
+        source_text_hash=stable_source_text_hash("media explanation"),
+        summary_text="A recurring recommendation in conversations about craft.",
+    )
+    upsert_episode_summary(
+        db=db_session,
+        episode=episode,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="derivatives-v1",
+        prompt_version="summary-v1",
+        source_model="model-v1",
+        source_text_hash=stable_source_text_hash("episode explanation"),
+        summary_text="The guest recommends a book for new readers.",
+    )
+    upsert_media_relation(
+        db=db_session,
+        subject_media_id=media.id,
+        object_media_id=related.id,
+        relation_type=MediaRelationType.ADAPTED_FROM,
+        source="episode_extraction",
+        provenance_episode_id=episode.id,
+        confidence=0.91,
+        evidence_text="The adaptation follows this book.",
+    )
+    db_session.commit()
+
+    media_detail = client.get("/api/v2/media/med_1")
+    episode_detail = client.get("/api/v2/episodes/ep_1")
+
+    assert_that(media_detail.status_code).is_equal_to(200)
+    assert_that(media_detail.json()["derivative_summary"]).contains(
+        "recurring recommendation",
+    )
+    relation = media_detail.json()["related_media"][0]
+    assert_that(relation["id"]).is_equal_to(f"med_{related.id}")
+    assert_that(relation["relation_type"]).is_equal_to("adapted_from")
+    assert_that(relation["direction"]).is_equal_to("outgoing")
+    assert_that(relation["provenance_episode_id"]).is_equal_to("ep_1")
+    assert_that(episode_detail.status_code).is_equal_to(200)
+    assert_that(episode_detail.json()["derivative_summary"]).contains(
+        "recommends a book",
+    )
+    assert_that(episode_detail.json()["derivative_mentioned_media_titles"]).contains(
+        "Test Book",
+    )
+
+
 def test_get_public_media_mentions_v2(
     client: TestClient,
     sample_v2_media_data: dict[str, Any],
@@ -1346,6 +1642,7 @@ def fake_global_search_client() -> FakeSearchClient:
 
 def test_search_public_catalog_v2(
     client: TestClient,
+    db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
     fake_global_search_client: FakeSearchClient,
 ) -> None:
@@ -1378,6 +1675,54 @@ def test_search_public_catalog_v2(
     assert_that(episode_group["hits"][0]["url"]).is_equal_to("/episodes/ep_11")
     assert_that(podcast_group["hits"][0]["id"]).is_equal_to("pod_5")
     assert_that(podcast_group["hits"][0]["url"]).is_equal_to("/podcasts/media-podcast")
+    event = db_session.query(SearchAnalyticsEvent).one()
+    assert_that(event.query).is_equal_to("gatsby")
+    assert_that(event.result_count).is_equal_to(3)
+
+
+def test_public_selection_and_ops_search_analytics_support_relevance_review(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify anonymous selections and query aggregations are reviewable in ops."""
+    db_session.add_all(
+        [
+            SearchAnalyticsEvent(
+                event_type="query",
+                query="no results",
+                result_count=0,
+                processing_time_ms=3,
+            ),
+            SearchAnalyticsEvent(
+                event_type="query",
+                query="gatsby",
+                result_count=3,
+                processing_time_ms=4,
+            ),
+        ],
+    )
+    db_session.commit()
+
+    selected = client.post(
+        "/api/v2/search/selection",
+        json={
+            "query": "  Gatsby ",
+            "result_type": "media",
+            "result_id": "med_7",
+        },
+    )
+    summary = client.get("/api/v2/ops/search/analytics")
+
+    assert_that(selected.status_code).is_equal_to(200)
+    assert_that(selected.json()["recorded"]).is_true()
+    assert_that(summary.status_code).is_equal_to(200)
+    assert_that(summary.json()["searches"]).is_equal_to(2)
+    assert_that(summary.json()["zero_result_searches"]).is_equal_to(1)
+    assert_that(summary.json()["selections"]).is_equal_to(1)
+    gatsby = next(
+        item for item in summary.json()["queries"] if item["query"] == "gatsby"
+    )
+    assert_that(gatsby["selections"]).is_equal_to(1)
 
 
 def test_search_public_catalog_v2_when_disabled(
@@ -1397,6 +1742,51 @@ def test_search_public_catalog_v2_when_disabled(
     data = response.json()
     assert_that(data["results"]).is_empty()
     assert_that(data["processing_time_ms"]).is_equal_to(0)
+
+
+def test_public_editorial_collections_expose_published_ordered_media_only(
+    client: TestClient,
+    db_session: Session,
+    sample_v2_data: dict[str, Any],
+) -> None:
+    """Verify curated discovery exposes published collection records by slug."""
+    media = db_session.query(Media).filter(Media.title == "Test Book").one()
+    published = EditorialCollection(
+        slug="essential-books",
+        title="Essential Books",
+        description="Books repeatedly discussed across the catalog.",
+        curator_name="Podex Editors",
+        published=True,
+        featured=True,
+    )
+    hidden = EditorialCollection(
+        slug="draft-list",
+        title="Draft List",
+        description="Not ready.",
+        published=False,
+    )
+    db_session.add_all([published, hidden])
+    db_session.flush()
+    db_session.add(
+        EditorialCollectionItem(
+            collection_id=published.id,
+            media_id=media.id,
+            position=1,
+        ),
+    )
+    db_session.commit()
+
+    listed = client.get("/api/v2/collections")
+    detail = client.get("/api/v2/collections/essential-books")
+    hidden_detail = client.get("/api/v2/collections/draft-list")
+
+    assert_that(listed.status_code).is_equal_to(200)
+    assert_that(listed.json()).is_length(1)
+    assert_that(listed.json()[0]["slug"]).is_equal_to("essential-books")
+    assert_that(listed.json()[0]["item_count"]).is_equal_to(1)
+    assert_that(detail.status_code).is_equal_to(200)
+    assert_that(detail.json()["items"][0]["id"]).is_equal_to("med_1")
+    assert_that(hidden_detail.status_code).is_equal_to(404)
 
 
 def test_list_public_episodes_v2(
@@ -1514,6 +1904,7 @@ class RecordingSearchMutationClient:
         self.fail_delete = fail_delete
         self.added_documents: list[tuple[str, list[dict[str, Any]]]] = []
         self.deleted_documents: list[tuple[str, int | str]] = []
+        self.updated_settings: list[tuple[str, dict[str, Any]]] = []
 
     def add_documents(
         self,
@@ -1563,6 +1954,28 @@ class RecordingSearchMutationClient:
 
         self.deleted_documents.append((index_name, document_id))
         return {"status": "enqueued"}
+
+    def search(
+        self,
+        index_name: str,
+        query: str,
+        limit: int = 10,
+        offset: int = 0,
+        filters: str | None = None,
+        sort: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return deterministic baseline results for tuning previews."""
+        del offset, filters, sort
+        return {"hits": [{"title": f"{query} baseline", "index": index_name}][:limit]}
+
+    def update_index_settings(
+        self,
+        index_name: str,
+        settings: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Record applied search tuning settings."""
+        self.updated_settings.append((index_name, settings))
+        return {"status": "enqueued", "task_uid": 42}
 
 
 def test_get_ops_search_projection_v2(
@@ -1645,6 +2058,571 @@ def test_get_ops_search_projection_v2_when_disabled(
     assert_that(data["indexes"][2]["document_count"]).is_equal_to(0)
     assert_that(data["repair_summary"]["pending"]).is_zero()
     assert_that(data["repairs"]).is_empty()
+
+
+def test_queue_ops_search_reindex_v2_scopes_repairs_and_records_audit(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify manually requested reindex work is scoped to source and media type."""
+    matching_podcast = Podcast(name="Books Podcast", slug="books-podcast")
+    other_podcast = Podcast(name="Movies Podcast", slug="movies-podcast")
+    db_session.add_all([matching_podcast, other_podcast])
+    db_session.flush()
+    matching_episode = Episode(podcast_id=matching_podcast.id, title="Book Episode")
+    other_episode = Episode(podcast_id=other_podcast.id, title="Movie Episode")
+    book = Media(type=MediaType.BOOK.value, title="Indexed Book")
+    movie = Media(type=MediaType.MOVIE.value, title="Indexed Movie")
+    db_session.add_all([matching_episode, other_episode, book, movie])
+    db_session.flush()
+    db_session.add_all(
+        [
+            Mention(episode_id=matching_episode.id, media_id=book.id),
+            Mention(episode_id=other_episode.id, media_id=movie.id),
+        ]
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/api/v2/ops/search/reindex",
+        json={
+            "resource_type": "all",
+            "podcast_id": f"pod_{matching_podcast.id}",
+            "media_type": "book",
+            "actor_name": "operator",
+        },
+    )
+
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(response.json()).contains_entry({"media_queued": 1})
+    assert_that(response.json()).contains_entry({"episodes_queued": 1})
+    repairs = db_session.query(SearchProjectionRepair).all()
+    assert_that(repairs).is_length(2)
+    assert_that({repair.reason for repair in repairs}).is_equal_to({"manual_reindex"})
+    audit = client.get("/api/v2/ops/audit-log?resource_type=search_projection").json()
+    assert_that(audit["items"][0]["action"]).is_equal_to("reindex_search")
+
+
+def test_preview_and_apply_ops_search_tuning_v2(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify operators can review baseline hits then apply audited settings."""
+    search_client = RecordingSearchMutationClient()
+    monkeypatch.setattr(v2_ops_api, "get_search_client", lambda: search_client)
+    payload = {
+        "index": "media",
+        "query": "sci fi",
+        "synonyms": {"sci fi": ["science fiction"]},
+        "ranking_rules": ["words", "exactness", "mention_count:desc"],
+        "actor_name": "operator",
+    }
+
+    preview = client.post("/api/v2/ops/search/tuning/preview", json=payload)
+    applied = client.post("/api/v2/ops/search/tuning", json=payload)
+
+    assert_that(preview.status_code).is_equal_to(200)
+    assert_that(preview.json()["sample_hits"][0]["title"]).is_equal_to(
+        "sci fi baseline"
+    )
+    assert_that(applied.status_code).is_equal_to(200)
+    assert_that(applied.json()["task_uid"]).is_equal_to(42)
+    assert_that(search_client.updated_settings).is_length(1)
+    assert_that(search_client.updated_settings[0][1]["synonyms"]).contains_entry(
+        {"sci fi": ["science fiction"]},
+    )
+
+
+def test_recalculate_ops_retention_sampling_v2_reports_and_audits_policy(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify a versioned calibration policy persists coverage and audit data."""
+    podcast = Podcast(name="Calibration Podcast", slug="calibration-podcast")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Calibration Episode")
+    db_session.add(episode)
+    db_session.flush()
+    db_session.add(
+        MentionCandidate(
+            episode_id=episode.id,
+            media_type="book",
+            raw_title="Calibration Book",
+            confidence=0.95,
+        )
+    )
+    db_session.add(
+        Transcript(
+            episode_id=episode.id,
+            provider="rss",
+            raw_text="calibration transcript",
+            fetched_at=datetime(2026, 5, 20, tzinfo=UTC),
+        )
+    )
+    db_session.commit()
+
+    response = client.post(
+        "/api/v2/ops/retention/sampling/recalculate",
+        json={
+            "policy_version": "calibration-v2",
+            "sample_rate": 0.1,
+            "actor_name": "operator",
+        },
+    )
+    persisted = client.get("/api/v2/ops/retention/sampling")
+
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(response.json()["policy_version"]).is_equal_to("calibration-v2")
+    assert_that(response.json()["sampled_count"]).is_equal_to(1)
+    assert_that(persisted.json()["strata"][0]["topic"]).is_equal_to("book")
+    audit = client.get(
+        "/api/v2/ops/audit-log?resource_type=retention_sampling_policy"
+    ).json()
+    assert_that(audit["items"][0]["action"]).is_equal_to("update_retention_sampling")
+
+
+def test_ops_transcript_retention_preview_evaluate_and_purge_preserves_digest(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify raw purge is dry-runnable, coverage-gated, audited, and provable."""
+    podcast = Podcast(name="Retention Ops Podcast", slug="retention-ops")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Retention Ops Episode")
+    media = Media(type=MediaType.BOOK.value, title="Retention Book")
+    db_session.add_all([episode, media])
+    db_session.flush()
+    transcript = Transcript(
+        episode_id=episode.id,
+        provider="rss",
+        raw_text="A durable raw transcript mentioning Retention Book.",
+        cleaned_text="A durable raw transcript mentioning Retention Book.",
+        fetched_at=datetime(2025, 1, 1, tzinfo=UTC),
+        digest_text="Processing proof summary.",
+        digest_created_at=datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    db_session.add(transcript)
+    db_session.flush()
+    db_session.add_all(
+        [
+            Mention(episode_id=episode.id, media_id=media.id),
+            MentionCandidate(
+                episode_id=episode.id,
+                media_type="book",
+                raw_title="Retention Book",
+                confidence=0.98,
+            ),
+            SemanticChunk(
+                episode_id=episode.id,
+                transcript_id=transcript.id,
+                chunk_key="retention-ops-chunk",
+                chunk_index=0,
+                pipeline_version="chunks-v1",
+                source_text_hash=stable_source_text_hash(transcript.cleaned_text or ""),
+                text="Retention Book evidence.",
+                context_snippet="Retention Book",
+                token_count=3,
+            ),
+        ]
+    )
+    upsert_episode_summary(
+        db=db_session,
+        episode=episode,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="derivatives-v1",
+        prompt_version="summary-v1",
+        source_model="model-v1",
+        source_text_hash=stable_source_text_hash("episode"),
+        summary_text="Episode derivative.",
+    )
+    upsert_media_summary(
+        db=db_session,
+        media=media,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="derivatives-v1",
+        prompt_version="summary-v1",
+        source_model="model-v1",
+        source_text_hash=stable_source_text_hash("media"),
+        summary_text="Media derivative.",
+    )
+    upsert_graph_triple(
+        db=db_session,
+        payload=GraphTripleInputData(
+            subject_media_id=media.id,
+            predicate="topic",
+            object_value="retention",
+            provenance_episode_id=episode.id,
+            source="test",
+        ),
+    )
+    db_session.commit()
+    policy = {
+        "policy_version": "retention-lifecycle-v1",
+        "hot_days": 1,
+        "warm_days": 2,
+        "min_purge_confidence": 0.85,
+        "actor_name": "operator",
+    }
+
+    preview = client.post(
+        f"/api/v2/ops/retention/transcripts/trn_{transcript.id}/preview",
+        json=policy,
+    )
+    assert_that(preview.status_code).is_equal_to(200)
+    assert_that(preview.json()["purge_eligible"]).is_true()
+    assert_that(transcript.retention_tier).is_equal_to("hot")
+
+    evaluated = client.post(
+        f"/api/v2/ops/retention/transcripts/trn_{transcript.id}/evaluate",
+        json=policy,
+    )
+    purged = client.post(
+        f"/api/v2/ops/retention/transcripts/trn_{transcript.id}/purge",
+        json=policy,
+    )
+
+    assert_that(evaluated.json()["transcript"]["tier"]).is_equal_to("cold")
+    assert_that(purged.status_code).is_equal_to(200)
+    assert_that(purged.json()["transcript"]["has_raw_payload"]).is_false()
+    assert_that(purged.json()["digest"]["summary_text"]).is_equal_to(
+        "Processing proof summary."
+    )
+    assert_that(transcript.raw_text).is_none()
+    saved_policy = db_session.query(TranscriptSourceRetentionPolicy).one()
+    assert_that(saved_policy.source_key).is_equal_to(transcript.provider)
+    assert_that(saved_policy.policy_version).is_equal_to("retention-lifecycle-v1")
+    audit = client.get("/api/v2/ops/audit-log?resource_type=transcript").json()
+    assert_that([item["action"] for item in audit["items"]]).contains(
+        "evaluate_transcript_retention",
+        "purge_transcript",
+        "update_transcript_retention_policy",
+    )
+
+
+def test_ops_transcript_purge_blocks_incomplete_derivative_coverage(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify raw text remains stored when public-safe derivatives are missing."""
+    podcast = Podcast(name="Blocked Retention Podcast", slug="blocked-retention")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Blocked Episode")
+    db_session.add(episode)
+    db_session.flush()
+    transcript = Transcript(
+        episode_id=episode.id,
+        provider="rss",
+        raw_text="Raw content still needed until derivatives exist.",
+        retention_tier="cold",
+        purge_eligible_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+    db_session.add(transcript)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v2/ops/retention/transcripts/trn_{transcript.id}/purge",
+        json={"policy_version": "retention-lifecycle-v1"},
+    )
+
+    assert_that(response.status_code).is_equal_to(409)
+    assert_that(response.json()["detail"]).contains("Derivative coverage")
+    assert_that(transcript.raw_text).is_not_none()
+
+
+def test_ops_transcript_reacquire_creates_audited_hot_encrypted_asset(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify a purged transcript can be explicitly re-acquired for reprocessing."""
+
+    class ReacquisitionStore:
+        """Return encrypted-object metadata for the endpoint boundary test."""
+
+        def put_json(
+            self,
+            *,
+            storage_key: str,
+            payload: dict[str, object],
+        ) -> StoredTranscriptArtifactData:
+            """Return successful private storage metadata."""
+            return StoredTranscriptArtifactData(
+                storage_key=storage_key,
+                storage_backend="encrypted_filesystem",
+                encryption_key_id="key-v1",
+                byte_size=128,
+            )
+
+        def delete(self, *, storage_key: str) -> None:
+            """No-op delete required by the storage port."""
+
+    class ReacquisitionAcquirer:
+        """Provide a deterministic replacement transcript."""
+
+        def acquire(self, episode: Episode) -> TranscriptAcquisitionResult:
+            """Return a fresh raw transcript payload."""
+            return TranscriptAcquisitionResult(
+                success=True,
+                result=TranscriptResult(
+                    provider="podscripts.co",
+                    raw_text="A re-acquired transcript payload.",
+                    segments=[
+                        {"start": 0, "text": "A re-acquired transcript payload."}
+                    ],
+                    fetched_at=datetime(2026, 5, 24, tzinfo=UTC),
+                ),
+                source="podscripts.co",
+            )
+
+        def close(self) -> None:
+            """Release no resources for the deterministic test provider."""
+
+    podcast = Podcast(name="Reacquisition Podcast", slug="reacquisition-podcast")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Purged Episode")
+    db_session.add(episode)
+    db_session.flush()
+    purged_at = datetime(2026, 5, 23, tzinfo=UTC)
+    purged = Transcript(
+        episode_id=episode.id,
+        provider="podscripts.co",
+        raw_text=None,
+        retention_tier="purged",
+        purged_at=purged_at,
+    )
+    db_session.add(purged)
+    db_session.flush()
+    digest = TranscriptDigest(
+        transcript_id=purged.id,
+        episode_id=episode.id,
+        digest_key=f"transcript:{purged.id}:purge:proof",
+        source_text_hash="proof",
+        provider=purged.provider,
+        summary_text="prior proof",
+        generated_at=purged_at,
+        purged_at=purged_at,
+    )
+    db_session.add(digest)
+    db_session.commit()
+    client.app.dependency_overrides[v2_ops_api.get_ops_transcript_artifact_store] = (
+        lambda: ReacquisitionStore()
+    )
+    client.app.dependency_overrides[v2_ops_api.get_ops_transcript_acquirer] = lambda: (
+        ReacquisitionAcquirer()
+    )
+
+    response = client.post(
+        f"/api/v2/ops/retention/transcripts/trn_{purged.id}/reacquire",
+        json={"actor_name": "operator", "note": "new model run"},
+    )
+
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(response.json()["transcript"]["tier"]).is_equal_to("hot")
+    assert_that(response.json()["transcript"]["has_raw_payload"]).is_true()
+    assert_that(response.json()["transcript"]["has_stored_artifact"]).is_true()
+    assert_that(response.json()["prior_digest_id"]).is_equal_to(f"digest_{digest.id}")
+    artifact = db_session.query(TranscriptArtifact).one()
+    fresh_transcript = (
+        db_session.query(Transcript).filter(Transcript.id != purged.id).one()
+    )
+    assert_that(fresh_transcript.raw_text).is_none()
+    assert_that(fresh_transcript.segments_json).is_none()
+    assert_that(artifact.reacquired_from_digest_id).is_equal_to(digest.id)
+    audit = client.get("/api/v2/ops/audit-log?resource_type=transcript").json()
+    assert_that(audit["items"][0]["action"]).is_equal_to("reacquire_transcript")
+
+
+def test_public_takedown_submission_can_be_reviewed_and_decided_in_ops(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Verify public takedown intake produces an auditable privileged case."""
+    podcast = Podcast(name="Claimed Podcast", slug="claimed-podcast")
+    db_session.add(podcast)
+    db_session.commit()
+
+    submitted = client.post(
+        "/api/v2/takedown-requests",
+        json={
+            "subject_type": "podcast",
+            "subject_id": f"pod_{podcast.id}",
+            "requester_type": "rights_holder",
+            "requester_name": "Rights Holder",
+            "requester_email": "rights@example.com",
+            "basis": "I control distribution rights for this catalog source.",
+            "requested_actions": [
+                "suppress_raw_transcript",
+                "purge_search_projection",
+            ],
+        },
+    )
+
+    assert_that(submitted.status_code).is_equal_to(201)
+    assert_that(submitted.json()["status"]).is_equal_to("pending")
+    case = db_session.query(TakedownRequest).one()
+    assert_that(submitted.json()["id"]).is_equal_to(f"td_{case.id}")
+
+    queued = client.get("/api/v2/ops/takedown-requests?status=pending")
+    assert_that(queued.status_code).is_equal_to(200)
+    assert_that(queued.json()["items"][0]["requester_email"]).is_equal_to(
+        "rights@example.com"
+    )
+
+    decided = client.post(
+        f"/api/v2/ops/takedown-requests/td_{case.id}/decision",
+        json={
+            "status": "approved",
+            "actor_name": "operator",
+            "note": "Ownership evidence verified; suppression execution pending.",
+        },
+    )
+
+    assert_that(decided.status_code).is_equal_to(200)
+    assert_that(decided.json()["status"]).is_equal_to("approved")
+    assert_that(decided.json()["decided_by"]).is_equal_to("operator")
+    audit = client.get("/api/v2/ops/audit-log?resource_type=takedown_request").json()
+    assert_that([item["action"] for item in audit["items"]]).contains(
+        "submit_takedown_request",
+        "decide_takedown_request",
+    )
+
+
+def test_approved_creator_takedown_executes_suppression_and_source_opt_out(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify approved creator actions remove payloads and register opt-out."""
+
+    class DeletingArtifactStore:
+        """Record artifact deletions initiated by approved suppression."""
+
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        def delete(self, *, storage_key: str) -> None:
+            """Record one encrypted artifact deletion."""
+            self.deleted.append(storage_key)
+
+    podcast = Podcast(name="Creator Podcast", slug="creator-podcast")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Claimed Episode")
+    media = Media(type=MediaType.BOOK.value, title="Claimed Book")
+    db_session.add_all([episode, media])
+    db_session.flush()
+    transcript = Transcript(
+        episode_id=episode.id,
+        provider="rss",
+        cleaned_text="Creator discusses Claimed Book.",
+        digest_text="Suppression proof.",
+        digest_created_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+    db_session.add(transcript)
+    db_session.flush()
+    artifact = TranscriptArtifact(
+        transcript_id=transcript.id,
+        episode_id=episode.id,
+        storage_key="private/transcript.json.enc",
+        storage_backend="filesystem",
+        encryption_key_id="test-key",
+        provider=transcript.provider,
+        source_text_hash="source-hash",
+        content_type="application/json",
+        byte_size=123,
+        stored_at=datetime(2026, 5, 1, tzinfo=UTC),
+    )
+    mention = Mention(episode_id=episode.id, media_id=media.id, context="Claimed Book")
+    chunk = SemanticChunk(
+        episode_id=episode.id,
+        transcript_id=transcript.id,
+        chunk_key="claimed-chunk",
+        chunk_index=0,
+        pipeline_version="chunks-v1",
+        source_text_hash="source-hash",
+        text="Claimed Book",
+        context_snippet="Claimed Book",
+        token_count=2,
+    )
+    db_session.add_all([artifact, mention, chunk])
+    db_session.flush()
+    db_session.add(
+        MentionCandidate(
+            episode_id=episode.id,
+            media_id=media.id,
+            mention_id=mention.id,
+            media_type=MediaType.BOOK.value,
+            raw_title="Claimed Book",
+            confidence=0.99,
+            state=MentionCandidateState.PUBLISHED.value,
+        ),
+    )
+    upsert_episode_summary(
+        db=db_session,
+        episode=episode,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="derivatives-v1",
+        prompt_version="summary-v1",
+        source_model="model-v1",
+        source_text_hash=stable_source_text_hash("Claimed Episode"),
+        summary_text="Public episode summary.",
+    )
+    db_session.commit()
+    search_client = RecordingSearchMutationClient()
+    artifact_store = DeletingArtifactStore()
+    monkeypatch.setattr(v2_ops_api, "get_search_client", lambda: search_client)
+    client.app.dependency_overrides[v2_ops_api.get_ops_transcript_artifact_store] = (
+        lambda: artifact_store
+    )
+
+    submitted = client.post(
+        "/api/v2/takedown-requests",
+        json={
+            "subject_type": "podcast",
+            "subject_id": f"pod_{podcast.id}",
+            "requester_type": "creator",
+            "requester_name": "Creator",
+            "requester_email": "creator@example.com",
+            "basis": "I created and own this podcast feed and its recordings.",
+            "requested_actions": [
+                "suppress_raw_transcript",
+                "suppress_derivatives",
+                "unpublish_mentions",
+                "purge_search_projection",
+                "register_source_opt_out",
+            ],
+        },
+    )
+    decided = client.post(
+        f"/api/v2/ops/takedown-requests/{submitted.json()['id']}/decision",
+        json={
+            "status": "approved",
+            "actor_name": "operator",
+            "note": "Verified creator identity and control of the feed.",
+        },
+    )
+
+    assert_that(decided.status_code).is_equal_to(200)
+    assert_that(artifact_store.deleted).is_equal_to(["private/transcript.json.enc"])
+    assert_that(db_session.query(Mention).count()).is_zero()
+    assert_that(db_session.query(SemanticChunk).count()).is_zero()
+    assert_that(db_session.query(EpisodeSummary).count()).is_zero()
+    db_session.refresh(transcript)
+    db_session.refresh(artifact)
+    assert_that(transcript.cleaned_text).is_none()
+    assert_that(transcript.purged_at).is_not_none()
+    assert_that(artifact.purged_at).is_not_none()
+    policy = db_session.query(TranscriptSourceRetentionPolicy).one()
+    assert_that(policy.source_retention_opt_out).is_true()
+    assert_that(search_client.deleted_documents).contains(
+        ("episodes", episode.id),
+    )
+    case = db_session.query(TakedownRequest).one()
+    assert_that(case.metadata_json).contains_entry({"mentions_unpublished": 1})
+    assert_that(case.metadata_json).contains_entry({"source_opt_outs_registered": 1})
 
 
 def test_approve_ops_review_item_v2_syncs_search_projection(
@@ -1758,3 +2736,74 @@ def test_merge_ops_media_v2_syncs_search_projection(
         {"id": target_media.id},
     )
     assert_that(search_client.deleted_documents).contains(("media", source_media.id))
+
+
+def test_update_ops_media_v2_syncs_search_projection(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify metadata corrections refresh the media search document."""
+    search_client = RecordingSearchMutationClient()
+    monkeypatch.setattr(v2_ops_api, "get_search_client", lambda: search_client)
+    media = Media(type=MediaType.BOOK.value, title="Working Title")
+    db_session.add(media)
+    db_session.commit()
+
+    response = client.patch(
+        f"/api/v2/ops/media/med_{media.id}",
+        json={"title": "Canonical Title"},
+    )
+
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(search_client.added_documents).is_length(1)
+    assert_that(search_client.added_documents[0][1][0]).contains_entry(
+        {"id": media.id},
+    )
+    assert_that(search_client.added_documents[0][1][0]).contains_entry(
+        {"title": "Canonical Title"},
+    )
+
+
+def test_split_ops_media_v2_syncs_both_media_projections(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify split recovery refreshes both affected media search documents."""
+    search_client = RecordingSearchMutationClient()
+    monkeypatch.setattr(v2_ops_api, "get_search_client", lambda: search_client)
+    podcast = Podcast(name="Split Projection Podcast", slug="split-projection")
+    db_session.add(podcast)
+    db_session.flush()
+    episode = Episode(podcast_id=podcast.id, title="Split Projection Episode")
+    source = Media(type=MediaType.BOOK.value, title="Combined Record")
+    db_session.add_all([episode, source])
+    db_session.flush()
+    mention = Mention(episode_id=episode.id, media_id=source.id)
+    db_session.add(mention)
+    db_session.commit()
+
+    response = client.post(
+        f"/api/v2/ops/media/med_{source.id}/split",
+        json={
+            "mention_ids": [f"men_{mention.id}"],
+            "type": "book",
+            "title": "Recovered Record",
+        },
+    )
+
+    assert_that(response.status_code).is_equal_to(200)
+    projected = [documents[0] for _, documents in search_client.added_documents]
+    assert_that(projected).is_length(2)
+    assert_that(projected[0]).contains_entry({"id": source.id})
+    assert_that(projected[0]).contains_entry({"mention_count": 0})
+    assert_that(projected[1]).contains_entry({"title": "Recovered Record"})
+    assert_that(projected[1]).contains_entry({"mention_count": 1})
+
+
+def test_legacy_v1_surface_is_retired(client: TestClient) -> None:
+    """Ensure removed public v1 endpoints are not mounted again."""
+    response = client.get("/api/v1/media")
+
+    assert_that(response.status_code).is_equal_to(404)

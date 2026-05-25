@@ -191,20 +191,13 @@ def _get_admin_limit(settings: Settings) -> int:
 ENDPOINT_RATE_LIMIT_RULES: tuple[EndpointRateLimitRule, ...] = (
     EndpointRateLimitRule(
         name="public-search",
-        path_prefixes=(
-            "/api/v1/search",
-            "/api/v1/media/search",
-            "/api/v2/search",
-        ),
+        path_prefixes=("/api/v2/search",),
         requests_per_minute=_get_public_search_limit,
         methods=frozenset({"GET"}),
     ),
     EndpointRateLimitRule(
         name="auth",
-        path_prefixes=(
-            "/api/v1/auth",
-            "/api/v2/auth",
-        ),
+        path_prefixes=("/api/v2/auth",),
         requests_per_minute=_get_auth_limit,
     ),
     EndpointRateLimitRule(

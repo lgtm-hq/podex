@@ -21,6 +21,7 @@
     "@turbocoder13/turbo-themes": "^0.12.15",
     "astro": "^6.3.1",
     "cmdk": "^1.1.1",
+    "html-escaper": "^3.0.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "typescript": "^6.0.3"
@@ -29,6 +30,7 @@
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
+    "@types/html-escaper": "^3.0.4",
     "@types/node": "^22.19.18",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

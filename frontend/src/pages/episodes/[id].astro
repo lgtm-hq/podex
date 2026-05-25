@@ -1,12 +1,13 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import StatePanel from '../../components/StatePanel.astro';
 import { getEpisode, getEpisodeMentions } from '../../lib/api';
-import type { EpisodeWithStats, MediaType, MentionWithMedia } from '../../lib/types';
+import type { EpisodeDetail, MediaType, MentionWithMedia } from '../../lib/types';
 
 const { id } = Astro.params;
-const episodeId = parseInt(id as string);
+const episodeId = id as string;
 
-let episode: EpisodeWithStats | null = null;
+let episode: EpisodeDetail | null = null;
 let mentions: MentionWithMedia[] = [];
 let error: unknown = null;
 
@@ -53,35 +54,57 @@ function formatTimestamp(seconds: number): string {
 
 // Group mentions by media
 interface EpisodeMentionGroup {
-  id: number;
+  id: string;
   title: string;
   type: MediaType;
   author: string | null;
   mentions: MentionWithMedia[];
 }
 
-const uniqueMedia = new Map<number, EpisodeMentionGroup>();
+const uniqueMedia = new Map<string, EpisodeMentionGroup>();
 mentions.forEach((mention) => {
   if (!uniqueMedia.has(mention.media_id)) {
     uniqueMedia.set(mention.media_id, {
       id: mention.media_id,
       title: mention.media_title,
       type: mention.media_type,
-      author: mention.media_author,
+      author: mention.media_author ?? null,
       mentions: [],
     });
   }
   uniqueMedia.get(mention.media_id)?.mentions.push(mention);
 });
 const mediaList = Array.from(uniqueMedia.values());
+const structuredData = episode ? {
+  '@context': 'https://schema.org',
+  '@type': 'PodcastEpisode',
+  name: episode.title,
+  datePublished: episode.published_at,
+  duration: episode.duration_seconds ? `PT${episode.duration_seconds}S` : undefined,
+  partOfSeries: {
+    '@type': 'PodcastSeries',
+    name: episode.podcast_name,
+    url: new URL(`/sources/${episode.podcast_slug}`, Astro.url).toString(),
+  },
+  url: new URL(`/episodes/${episode.id}`, Astro.url).toString(),
+} : undefined;
 ---
 
-<BaseLayout title={episode?.title || 'Episode'}>
+<BaseLayout
+  title={episode?.title || 'Episode'}
+  description={episode?.derivative_summary ?? 'A podcast episode with traced reference mentions'}
+  image={episode?.thumbnail_url}
+  ogType="article"
+  structuredData={structuredData}
+>
   <div class="container mx-auto px-4 py-8">
     {error ? (
-      <div class="card p-8 text-center">
-        <p class="text-text-muted">Failed to load episode. Make sure the API is running.</p>
-      </div>
+      <StatePanel
+        title="Unable to load this episode"
+        message="This episode could not be retrieved right now."
+        variant="error"
+        retryHref={`/episodes/${episodeId}`}
+      />
     ) : episode && (
       <>
         <!-- Episode Header -->
@@ -154,11 +177,30 @@ const mediaList = Array.from(uniqueMedia.values());
           </div>
         </div>
 
+        {(episode.derivative_summary || episode.derivative_mentioned_media_titles.length > 0) && (
+          <section class="mb-12 max-w-3xl">
+            <p class="text-sm font-medium text-primary mb-2">Episode overview</p>
+            {episode.derivative_summary && (
+              <p class="text-lg leading-relaxed text-text-secondary mb-4">
+                {episode.derivative_summary}
+              </p>
+            )}
+            {episode.derivative_mentioned_media_titles.length > 0 && (
+              <p class="text-sm text-text-muted">
+                References identified in this episode: {episode.derivative_mentioned_media_titles.join(', ')}.
+              </p>
+            )}
+          </section>
+        )}
+
         <!-- Media Mentioned -->
         <div>
           <h2 class="text-2xl font-bold mb-6">
             Media Mentioned ({mediaList.length})
           </h2>
+          <p class="text-sm text-text-muted mb-6">
+            Each reference below is tied to a captured mention and, when available, a timestamped source moment.
+          </p>
 
           {mediaList.length > 0 ? (
             <div class="space-y-6">

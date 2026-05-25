@@ -21,6 +21,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from podex.config import get_settings
 from podex.database import SessionLocal
 from podex.models import IngestionRun, Transcript
 from podex.services.episode_iterator import (
@@ -28,6 +29,11 @@ from podex.services.episode_iterator import (
     ProcessingStage,
 )
 from podex.services.prompt_config import PromptConfigManager
+from podex.services.transcript_artifacts import (
+    build_transcript_artifact_store,
+    persist_transcript_acquisition,
+)
+from podex.services.transcript_source import TranscriptAcquisitionResult
 from podex.services.whisper_transcriber import (
     WhisperBackend,
     WhisperConfig,
@@ -195,15 +201,18 @@ def main() -> None:
                         initial_prompt=initial_prompt,
                     )
 
-                    # Store transcript
-                    transcript = Transcript(
-                        episode_id=episode.id,
-                        provider=result.provider,
-                        raw_text=result.raw_text,
-                        segments_json=result.segments,
-                        fetched_at=result.fetched_at,
+                    persist_transcript_acquisition(
+                        db=session,
+                        episode=episode,
+                        acquisition=TranscriptAcquisitionResult(
+                            success=True,
+                            result=result,
+                            source=result.provider,
+                        ),
+                        artifact_store=build_transcript_artifact_store(
+                            settings=get_settings()
+                        ),
                     )
-                    session.add(transcript)
 
                     # Update episode status
                     episode.transcript_status = "completed"

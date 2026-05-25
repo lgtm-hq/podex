@@ -42,8 +42,15 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 # Add the src directory to the path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from podex.config import get_settings
 from podex.database import SessionLocal
 from podex.models import Episode, IngestionRun, Podcast, Transcript
+from podex.services.transcript_artifacts import (
+    build_transcript_artifact_store,
+    persist_transcript_acquisition,
+)
+from podex.services.transcript_source import TranscriptAcquisitionResult
+from podex.services.whisper_transcriber import TranscriptResult
 
 logging.basicConfig(
     level=logging.INFO,
@@ -78,7 +85,7 @@ class ScrapedEpisode:
     url: str
     date: str | None = None
     transcript: str | None = None
-    segments: list[dict[str, float | str]] | None = None
+    segments: list[dict[str, str | float]] | None = None
 
 
 class PodscriptsScraper:
@@ -175,7 +182,7 @@ class PodscriptsScraper:
         # Extract transcript text
         # The transcript is usually in the main content area
         transcript_text = ""
-        segments: list[dict[str, float | str]] = []
+        segments: list[dict[str, str | float]] = []
 
         # Look for transcript content - common patterns
         content_area = (
@@ -530,15 +537,23 @@ def main() -> None:
                         skipped += 1
                         continue
 
-                    # Store transcript
-                    transcript = Transcript(
-                        episode_id=episode.id,
-                        provider="podscripts.co",
-                        raw_text=ep.transcript,
-                        segments_json=ep.segments,
-                        fetched_at=datetime.now(UTC),
+                    persist_transcript_acquisition(
+                        db=session,
+                        episode=episode,
+                        acquisition=TranscriptAcquisitionResult(
+                            success=True,
+                            result=TranscriptResult(
+                                provider="podscripts.co",
+                                raw_text=ep.transcript or "",
+                                segments=ep.segments or [],
+                                fetched_at=datetime.now(UTC),
+                            ),
+                            source="podscripts.co",
+                        ),
+                        artifact_store=build_transcript_artifact_store(
+                            settings=get_settings()
+                        ),
                     )
-                    session.add(transcript)
                     session.commit()
                     stored += 1
                     logger.info(f"  Stored episode {ep.episode_number or ep.title}")

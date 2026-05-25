@@ -15,8 +15,15 @@ class IdentifierPrefix(StrEnum):
     REVIEW_ITEM = "rev"
     INGESTION_RUN = "run"
     TRANSCRIPTION_JOB = "job"
+    TRANSCRIPT = "trn"
+    TRANSCRIPT_ARTIFACT = "artifact"
+    TRANSCRIPT_DIGEST = "digest"
     PIPELINE_SCHEDULE = "sched"
     SCHEDULED_WORK = "work"
+    TAKEDOWN_REQUEST = "td"
+    ACCOUNT_USER = "usr"
+    ACCOUNT_ALERT_RULE = "alert"
+    ACCOUNT_DIGEST = "mail"
 
 
 def encode_identifier(*, prefix: IdentifierPrefix, value: int) -> str:
@@ -80,6 +87,33 @@ def decode_podcast_id(*, podcast_id: str) -> int:
     return decode_identifier(prefix=IdentifierPrefix.PODCAST, value=podcast_id)
 
 
+def encode_account_user_id(*, user_id: int) -> str:
+    """Encode an account user identifier.
+
+    Args:
+        user_id: Internal account user identifier.
+
+    Returns:
+        Opaque account user identifier.
+    """
+    return encode_identifier(prefix=IdentifierPrefix.ACCOUNT_USER, value=user_id)
+
+
+def encode_account_alert_rule_id(*, rule_id: int) -> str:
+    """Encode an account alert rule identifier."""
+    return encode_identifier(prefix=IdentifierPrefix.ACCOUNT_ALERT_RULE, value=rule_id)
+
+
+def decode_account_alert_rule_id(*, rule_id: str) -> int:
+    """Decode an account alert rule identifier."""
+    return decode_identifier(prefix=IdentifierPrefix.ACCOUNT_ALERT_RULE, value=rule_id)
+
+
+def encode_account_digest_id(*, digest_id: int) -> str:
+    """Encode an account notification digest identifier."""
+    return encode_identifier(prefix=IdentifierPrefix.ACCOUNT_DIGEST, value=digest_id)
+
+
 def encode_episode_id(*, episode_id: int) -> str:
     """Encode an episode identifier.
 
@@ -128,6 +162,18 @@ def encode_mention_id(*, mention_id: int) -> str:
     return encode_identifier(prefix=IdentifierPrefix.MENTION, value=mention_id)
 
 
+def decode_mention_id(*, mention_id: str) -> int:
+    """Decode a mention boundary identifier.
+
+    Args:
+        mention_id: Opaque mention identifier.
+
+    Returns:
+        Internal mention identifier.
+    """
+    return decode_identifier(prefix=IdentifierPrefix.MENTION, value=mention_id)
+
+
 def encode_ingestion_run_id(*, ingestion_run_id: int) -> str:
     """Encode an ingestion run identifier.
 
@@ -155,6 +201,45 @@ def encode_transcription_job_id(*, transcription_job_id: int) -> str:
     return encode_identifier(
         prefix=IdentifierPrefix.TRANSCRIPTION_JOB,
         value=transcription_job_id,
+    )
+
+
+def encode_transcript_id(*, transcript_id: int) -> str:
+    """Encode a transcript identifier."""
+    return encode_identifier(prefix=IdentifierPrefix.TRANSCRIPT, value=transcript_id)
+
+
+def decode_transcript_id(*, transcript_id: str) -> int:
+    """Decode a transcript boundary identifier."""
+    return decode_identifier(prefix=IdentifierPrefix.TRANSCRIPT, value=transcript_id)
+
+
+def encode_transcript_digest_id(*, digest_id: int) -> str:
+    """Encode a transcript digest identifier."""
+    return encode_identifier(prefix=IdentifierPrefix.TRANSCRIPT_DIGEST, value=digest_id)
+
+
+def encode_transcript_artifact_id(*, artifact_id: int) -> str:
+    """Encode a transcript artifact identifier."""
+    return encode_identifier(
+        prefix=IdentifierPrefix.TRANSCRIPT_ARTIFACT,
+        value=artifact_id,
+    )
+
+
+def encode_takedown_request_id(*, takedown_request_id: int) -> str:
+    """Encode a takedown request identifier."""
+    return encode_identifier(
+        prefix=IdentifierPrefix.TAKEDOWN_REQUEST,
+        value=takedown_request_id,
+    )
+
+
+def decode_takedown_request_id(*, takedown_request_id: str) -> int:
+    """Decode a takedown request boundary identifier."""
+    return decode_identifier(
+        prefix=IdentifierPrefix.TAKEDOWN_REQUEST,
+        value=takedown_request_id,
     )
 
 

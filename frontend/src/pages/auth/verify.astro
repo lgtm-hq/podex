@@ -1,0 +1,24 @@
+---
+import { MagicLinkVerification } from '../../components/MagicLinkVerification';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const token = Astro.url.searchParams.get('token') ?? '';
+const requestedRedirect = Astro.url.searchParams.get('redirect_path');
+const redirectPath = requestedRedirect?.startsWith('/') && !requestedRedirect.startsWith('//')
+  ? requestedRedirect
+  : '/account';
+---
+
+<BaseLayout title="Verify Sign In" description="Verify your Podex account sign-in link">
+  <main class="min-h-screen bg-background">
+    <div class="container py-16 md:py-24">
+      <div class="max-w-xl rounded-lg border border-border-subtle bg-surface p-7">
+        <p class="font-mono text-xs uppercase tracking-[0.24em] text-accent">Account / Verification</p>
+        <h1 class="mt-3 text-3xl">Completing sign in</h1>
+        <div class="mt-6">
+          <MagicLinkVerification client:load token={token} redirectPath={redirectPath} />
+        </div>
+      </div>
+    </div>
+  </main>
+</BaseLayout>

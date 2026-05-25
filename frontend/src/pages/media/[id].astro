@@ -1,15 +1,17 @@
 ---
 import BaseLayout from '../../layouts/BaseLayout.astro';
+import StatePanel from '../../components/StatePanel.astro';
 import MentionList from '../../components/MentionList.astro';
 import RatingBadge from '../../components/RatingBadge.astro';
 import ExternalLinks from '../../components/ExternalLinks.astro';
 import AwardsBadge from '../../components/AwardsBadge.astro';
 import VerificationBadge from '../../components/VerificationBadge.astro';
+import { SaveMediaButton } from '../../components/SaveMediaButton';
 import { getMediaById } from '../../lib/api';
 import type { CastMember, MediaDetail } from '../../lib/types';
 
 const { id } = Astro.params;
-const mediaId = parseInt(id as string);
+const mediaId = id as string;
 
 let media: MediaDetail | null = null;
 let error: unknown = null;
@@ -81,6 +83,16 @@ const hasKnownFor = media?.known_for && media.known_for.length > 0;
 
 // Check for Wikipedia categories
 const hasWikiCategories = media?.wikipedia_categories && media.wikipedia_categories.length > 0;
+const structuredData = media ? {
+  '@context': 'https://schema.org',
+  '@type': media.type === 'book' ? 'Book' : media.type === 'movie' ? 'Movie' : 'CreativeWork',
+  name: media.title,
+  description: media.description,
+  image: media.cover_url,
+  creator: media.author ? { '@type': 'Person', name: media.author } : undefined,
+  datePublished: media.year ? String(media.year) : undefined,
+  url: new URL(`/media/${media.id}`, Astro.url).toString(),
+} : undefined;
 
 // Format currency
 const formatCurrency = (amount: number) => {
@@ -109,12 +121,21 @@ const getPlaceholderIcon = (type: string) => {
 };
 ---
 
-<BaseLayout title={media?.title || 'Media'}>
+<BaseLayout
+  title={media?.title || 'Media'}
+  description={media?.description ?? 'A referenced work mentioned in podcast conversations'}
+  image={media?.cover_url}
+  ogType="article"
+  structuredData={structuredData}
+>
   <div class="container mx-auto px-4 py-8">
     {error ? (
-      <div class="card p-8 text-center">
-        <p class="text-text-muted">Failed to load media. Make sure the API is running.</p>
-      </div>
+      <StatePanel
+        title="Unable to load this reference"
+        message="This reference could not be retrieved right now."
+        variant="error"
+        retryHref={`/media/${mediaId}`}
+      />
     ) : media && (
       <>
         <!-- Media Header -->
@@ -199,6 +220,10 @@ const getPlaceholderIcon = (type: string) => {
                   <p class="text-sm text-text-muted">citations</p>
                 </div>
               )}
+            </div>
+
+            <div class="mb-6">
+              <SaveMediaButton client:load mediaId={media.id} />
             </div>
 
             {/* Verification Badge (for academic papers) */}
@@ -439,11 +464,59 @@ const getPlaceholderIcon = (type: string) => {
           </div>
         </div>
 
+        {media.derivative_summary && (
+          <section class="mb-12 max-w-3xl">
+            <p class="text-sm font-medium text-primary mb-2">Why this reference matters</p>
+            <p class="text-lg leading-relaxed text-text-secondary">
+              {media.derivative_summary}
+            </p>
+          </section>
+        )}
+
+        {media.related_media.length > 0 && (
+          <section class="mb-12">
+            <h2 class="text-2xl font-bold mb-2">Related References</h2>
+            <p class="text-sm text-text-muted mb-6">
+              Relationships are shown with their supporting source and evidence when available.
+            </p>
+            <div class="grid gap-4 md:grid-cols-2">
+              {media.related_media.map((related) => (
+                <article class="card p-4">
+                  <a href={`/media/${related.id}`} class="font-semibold text-text hover:text-primary">
+                    {related.title}
+                  </a>
+                  {related.author && <p class="text-sm text-text-muted">by {related.author}</p>}
+                  <p class="mt-3 text-xs uppercase tracking-wide text-primary">
+                    {related.relation_type.replaceAll('_', ' ')}
+                  </p>
+                  {related.evidence_text && (
+                    <p class="mt-2 text-sm text-text-secondary">{related.evidence_text}</p>
+                  )}
+                  <p class="mt-3 text-xs text-text-muted">
+                    Source: {related.source}
+                    {related.provenance_episode_id && (
+                      <>
+                        {' | '}
+                        <a href={`/episodes/${related.provenance_episode_id}`} class="hover:text-primary">
+                          Supporting episode
+                        </a>
+                      </>
+                    )}
+                  </p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
         <!-- Mentions Section -->
         <div>
           <h2 class="text-2xl font-bold mb-6">
             All Mentions ({media.mentions.length})
           </h2>
+          <p class="text-sm text-text-muted mb-6">
+            These episode moments are the recorded provenance for this catalog reference.
+          </p>
           {media.mentions.length > 0 ? (
             <MentionList mentions={media.mentions} />
           ) : (

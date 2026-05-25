@@ -24,6 +24,8 @@ dependencies = [
   "pyyaml>=6.0",
   "beautifulsoup4>=4.12.0",
   "meilisearch>=0.31.0",
+  "cryptography>=48.0.0",
+  "boto3>=1.43.14",
 ]
 
 [project.optional-dependencies]
@@ -127,6 +129,8 @@ module = [
   "groq.*",
   "yt_dlp.*",
   "slowapi.*",
+  "boto3.*",
+  "botocore.*",
   "pydantic.*",
   "pydantic_settings.*",
   "sqlalchemy.*",

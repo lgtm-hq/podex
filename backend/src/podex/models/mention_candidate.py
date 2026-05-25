@@ -25,6 +25,7 @@ class MentionCandidateState(StrEnum):
     PUBLISHED = auto()
     REJECTED = auto()
     MERGED = auto()
+    SPLIT = auto()
 
 
 class MentionCandidate(Base):

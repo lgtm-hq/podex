@@ -1,5 +1,6 @@
 """Ops-focused v2 API endpoints."""
 
+from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -9,8 +10,11 @@ from sqlalchemy.orm import Session
 from podex.api.v2.identifiers import (
     decode_episode_id,
     decode_media_id,
+    decode_mention_id,
     decode_podcast_id,
     decode_review_item_id,
+    decode_takedown_request_id,
+    decode_transcript_id,
     encode_audit_log_id,
     encode_episode_id,
     encode_ingestion_run_id,
@@ -21,23 +25,41 @@ from podex.api.v2.identifiers import (
     encode_podcast_id,
     encode_review_item_id,
     encode_scheduled_work_id,
+    encode_takedown_request_id,
+    encode_transcript_artifact_id,
+    encode_transcript_digest_id,
+    encode_transcript_id,
     encode_transcription_job_id,
 )
 from podex.api.v2.schemas import (
     CatalogSummary,
     EpisodeProcessingSummary,
+    OpsAlertDeliveryMetrics,
     OpsAuditLogEntry,
     OpsAuditLogListResponse,
     OpsDashboardResponse,
     OpsEpisodeRerunRequest,
     OpsEpisodeRerunResponse,
     OpsIngestionRunSummary,
+    OpsMediaAlias,
+    OpsMediaAliasRequest,
+    OpsMediaDetailResponse,
+    OpsMediaExternalRef,
+    OpsMediaExternalRefRequest,
+    OpsMediaMention,
     OpsMediaMergeAliasAddition,
     OpsMediaMergeFieldChange,
     OpsMediaMergePreviewResponse,
     OpsMediaMergeRequest,
     OpsMediaMergeResponse,
+    OpsMediaRelation,
+    OpsMediaSplitRequest,
+    OpsMediaSplitResponse,
+    OpsMediaUpdateRequest,
     OpsMergedMediaSummary,
+    OpsOperationalAlert,
+    OpsOperationalAlertResponse,
+    OpsOperationalMetricsResponse,
     OpsPipelineActivityResponse,
     OpsPipelineScheduleSummary,
     OpsPodcastCreateRequest,
@@ -46,6 +68,10 @@ from podex.api.v2.schemas import (
     OpsPodcastSourceSummary,
     OpsPodcastSummary,
     OpsPodcastUpdateRequest,
+    OpsProjectionLagMetrics,
+    OpsRetentionSamplingRecalculateRequest,
+    OpsRetentionSamplingReportResponse,
+    OpsRetentionSamplingStratum,
     OpsReviewDecisionRequest,
     OpsReviewMergeRequest,
     OpsReviewQueueCandidate,
@@ -54,13 +80,35 @@ from podex.api.v2.schemas import (
     OpsReviewQueueItem,
     OpsReviewQueueListResponse,
     OpsReviewReclassifyRequest,
+    OpsReviewSplitRequest,
+    OpsReviewSplitResponse,
+    OpsReviewThroughputMetrics,
     OpsScheduledWorkItemSummary,
     OpsScheduledWorkResponse,
+    OpsSearchAnalyticsResponse,
     OpsSearchProjectionIndexSummary,
     OpsSearchProjectionRepairCounts,
     OpsSearchProjectionRepairSummary,
     OpsSearchProjectionResponse,
+    OpsSearchQueryMetric,
+    OpsSearchReindexRequest,
+    OpsSearchReindexResponse,
+    OpsSearchTuningApplyRequest,
+    OpsSearchTuningApplyResponse,
+    OpsSearchTuningPreviewRequest,
+    OpsSearchTuningPreviewResponse,
+    OpsTakedownDecisionRequest,
+    OpsTakedownRequestListResponse,
+    OpsTakedownRequestSummary,
+    OpsTranscriptDigestResponse,
     OpsTranscriptionJobSummary,
+    OpsTranscriptPurgeResponse,
+    OpsTranscriptReacquireRequest,
+    OpsTranscriptReacquireResponse,
+    OpsTranscriptRetentionListResponse,
+    OpsTranscriptRetentionPolicyRequest,
+    OpsTranscriptRetentionPreviewResponse,
+    OpsTranscriptRetentionSummary,
     PipelineSummary,
     SearchProjectionSummary,
     SourceCoverageSummary,
@@ -76,6 +124,10 @@ from podex.models import (
     ReviewItemStatus,
     ReviewPriority,
     ScheduledWorkStatus,
+    TakedownRequest,
+    TakedownRequestStatus,
+    TakedownSubjectType,
+    Transcript,
 )
 from podex.models.search_projection_repair import (
     SearchProjectionRepairReason,
@@ -88,13 +140,28 @@ from podex.services.audit_log import (
     list_audit_logs,
     record_audit_log,
 )
+from podex.services.operational_alerts import (
+    OperationalAlertThresholdsData,
+    evaluate_operational_alerts,
+)
 from podex.services.ops_media_commands import (
+    OpsMediaDetailData,
     OpsMediaMergePreviewData,
     OpsMediaMergeResultData,
+    OpsMediaSplitResultData,
     OpsMergedMediaSummaryData,
+    SplitOpsMediaInputData,
+    UpdateOpsMediaInputData,
+    UpsertOpsMediaExternalRefInputData,
+    add_ops_media_alias,
+    get_ops_media_detail,
     merge_ops_media,
     preview_ops_media_merge,
+    split_ops_media,
+    update_ops_media,
+    upsert_ops_media_external_ref,
 )
+from podex.services.ops_metrics import get_operational_metrics
 from podex.services.ops_pipeline_commands import (
     create_ops_ingestion_run,
     rerun_episode_processing_jobs,
@@ -114,11 +181,30 @@ from podex.services.ops_podcast_queries import (
     PodcastSourceType,
     list_ops_podcasts,
 )
+from podex.services.ops_retention_commands import (
+    OpsTranscriptReacquisitionResultData,
+    OpsTranscriptRetentionData,
+    OpsTranscriptRetentionPreviewData,
+    apply_ops_transcript_retention,
+    list_ops_transcript_retention,
+    preview_ops_transcript_retention,
+    purge_ops_transcript,
+    reacquire_ops_transcript,
+)
+from podex.services.ops_search_commands import (
+    OpsSearchReindexInputData,
+    queue_ops_search_reindex,
+)
 from podex.services.pipeline_queries import (
     IngestionRunSummaryData,
     TranscriptionJobSummaryData,
     list_recent_ingestion_runs,
     list_recent_transcription_jobs,
+)
+from podex.services.retention_sampling import (
+    RetentionSamplingReportData,
+    get_retention_sampling_report,
+    recalculate_retention_sample,
 )
 from podex.services.review_queue import (
     ReviewDecisionInputData,
@@ -128,11 +214,15 @@ from podex.services.review_queue import (
     ReviewQueueItemData,
     ReviewQueueListData,
     ReviewReclassifyInputData,
+    ReviewSplitCandidateInputData,
+    ReviewSplitInputData,
+    ReviewSplitResultData,
     approve_review_queue_item,
     list_review_queue_items,
     merge_review_queue_item,
     reclassify_review_queue_item,
     reject_review_queue_item,
+    split_review_queue_item,
 )
 from podex.services.scheduled_work import (
     PipelineScheduleSummaryData,
@@ -142,6 +232,7 @@ from podex.services.scheduled_work import (
     plan_due_scheduled_work,
 )
 from podex.services.search import SearchSyncService, get_search_client
+from podex.services.search_analytics import get_search_analytics_summary
 from podex.services.search_projection_queries import (
     SearchProjectionIndexData,
     SearchProjectionStatusData,
@@ -163,8 +254,36 @@ from podex.services.status_queries import (
     get_source_coverage_counts,
     get_transcription_job_counts,
 )
+from podex.services.takedown_requests import (
+    TakedownDecisionInputData,
+    TakedownExecutionResultData,
+    decide_takedown_request,
+    execute_approved_takedown_request,
+    list_takedown_requests,
+)
+from podex.services.transcript_artifacts import (
+    TranscriptArtifactStore,
+    build_transcript_artifact_store,
+)
+from podex.services.transcript_retention import TranscriptRetentionPolicy
+from podex.services.transcript_retention_policies import (
+    upsert_transcript_source_retention_policy,
+)
+from podex.services.transcript_source import TranscriptAcquirer
 
 router = APIRouter(prefix="/ops", tags=["v2-ops"])
+
+
+def get_ops_transcript_artifact_store() -> TranscriptArtifactStore | None:
+    """Get the configured private transcript artifact storage adapter."""
+    return build_transcript_artifact_store(settings=get_settings())
+
+
+def get_ops_transcript_acquirer() -> TranscriptAcquirer:
+    """Build the provider orchestrator used for explicit re-acquisition."""
+    return TranscriptAcquirer()
+
+
 logger = get_logger(__name__)
 
 
@@ -265,6 +384,97 @@ def _sync_media_merge_projection(
             "media_merge_projection_sync_failed",
             source_media_id=result.source_id,
             target_media_id=result.target.id,
+            error=str(error),
+        )
+
+
+def _sync_media_projection_update(
+    *,
+    db: Session,
+    media_ids: tuple[int, ...],
+    reason: SearchProjectionRepairReason,
+) -> None:
+    """Best-effort sync of edited media records into the search projection."""
+    try:
+        sync_service = SearchSyncService(client=get_search_client(), db=db)
+        for media_id in media_ids:
+            sync_service.sync_single_media(media_id)
+            mark_search_projection_repair_completed(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.MEDIA,
+                resource_id=media_id,
+            )
+    except Exception as error:
+        for media_id in media_ids:
+            ensure_search_projection_repair(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.MEDIA,
+                resource_id=media_id,
+                reason=reason,
+                status=SearchProjectionRepairStatus.FAILED,
+                error_message=str(error),
+            )
+        logger.warning(
+            "media_update_projection_sync_failed",
+            media_ids=media_ids,
+            reason=reason.value,
+            error=str(error),
+        )
+
+
+def _sync_takedown_projection(
+    *,
+    db: Session,
+    request: TakedownRequest,
+    result: TakedownExecutionResultData,
+) -> None:
+    """Reflect takedown suppression in public search projection."""
+    actions = set(request.requested_actions_json)
+    should_remove_episodes = (
+        "purge_search_projection" in actions
+        and request.subject_type != TakedownSubjectType.MENTION.value
+    )
+    try:
+        sync_service = SearchSyncService(client=get_search_client(), db=db)
+        for media_id in result.media_ids:
+            sync_service.sync_single_media(media_id)
+            mark_search_projection_repair_completed(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.MEDIA,
+                resource_id=media_id,
+            )
+        for episode_id in result.episode_ids:
+            if should_remove_episodes:
+                sync_service.delete_episode(episode_id)
+            else:
+                sync_service.sync_single_episode(episode_id)
+            mark_search_projection_repair_completed(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.EPISODE,
+                resource_id=episode_id,
+            )
+    except Exception as error:
+        for media_id in result.media_ids:
+            ensure_search_projection_repair(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.MEDIA,
+                resource_id=media_id,
+                reason=SearchProjectionRepairReason.TAKEDOWN_SUPPRESSION,
+                status=SearchProjectionRepairStatus.FAILED,
+                error_message=str(error),
+            )
+        for episode_id in result.episode_ids:
+            ensure_search_projection_repair(
+                db=db,
+                resource_type=SearchProjectionRepairResourceType.EPISODE,
+                resource_id=episode_id,
+                reason=SearchProjectionRepairReason.TAKEDOWN_SUPPRESSION,
+                status=SearchProjectionRepairStatus.FAILED,
+                error_message=str(error),
+            )
+        logger.warning(
+            "takedown_projection_sync_failed",
+            takedown_request_id=request.id,
             error=str(error),
         )
 
@@ -692,6 +902,94 @@ def _to_ops_media_merge_preview_response(
     )
 
 
+def _to_ops_media_detail_response(
+    *,
+    detail: OpsMediaDetailData,
+) -> OpsMediaDetailResponse:
+    """Convert managed media detail to the v2 ops schema.
+
+    Args:
+        detail: Shared canonical media detail.
+
+    Returns:
+        Ops media detail response payload.
+    """
+    return OpsMediaDetailResponse(
+        media=_to_ops_merged_media_summary(media=detail.summary),
+        google_books_id=detail.google_books_id,
+        open_library_id=detail.open_library_id,
+        imdb_id=detail.imdb_id,
+        tmdb_id=detail.tmdb_id,
+        wikipedia_id=detail.wikipedia_id,
+        pubmed_id=detail.pubmed_id,
+        doi=detail.doi,
+        semantic_scholar_id=detail.semantic_scholar_id,
+        metadata_json=detail.metadata_json,
+        verification_sources=detail.verification_sources,
+        aliases=[
+            OpsMediaAlias(
+                alias=alias.alias,
+                normalized_alias=alias.normalized_alias,
+                source=alias.source,
+                is_primary=alias.is_primary,
+            )
+            for alias in detail.aliases
+        ],
+        external_refs=[
+            OpsMediaExternalRef(
+                source=reference.source,
+                external_id=reference.external_id,
+                url=reference.url,
+                label=reference.label,
+                description=reference.description,
+            )
+            for reference in detail.external_refs
+        ],
+        relations=[
+            OpsMediaRelation(
+                direction=relation.direction,
+                relation_type=relation.relation_type,
+                related_media=_to_ops_merged_media_summary(
+                    media=relation.related_media
+                ),
+                source=relation.source,
+                confidence=relation.confidence,
+            )
+            for relation in detail.relations
+        ],
+        mentions=[
+            OpsMediaMention(
+                id=encode_mention_id(mention_id=mention.id),
+                episode_id=encode_episode_id(episode_id=mention.episode_id),
+                episode_title=mention.episode_title,
+                timestamp_seconds=mention.timestamp_seconds,
+                context=mention.context,
+                confidence=mention.confidence,
+            )
+            for mention in detail.mentions
+        ],
+    )
+
+
+def _to_ops_media_split_response(
+    *,
+    result: OpsMediaSplitResultData,
+) -> OpsMediaSplitResponse:
+    """Convert canonical media split recovery to the v2 ops schema.
+
+    Args:
+        result: Shared media split result.
+
+    Returns:
+        Split recovery response payload.
+    """
+    return OpsMediaSplitResponse(
+        source=_to_ops_media_detail_response(detail=result.source),
+        created=_to_ops_media_detail_response(detail=result.created),
+        mentions_moved=result.mentions_moved,
+    )
+
+
 def _encode_ops_resource_id(
     *,
     resource_type: str,
@@ -725,6 +1023,8 @@ def _encode_ops_resource_id(
         return encode_review_item_id(review_item_id=resource_id)
     if resource_type == "transcription_job":
         return encode_transcription_job_id(transcription_job_id=resource_id)
+    if resource_type == "transcript":
+        return encode_transcript_id(transcript_id=resource_id)
 
     return resource_identifier or str(resource_id)
 
@@ -910,6 +1210,17 @@ def _to_ops_review_queue_list_response(
     )
 
 
+def _to_ops_review_split_response(
+    *,
+    result: ReviewSplitResultData,
+) -> OpsReviewSplitResponse:
+    """Convert split decision data to the v2 ops response schema."""
+    return OpsReviewSplitResponse(
+        original=_to_ops_review_queue_item(item=result.original),
+        items=[_to_ops_review_queue_item(item=item) for item in result.items],
+    )
+
+
 def _to_ops_audit_log_entry(
     *,
     entry: AuditLogEntryData,
@@ -958,6 +1269,122 @@ def _to_ops_audit_log_list_response(
     )
 
 
+def _to_ops_retention_sampling_report(
+    *,
+    report: RetentionSamplingReportData,
+) -> OpsRetentionSamplingReportResponse:
+    """Convert calibration corpus coverage to the v2 ops schema."""
+    return OpsRetentionSamplingReportResponse(
+        policy_version=report.policy_version,
+        sample_rate=report.sample_rate,
+        eligible_count=report.eligible_count,
+        sampled_count=report.sampled_count,
+        target_count=report.target_count,
+        strata=[
+            OpsRetentionSamplingStratum(
+                source=item.source,
+                topic=item.topic,
+                confidence_band=item.confidence_band,
+                age_bucket=item.age_bucket,
+                eligible_count=item.eligible_count,
+                sampled_count=item.sampled_count,
+                target_count=item.target_count,
+            )
+            for item in report.strata
+        ],
+    )
+
+
+def _to_ops_transcript_retention_summary(
+    *,
+    transcript: OpsTranscriptRetentionData,
+) -> OpsTranscriptRetentionSummary:
+    """Convert a transcript lifecycle state to the v2 ops schema."""
+    return OpsTranscriptRetentionSummary(
+        id=encode_transcript_id(transcript_id=transcript.id),
+        episode_id=encode_episode_id(episode_id=transcript.episode_id),
+        episode_title=transcript.episode_title,
+        podcast_name=transcript.podcast_name,
+        provider=transcript.provider,
+        fetched_at=transcript.fetched_at,
+        tier=transcript.tier,
+        policy_version=transcript.policy_version,
+        retention_exempt_sample=transcript.retention_exempt_sample,
+        source_retention_opt_out=transcript.source_retention_opt_out,
+        purge_eligible_at=transcript.purge_eligible_at,
+        purged_at=transcript.purged_at,
+        has_raw_payload=transcript.has_raw_payload,
+        has_stored_artifact=transcript.has_stored_artifact,
+        digest_id=(
+            encode_transcript_digest_id(digest_id=transcript.digest_id)
+            if transcript.digest_id is not None
+            else None
+        ),
+    )
+
+
+def _to_ops_transcript_retention_preview(
+    *,
+    preview: OpsTranscriptRetentionPreviewData,
+) -> OpsTranscriptRetentionPreviewResponse:
+    """Convert an evaluated lifecycle gate to the v2 ops schema."""
+    return OpsTranscriptRetentionPreviewResponse(
+        transcript=_to_ops_transcript_retention_summary(transcript=preview.transcript),
+        proposed_tier=preview.decision.tier.value,
+        purge_eligible=preview.decision.purge_eligible
+        and preview.derivative_coverage_ready,
+        purge_blockers=[item.value for item in preview.decision.purge_blockers],
+        extraction_confidence=preview.extraction_confidence,
+        derivative_coverage_ready=preview.derivative_coverage_ready,
+        missing_query_classes=list(preview.missing_query_classes),
+    )
+
+
+def _retention_policy_from_request(
+    *,
+    payload: OpsTranscriptRetentionPolicyRequest,
+) -> TranscriptRetentionPolicy:
+    """Build a validated retention policy from operator inputs."""
+    try:
+        return TranscriptRetentionPolicy(
+            hot_retention_period=timedelta(days=payload.hot_days),
+            warm_retention_period=timedelta(days=payload.warm_days),
+            min_purge_confidence=payload.min_purge_confidence,
+            retention_sample_rate=0,
+            sample_version=payload.policy_version,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+
+
+def _encode_takedown_subject(*, request: TakedownRequest) -> str:
+    """Encode a takedown target using its catalog resource identifier."""
+    if request.subject_type == TakedownSubjectType.PODCAST.value:
+        return encode_podcast_id(podcast_id=request.subject_id)
+    if request.subject_type == TakedownSubjectType.EPISODE.value:
+        return encode_episode_id(episode_id=request.subject_id)
+    return encode_mention_id(mention_id=request.subject_id)
+
+
+def _to_ops_takedown_request(request: TakedownRequest) -> OpsTakedownRequestSummary:
+    """Convert a privileged takedown case to the ops schema."""
+    return OpsTakedownRequestSummary(
+        id=encode_takedown_request_id(takedown_request_id=request.id),
+        subject_type=request.subject_type,
+        subject_id=_encode_takedown_subject(request=request),
+        requester_type=request.requester_type,
+        requester_name=request.requester_name,
+        requester_email=request.requester_email,
+        basis=request.basis,
+        requested_actions=request.requested_actions_json,
+        status=request.status,
+        decision_note=request.decision_note,
+        decided_by=request.decided_by,
+        decided_at=request.decided_at,
+        submitted_at=request.created_at,
+    )
+
+
 @router.get("/dashboard", response_model=OpsDashboardResponse)
 def get_ops_dashboard(
     db: Session = Depends(get_db),
@@ -995,6 +1422,70 @@ def get_ops_dashboard(
         ),
         pipelines=_build_pipeline_summary(db=db),
         search=SearchProjectionSummary(enabled=settings.meilisearch_enabled),
+    )
+
+
+@router.get("/metrics", response_model=OpsOperationalMetricsResponse)
+def get_ops_operational_metrics(
+    db: Session = Depends(get_db),
+) -> OpsOperationalMetricsResponse:
+    """Get review, projection-lag, and account-delivery health metrics."""
+    metrics = get_operational_metrics(db=db)
+    return OpsOperationalMetricsResponse(
+        measured_at=metrics.measured_at,
+        review=OpsReviewThroughputMetrics(
+            pending_items=metrics.review.pending_items,
+            decisions_last_24h=metrics.review.decisions_last_24h,
+            median_decision_minutes_last_24h=(
+                metrics.review.median_decision_minutes_last_24h
+            ),
+        ),
+        projection=OpsProjectionLagMetrics(
+            pending_repairs=metrics.projection.pending_repairs,
+            failed_repairs=metrics.projection.failed_repairs,
+            oldest_pending_age_seconds=metrics.projection.oldest_pending_age_seconds,
+        ),
+        alerts=OpsAlertDeliveryMetrics(
+            generated_events_last_24h=metrics.alerts.generated_events_last_24h,
+            delivered_digests_last_24h=metrics.alerts.delivered_digests_last_24h,
+            delivered_events_last_24h=metrics.alerts.delivered_events_last_24h,
+            pending_events=metrics.alerts.pending_events,
+        ),
+    )
+
+
+@router.get("/alerts", response_model=OpsOperationalAlertResponse)
+def get_ops_operational_alerts(
+    db: Session = Depends(get_db),
+) -> OpsOperationalAlertResponse:
+    """Get configured operational threshold breaches and playbook keys."""
+    settings = get_settings()
+    metrics = get_operational_metrics(db=db)
+    alerts = evaluate_operational_alerts(
+        metrics=metrics,
+        thresholds=OperationalAlertThresholdsData(
+            review_pending=settings.ops_review_pending_alert_threshold,
+            projection_pending=settings.ops_projection_pending_alert_threshold,
+            projection_oldest_pending_minutes=(
+                settings.ops_projection_oldest_pending_minutes
+            ),
+            alert_delivery_pending=settings.ops_alert_delivery_pending_threshold,
+        ),
+    )
+    return OpsOperationalAlertResponse(
+        measured_at=metrics.measured_at,
+        alerts=[
+            OpsOperationalAlert(
+                key=alert.key,
+                severity=alert.severity,
+                title=alert.title,
+                message=alert.message,
+                current_value=alert.current_value,
+                threshold=alert.threshold,
+                playbook_slug=alert.playbook_slug,
+            )
+            for alert in alerts
+        ],
     )
 
 
@@ -1555,6 +2046,62 @@ def reclassify_ops_review_item(
 
 
 @router.post(
+    "/review-queue/{review_item_id}/split",
+    response_model=OpsReviewSplitResponse,
+)
+def split_ops_review_item(
+    review_item_id: str,
+    payload: OpsReviewSplitRequest,
+    db: Session = Depends(get_db),
+) -> OpsReviewSplitResponse:
+    """Split an ambiguous review candidate into replacement queue items."""
+    try:
+        internal_review_item_id = decode_review_item_id(review_item_id=review_item_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Review item not found") from error
+
+    try:
+        result = split_review_queue_item(
+            db=db,
+            review_item_id=internal_review_item_id,
+            payload=ReviewSplitInputData(
+                actor_name=payload.actor_name,
+                note=payload.note,
+                candidates=tuple(
+                    ReviewSplitCandidateInputData(
+                        media_type=item.type.value,
+                        raw_title=item.raw_title,
+                        suggested_author=item.suggested_author,
+                    )
+                    for item in payload.candidates
+                ),
+            ),
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+
+    if result is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Review item not found")
+
+    record_audit_log(
+        db=db,
+        action=AuditAction.SPLIT_REVIEW_ITEM,
+        resource_type="review_item",
+        resource_id=result.original.id,
+        actor_name=payload.actor_name,
+        summary=f"Split review item for {result.original.candidate.raw_title}",
+        metadata_json={
+            "candidate_id": result.original.candidate.id,
+            "replacement_candidate_ids": [item.candidate.id for item in result.items],
+        },
+    )
+    db.commit()
+    return _to_ops_review_split_response(result=result)
+
+
+@router.post(
     "/episodes/{episode_id}/rerun",
     response_model=OpsEpisodeRerunResponse,
     status_code=status.HTTP_202_ACCEPTED,
@@ -1632,6 +2179,291 @@ def rerun_ops_episode(
         episode_id=internal_episode_id,
         jobs=jobs,
     )
+
+
+@router.get("/media/{media_id}", response_model=OpsMediaDetailResponse)
+def get_ops_media_detail_route(
+    media_id: str,
+    db: Session = Depends(get_db),
+) -> OpsMediaDetailResponse:
+    """Get editable canonical media detail for operator management.
+
+    Args:
+        media_id: Opaque media identifier.
+        db: Database session.
+
+    Returns:
+        Managed media detail with aliases, references, and relations.
+
+    Raises:
+        HTTPException: If the media record does not exist.
+    """
+    try:
+        internal_media_id = decode_media_id(media_id=media_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Media not found") from error
+
+    detail = get_ops_media_detail(db=db, media_id=internal_media_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail="Media not found")
+    return _to_ops_media_detail_response(detail=detail)
+
+
+@router.patch("/media/{media_id}", response_model=OpsMediaDetailResponse)
+def update_ops_media_route(
+    media_id: str,
+    payload: OpsMediaUpdateRequest,
+    db: Session = Depends(get_db),
+) -> OpsMediaDetailResponse:
+    """Correct canonical media metadata through the ops console.
+
+    Args:
+        media_id: Opaque media identifier.
+        payload: Partial metadata correction.
+        db: Database session.
+
+    Returns:
+        Updated managed media detail.
+
+    Raises:
+        HTTPException: If the record is missing or the update is invalid.
+    """
+    try:
+        internal_media_id = decode_media_id(media_id=media_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Media not found") from error
+
+    updated_fields = payload.model_fields_set - {"actor_name", "note"}
+    if not updated_fields:
+        raise HTTPException(
+            status_code=400,
+            detail="At least one media field is required",
+        )
+    try:
+        detail = update_ops_media(
+            db=db,
+            media_id=internal_media_id,
+            payload=UpdateOpsMediaInputData(
+                provided_fields=frozenset(updated_fields),
+                type=payload.type,
+                title=payload.title,
+                author=payload.author,
+                cover_url=payload.cover_url,
+                year=payload.year,
+                description=payload.description,
+                google_books_id=payload.google_books_id,
+                open_library_id=payload.open_library_id,
+                imdb_id=payload.imdb_id,
+                tmdb_id=payload.tmdb_id,
+                wikipedia_id=payload.wikipedia_id,
+                pubmed_id=payload.pubmed_id,
+                doi=payload.doi,
+                semantic_scholar_id=payload.semantic_scholar_id,
+                metadata_json=payload.metadata_json,
+            ),
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if detail is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    record_audit_log(
+        db=db,
+        action=AuditAction.UPDATE_MEDIA,
+        resource_type="media",
+        resource_id=internal_media_id,
+        actor_name=payload.actor_name,
+        summary=f"Updated media {detail.summary.title}",
+        metadata_json={
+            "updated_fields": sorted(updated_fields),
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    _sync_media_projection_update(
+        db=db,
+        media_ids=(internal_media_id,),
+        reason=SearchProjectionRepairReason.MEDIA_UPDATE,
+    )
+    return _to_ops_media_detail_response(detail=detail)
+
+
+@router.post("/media/{media_id}/aliases", response_model=OpsMediaDetailResponse)
+def add_ops_media_alias_route(
+    media_id: str,
+    payload: OpsMediaAliasRequest,
+    db: Session = Depends(get_db),
+) -> OpsMediaDetailResponse:
+    """Attach a manual alias to a canonical media record.
+
+    Args:
+        media_id: Opaque media identifier.
+        payload: Alias input and audit context.
+        db: Database session.
+
+    Returns:
+        Updated managed media detail.
+
+    Raises:
+        HTTPException: If the media record does not exist.
+    """
+    try:
+        internal_media_id = decode_media_id(media_id=media_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Media not found") from error
+
+    detail = add_ops_media_alias(
+        db=db,
+        media_id=internal_media_id,
+        alias=payload.alias,
+    )
+    if detail is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Media not found")
+    record_audit_log(
+        db=db,
+        action=AuditAction.ADD_MEDIA_ALIAS,
+        resource_type="media",
+        resource_id=internal_media_id,
+        actor_name=payload.actor_name,
+        summary=f"Added media alias {payload.alias.strip()}",
+        metadata_json={"alias": payload.alias.strip(), "note": payload.note},
+    )
+    db.commit()
+    return _to_ops_media_detail_response(detail=detail)
+
+
+@router.post("/media/{media_id}/external-refs", response_model=OpsMediaDetailResponse)
+def upsert_ops_media_external_ref_route(
+    media_id: str,
+    payload: OpsMediaExternalRefRequest,
+    db: Session = Depends(get_db),
+) -> OpsMediaDetailResponse:
+    """Create or update an operator-managed external reference.
+
+    Args:
+        media_id: Opaque media identifier.
+        payload: External reference input and audit context.
+        db: Database session.
+
+    Returns:
+        Updated managed media detail.
+
+    Raises:
+        HTTPException: If the media record does not exist.
+    """
+    try:
+        internal_media_id = decode_media_id(media_id=media_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Media not found") from error
+
+    detail = upsert_ops_media_external_ref(
+        db=db,
+        media_id=internal_media_id,
+        payload=UpsertOpsMediaExternalRefInputData(
+            source=payload.source,
+            external_id=payload.external_id,
+            url=payload.url,
+            label=payload.label,
+            description=payload.description,
+        ),
+    )
+    if detail is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Media not found")
+    record_audit_log(
+        db=db,
+        action=AuditAction.UPSERT_MEDIA_EXTERNAL_REF,
+        resource_type="media",
+        resource_id=internal_media_id,
+        actor_name=payload.actor_name,
+        summary=f"Updated media reference {payload.source.value}:{payload.external_id}",
+        metadata_json={
+            "source": payload.source.value,
+            "external_id": payload.external_id,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return _to_ops_media_detail_response(detail=detail)
+
+
+@router.post("/media/{media_id}/split", response_model=OpsMediaSplitResponse)
+def split_ops_media_route(
+    media_id: str,
+    payload: OpsMediaSplitRequest,
+    db: Session = Depends(get_db),
+) -> OpsMediaSplitResponse:
+    """Recover selected mentions into a newly separated canonical record.
+
+    Args:
+        media_id: Opaque media identifier containing incorrectly merged mentions.
+        payload: Replacement record and selected mention identifiers.
+        db: Database session.
+
+    Returns:
+        Updated source record and newly created split record.
+
+    Raises:
+        HTTPException: If identifiers are invalid or selected mentions do not belong
+            to the source record.
+    """
+    try:
+        internal_media_id = decode_media_id(media_id=media_id)
+        mention_ids = tuple(
+            decode_mention_id(mention_id=mention_id)
+            for mention_id in payload.mention_ids
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail="Media or mention not found",
+        ) from error
+
+    try:
+        result = split_ops_media(
+            db=db,
+            media_id=internal_media_id,
+            payload=SplitOpsMediaInputData(
+                mention_ids=mention_ids,
+                type=payload.type,
+                title=payload.title,
+                author=payload.author,
+                description=payload.description,
+            ),
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    if result is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Media not found")
+
+    record_audit_log(
+        db=db,
+        action=AuditAction.SPLIT_MEDIA,
+        resource_type="media",
+        resource_id=internal_media_id,
+        actor_name=payload.actor_name,
+        summary=(
+            f"Split {result.mentions_moved} mentions from "
+            f"{result.source.summary.title} into {result.created.summary.title}"
+        ),
+        metadata_json={
+            "created_media_id": result.created.summary.id,
+            "mention_ids": list(mention_ids),
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    _sync_media_projection_update(
+        db=db,
+        media_ids=(result.source.summary.id, result.created.summary.id),
+        reason=SearchProjectionRepairReason.MEDIA_SPLIT,
+    )
+    return _to_ops_media_split_response(result=result)
 
 
 @router.post("/media/{media_id}/merge", response_model=OpsMediaMergeResponse)
@@ -1763,6 +2595,367 @@ def get_ops_audit_log(
     )
 
 
+@router.get(
+    "/retention/sampling",
+    response_model=OpsRetentionSamplingReportResponse,
+)
+def get_ops_retention_sampling(
+    db: Session = Depends(get_db),
+) -> OpsRetentionSamplingReportResponse:
+    """Get coverage of the currently assigned permanent calibration corpus."""
+    return _to_ops_retention_sampling_report(
+        report=get_retention_sampling_report(db=db),
+    )
+
+
+@router.post(
+    "/retention/sampling/recalculate",
+    response_model=OpsRetentionSamplingReportResponse,
+)
+def recalculate_ops_retention_sampling(
+    payload: OpsRetentionSamplingRecalculateRequest,
+    db: Session = Depends(get_db),
+) -> OpsRetentionSamplingReportResponse:
+    """Apply a versioned sampling policy and record the operator action."""
+    policy = TranscriptRetentionPolicy(
+        retention_sample_rate=payload.sample_rate,
+        sample_version=payload.policy_version,
+    )
+    report = recalculate_retention_sample(db=db, policy=policy)
+    record_audit_log(
+        db=db,
+        action=AuditAction.UPDATE_RETENTION_SAMPLING,
+        resource_type="retention_sampling_policy",
+        resource_identifier=payload.policy_version,
+        actor_name=payload.actor_name,
+        summary=f"Recalculated retention sample with {payload.policy_version}",
+        metadata_json={
+            "sample_rate": payload.sample_rate,
+            "eligible_count": report.eligible_count,
+            "sampled_count": report.sampled_count,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return _to_ops_retention_sampling_report(report=report)
+
+
+@router.get(
+    "/retention/transcripts",
+    response_model=OpsTranscriptRetentionListResponse,
+)
+def get_ops_transcript_retention(
+    limit: int = Query(40, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> OpsTranscriptRetentionListResponse:
+    """List transcript lifecycle records for operator review."""
+    return OpsTranscriptRetentionListResponse(
+        items=[
+            _to_ops_transcript_retention_summary(transcript=item)
+            for item in list_ops_transcript_retention(db=db, limit=limit)
+        ],
+    )
+
+
+@router.post(
+    "/retention/transcripts/{transcript_id}/preview",
+    response_model=OpsTranscriptRetentionPreviewResponse,
+)
+def preview_ops_transcript_retention_route(
+    transcript_id: str,
+    payload: OpsTranscriptRetentionPolicyRequest,
+    db: Session = Depends(get_db),
+) -> OpsTranscriptRetentionPreviewResponse:
+    """Dry-run a transcript lifecycle decision without mutating storage."""
+    try:
+        internal_id = decode_transcript_id(transcript_id=transcript_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Transcript not found") from error
+    preview = preview_ops_transcript_retention(
+        db=db,
+        transcript_id=internal_id,
+        policy=_retention_policy_from_request(payload=payload),
+        source_retention_opt_out=payload.source_retention_opt_out,
+    )
+    if preview is None:
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    return _to_ops_transcript_retention_preview(preview=preview)
+
+
+@router.post(
+    "/retention/transcripts/{transcript_id}/evaluate",
+    response_model=OpsTranscriptRetentionPreviewResponse,
+)
+def evaluate_ops_transcript_retention_route(
+    transcript_id: str,
+    payload: OpsTranscriptRetentionPolicyRequest,
+    db: Session = Depends(get_db),
+) -> OpsTranscriptRetentionPreviewResponse:
+    """Persist an audited transcript lifecycle evaluation."""
+    try:
+        internal_id = decode_transcript_id(transcript_id=transcript_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Transcript not found") from error
+    policy = _retention_policy_from_request(payload=payload)
+    preview = apply_ops_transcript_retention(
+        db=db,
+        transcript_id=internal_id,
+        policy=policy,
+        source_retention_opt_out=payload.source_retention_opt_out,
+    )
+    if preview is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    transcript_model = db.query(Transcript).filter(Transcript.id == internal_id).one()
+    upsert_transcript_source_retention_policy(
+        db=db,
+        transcript=transcript_model,
+        policy=policy,
+        source_retention_opt_out=payload.source_retention_opt_out,
+    )
+    record_audit_log(
+        db=db,
+        action=AuditAction.UPDATE_TRANSCRIPT_RETENTION_POLICY,
+        resource_type="transcript",
+        resource_id=internal_id,
+        actor_name=payload.actor_name,
+        summary=f"Saved transcript retention policy for {preview.transcript.provider}",
+        metadata_json={
+            "policy_version": payload.policy_version,
+            "source_retention_opt_out": payload.source_retention_opt_out,
+            "note": payload.note,
+        },
+    )
+    record_audit_log(
+        db=db,
+        action=AuditAction.EVALUATE_TRANSCRIPT_RETENTION,
+        resource_type="transcript",
+        resource_id=internal_id,
+        actor_name=payload.actor_name,
+        summary=f"Evaluated transcript retention as {preview.decision.tier.value}",
+        metadata_json={
+            "policy_version": payload.policy_version,
+            "purge_eligible": preview.decision.purge_eligible,
+            "derivative_coverage_ready": preview.derivative_coverage_ready,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return _to_ops_transcript_retention_preview(preview=preview)
+
+
+@router.post(
+    "/retention/transcripts/{transcript_id}/purge",
+    response_model=OpsTranscriptPurgeResponse,
+)
+def purge_ops_transcript_route(
+    transcript_id: str,
+    payload: OpsTranscriptRetentionPolicyRequest,
+    db: Session = Depends(get_db),
+    artifact_store: TranscriptArtifactStore | None = Depends(
+        get_ops_transcript_artifact_store
+    ),
+) -> OpsTranscriptPurgeResponse:
+    """Delete eligible raw transcript data while retaining a durable digest."""
+    try:
+        internal_id = decode_transcript_id(transcript_id=transcript_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Transcript not found") from error
+    try:
+        result = purge_ops_transcript(
+            db=db,
+            transcript_id=internal_id,
+            artifact_store=artifact_store,
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if result is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    record_audit_log(
+        db=db,
+        action=AuditAction.PURGE_TRANSCRIPT,
+        resource_type="transcript",
+        resource_id=internal_id,
+        actor_name=payload.actor_name,
+        summary=f"Purged raw transcript for {result.transcript.episode_title}",
+        metadata_json={
+            "digest_id": result.digest.id,
+            "source_text_hash": result.digest.source_text_hash,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return OpsTranscriptPurgeResponse(
+        transcript=_to_ops_transcript_retention_summary(transcript=result.transcript),
+        digest=OpsTranscriptDigestResponse(
+            id=encode_transcript_digest_id(digest_id=result.digest.id),
+            transcript_id=encode_transcript_id(
+                transcript_id=result.digest.transcript_id
+            ),
+            source_text_hash=result.digest.source_text_hash,
+            provider=result.digest.provider,
+            policy_version=result.digest.policy_version,
+            summary_text=result.digest.summary_text,
+            extraction_versions=result.digest.extraction_versions_json or [],
+            purged_at=result.digest.purged_at,
+        ),
+    )
+
+
+@router.post(
+    "/retention/transcripts/{transcript_id}/reacquire",
+    response_model=OpsTranscriptReacquireResponse,
+)
+def reacquire_ops_transcript_route(
+    transcript_id: str,
+    payload: OpsTranscriptReacquireRequest,
+    db: Session = Depends(get_db),
+    artifact_store: TranscriptArtifactStore | None = Depends(
+        get_ops_transcript_artifact_store
+    ),
+    acquirer: TranscriptAcquirer = Depends(get_ops_transcript_acquirer),
+) -> OpsTranscriptReacquireResponse:
+    """Re-acquire a purged transcript as a fresh encrypted hot asset."""
+    try:
+        internal_id = decode_transcript_id(transcript_id=transcript_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="Transcript not found") from error
+    try:
+        result: OpsTranscriptReacquisitionResultData | None = reacquire_ops_transcript(
+            db=db,
+            transcript_id=internal_id,
+            acquirer=acquirer,
+            artifact_store=artifact_store,
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    finally:
+        acquirer.close()
+    if result is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Transcript not found")
+    record_audit_log(
+        db=db,
+        action=AuditAction.REACQUIRE_TRANSCRIPT,
+        resource_type="transcript",
+        resource_id=result.transcript.id,
+        actor_name=payload.actor_name,
+        summary=f"Re-acquired raw transcript for {result.transcript.episode_title}",
+        metadata_json={
+            "prior_transcript_id": internal_id,
+            "prior_digest_id": result.prior_digest.id,
+            "artifact_id": result.artifact.id,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return OpsTranscriptReacquireResponse(
+        transcript=_to_ops_transcript_retention_summary(transcript=result.transcript),
+        artifact_id=encode_transcript_artifact_id(artifact_id=result.artifact.id),
+        prior_digest_id=encode_transcript_digest_id(digest_id=result.prior_digest.id),
+    )
+
+
+@router.get("/takedown-requests", response_model=OpsTakedownRequestListResponse)
+def get_ops_takedown_requests(
+    request_status: TakedownRequestStatus | None = Query(default=None, alias="status"),
+    limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_db),
+) -> OpsTakedownRequestListResponse:
+    """List rights-holder and creator takedown cases for operator review."""
+    return OpsTakedownRequestListResponse(
+        items=[
+            _to_ops_takedown_request(request)
+            for request in list_takedown_requests(
+                db=db,
+                status=request_status,
+                limit=limit,
+            )
+        ],
+    )
+
+
+@router.post(
+    "/takedown-requests/{takedown_request_id}/decision",
+    response_model=OpsTakedownRequestSummary,
+)
+def decide_ops_takedown_request(
+    takedown_request_id: str,
+    payload: OpsTakedownDecisionRequest,
+    db: Session = Depends(get_db),
+    artifact_store: TranscriptArtifactStore | None = Depends(
+        get_ops_transcript_artifact_store
+    ),
+) -> OpsTakedownRequestSummary:
+    """Record a decision and execute approved takedown actions."""
+    try:
+        internal_id = decode_takedown_request_id(
+            takedown_request_id=takedown_request_id,
+        )
+    except ValueError as error:
+        raise HTTPException(
+            status_code=404,
+            detail="Takedown request not found",
+        ) from error
+    try:
+        request = decide_takedown_request(
+            db=db,
+            request_id=internal_id,
+            payload=TakedownDecisionInputData(
+                status=TakedownRequestStatus(payload.status),
+                actor_name=payload.actor_name,
+                note=payload.note,
+            ),
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if request is None:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Takedown request not found")
+    execution: TakedownExecutionResultData | None = None
+    if request.status == TakedownRequestStatus.APPROVED.value:
+        try:
+            execution = execute_approved_takedown_request(
+                db=db,
+                request=request,
+                artifact_store=artifact_store,
+            )
+        except ValueError as error:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        _sync_takedown_projection(db=db, request=request, result=execution)
+    record_audit_log(
+        db=db,
+        action=AuditAction.DECIDE_TAKEDOWN_REQUEST,
+        resource_type="takedown_request",
+        resource_id=request.id,
+        actor_name=payload.actor_name,
+        summary=f"{payload.status.capitalize()} takedown request",
+        metadata_json={
+            "subject_type": request.subject_type,
+            "subject_id": request.subject_id,
+            "requested_actions": request.requested_actions_json,
+            "note": payload.note,
+            "execution": (
+                {
+                    "transcripts_suppressed": execution.transcripts_suppressed,
+                    "derivatives_suppressed": execution.derivatives_suppressed,
+                    "mentions_unpublished": execution.mentions_unpublished,
+                    "source_opt_outs_registered": execution.source_opt_outs_registered,
+                }
+                if execution is not None
+                else None
+            ),
+        },
+    )
+    db.commit()
+    return _to_ops_takedown_request(request)
+
+
 @router.get("/search", response_model=OpsSearchProjectionResponse)
 def get_ops_search_projection(
     repair_limit: int = Query(10, ge=1, le=50),
@@ -1786,6 +2979,127 @@ def get_ops_search_projection(
         status=status,
         repair_counts=get_search_projection_repair_counts(db=db),
         repairs=list_recent_search_projection_repairs(db=db, limit=repair_limit),
+    )
+
+
+@router.post("/search/reindex", response_model=OpsSearchReindexResponse)
+def queue_ops_search_reindex_route(
+    payload: OpsSearchReindexRequest,
+    db: Session = Depends(get_db),
+) -> OpsSearchReindexResponse:
+    """Queue scoped replay-safe search projection rebuild work."""
+    podcast_id: int | None = None
+    if payload.podcast_id is not None:
+        try:
+            podcast_id = decode_podcast_id(podcast_id=payload.podcast_id)
+        except ValueError as error:
+            raise HTTPException(status_code=404, detail="Podcast not found") from error
+
+    result = queue_ops_search_reindex(
+        db=db,
+        payload=OpsSearchReindexInputData(
+            resource_type=payload.resource_type,
+            podcast_id=podcast_id,
+            media_type=payload.media_type,
+            created_after=payload.created_after,
+        ),
+    )
+    record_audit_log(
+        db=db,
+        action=AuditAction.REINDEX_SEARCH,
+        resource_type="search_projection",
+        actor_name=payload.actor_name,
+        summary=f"Queued {result.total_queued} search projection repairs",
+        metadata_json={
+            "resource_type": payload.resource_type,
+            "podcast_id": podcast_id,
+            "media_type": (
+                payload.media_type.value if payload.media_type is not None else None
+            ),
+            "created_after": (
+                payload.created_after.isoformat()
+                if payload.created_after is not None
+                else None
+            ),
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return OpsSearchReindexResponse(
+        media_queued=result.media_queued,
+        episodes_queued=result.episodes_queued,
+        total_queued=result.total_queued,
+    )
+
+
+@router.post("/search/tuning/preview", response_model=OpsSearchTuningPreviewResponse)
+def preview_ops_search_tuning(
+    payload: OpsSearchTuningPreviewRequest,
+) -> OpsSearchTuningPreviewResponse:
+    """Preview proposed tuning with a baseline sample query."""
+    proposed_settings: dict[str, object] = {"synonyms": payload.synonyms}
+    if payload.ranking_rules is not None:
+        proposed_settings["rankingRules"] = payload.ranking_rules
+    sample = get_search_client().search(payload.index, payload.query, limit=5)
+    return OpsSearchTuningPreviewResponse(
+        index=payload.index,
+        query=payload.query,
+        sample_hits=sample.get("hits", []),
+        proposed_settings=proposed_settings,
+    )
+
+
+@router.post("/search/tuning", response_model=OpsSearchTuningApplyResponse)
+def apply_ops_search_tuning(
+    payload: OpsSearchTuningApplyRequest,
+    db: Session = Depends(get_db),
+) -> OpsSearchTuningApplyResponse:
+    """Apply reviewed synonym and ranking settings to one search index."""
+    proposed_settings: dict[str, object] = {"synonyms": payload.synonyms}
+    if payload.ranking_rules is not None:
+        proposed_settings["rankingRules"] = payload.ranking_rules
+    result = get_search_client().update_index_settings(payload.index, proposed_settings)
+    record_audit_log(
+        db=db,
+        action=AuditAction.UPDATE_SEARCH_TUNING,
+        resource_type="search_projection",
+        resource_identifier=payload.index,
+        actor_name=payload.actor_name,
+        summary=f"Updated search tuning for {payload.index}",
+        metadata_json={
+            "settings": proposed_settings,
+            "query": payload.query,
+            "note": payload.note,
+        },
+    )
+    db.commit()
+    return OpsSearchTuningApplyResponse(
+        index=payload.index,
+        status=str(result.get("status", "enqueued")),
+        task_uid=result.get("task_uid"),
+    )
+
+
+@router.get("/search/analytics", response_model=OpsSearchAnalyticsResponse)
+def get_ops_search_analytics(
+    limit: int = Query(10, ge=1, le=50),
+    db: Session = Depends(get_db),
+) -> OpsSearchAnalyticsResponse:
+    """Return anonymous public search signals for relevance review."""
+    summary = get_search_analytics_summary(db=db, limit=limit)
+    return OpsSearchAnalyticsResponse(
+        searches=summary.searches,
+        zero_result_searches=summary.zero_result_searches,
+        selections=summary.selections,
+        queries=[
+            OpsSearchQueryMetric(
+                query=item.query,
+                searches=item.searches,
+                zero_result_searches=item.zero_result_searches,
+                selections=item.selections,
+            )
+            for item in summary.queries
+        ],
     )
 
 

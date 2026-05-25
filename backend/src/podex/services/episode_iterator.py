@@ -7,9 +7,10 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from enum import StrEnum, auto
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Query, Session
 
-from podex.models import Episode, Podcast, Transcript
+from podex.models import Episode, Podcast, Transcript, TranscriptArtifact
 
 logger = logging.getLogger(__name__)
 
@@ -113,11 +114,10 @@ class EpisodeIterator:
             query = query.filter(Episode.youtube_id.isnot(None))
         elif stage == ProcessingStage.EXTRACTION:
             query = query.filter(Episode.extraction_status == "pending")
-            # Must have transcript
-            query = query.join(Transcript).filter(Transcript.raw_text.isnot(None))
+            query = self._with_retained_raw_payload(query)
         elif stage == ProcessingStage.CLEANUP:
             query = query.filter(Episode.cleanup_status == "pending")
-            query = query.join(Transcript).filter(Transcript.raw_text.isnot(None))
+            query = self._with_retained_raw_payload(query)
 
         query = query.order_by(Episode.episode_number.asc())
 
@@ -125,6 +125,26 @@ class EpisodeIterator:
             query = query.limit(limit)
 
         return query.all()
+
+    def _with_retained_raw_payload(self, query: Query[Episode]) -> Query[Episode]:
+        """Restrict processing to legacy inline or active artifact payloads."""
+        return (
+            query.join(Transcript)
+            .outerjoin(
+                TranscriptArtifact,
+                and_(
+                    TranscriptArtifact.transcript_id == Transcript.id,
+                    TranscriptArtifact.purged_at.is_(None),
+                ),
+            )
+            .filter(
+                or_(
+                    Transcript.raw_text.isnot(None),
+                    TranscriptArtifact.id.isnot(None),
+                ),
+            )
+            .distinct()
+        )
 
     def get_in_progress(
         self,
