@@ -119,8 +119,8 @@ class DiscoveryOrchestrator:
         """Deduplicate and merge episodes from multiple sources.
 
         Uses multiple matching strategies:
-        1. Exact match on source-specific IDs (youtube_id, spotify_uri, rss_guid)
-        2. Fuzzy match on title + date
+        1. Exact match on source-specific IDs and source URLs.
+        2. Fuzzy match on title + date.
         """
         if not episodes:
             return []
@@ -166,6 +166,8 @@ class DiscoveryOrchestrator:
         if ep1.spotify_uri and ep1.spotify_uri == ep2.spotify_uri:
             return True
         if ep1.rss_guid and ep1.rss_guid == ep2.rss_guid:
+            return True
+        if ep1.episode_url and ep1.episode_url == ep2.episode_url:
             return True
 
         # Match by episode number if both have one
@@ -305,6 +307,11 @@ class DiscoveryOrchestrator:
 
         if discovered.rss_guid:
             ep = query.filter(Episode.rss_guid == discovered.rss_guid).first()
+            if ep:
+                return ep
+
+        if discovered.episode_url:
+            ep = query.filter(Episode.episode_url == discovered.episode_url).first()
             if ep:
                 return ep
 

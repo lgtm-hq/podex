@@ -17,6 +17,11 @@ from typing import TYPE_CHECKING
 import httpx
 from bs4 import BeautifulSoup
 
+from podex.services.podscripts_client import (
+    BASE_URL,
+    build_podscripts_client,
+    fetch_podscripts_html,
+)
 from podex.services.whisper_transcriber import (
     TranscriptResult,
     WhisperConfig,
@@ -29,7 +34,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-BASE_URL = "https://podscripts.co"
+MIN_PODSCRIPTS_TRANSCRIPT_CHARACTERS = 100
 
 
 def _html_attr_to_str(value: object) -> str:
@@ -47,6 +52,76 @@ class TranscriptAcquisitionResult:
     error: str | None = None
     should_store_raw: bool = True
     source_retention_opt_out: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class ParsedPodscriptsTranscript:
+    """Transcript fields parsed from a Podscripts episode page."""
+
+    raw_text: str
+    segments: list[dict[str, str | float]]
+    published_date: str | None = None
+
+
+def parse_podscripts_transcript_html(html: str) -> ParsedPodscriptsTranscript | None:
+    """Extract validated timestamped transcript content from Podscripts HTML.
+
+    Podscripts episode pages contain substantial page chrome and episode metadata.
+    Only transcript-specific nodes are accepted so a layout change cannot silently
+    turn a page title or publication date into a stored transcript.
+
+    Args:
+        html: Podscripts episode HTML document.
+
+    Returns:
+        Parsed transcript content, or ``None`` when valid transcript nodes are absent.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    transcript_container = soup.select_one(".podcast-transcript")
+    if transcript_container is None:
+        return None
+
+    segments: list[dict[str, str | float]] = []
+    for group in transcript_container.select(".single-sentence"):
+        timestamp = group.select_one(".pod_timestamp_indicator")
+        if timestamp is None:
+            continue
+        start_seconds = _parse_timestamp_seconds(timestamp.get_text(strip=True))
+        if start_seconds is None:
+            continue
+
+        segment_text = " ".join(
+            value
+            for node in group.select(".transcript-text")
+            if (value := node.get_text(" ", strip=True))
+        )
+        if segment_text:
+            segments.append({"start": start_seconds, "text": segment_text})
+
+    raw_text = " ".join(str(segment["text"]) for segment in segments)
+    if len(raw_text) < MIN_PODSCRIPTS_TRANSCRIPT_CHARACTERS:
+        return None
+
+    date_element = soup.find("time") or soup.find(
+        class_=re.compile(r"date|published"),
+    )
+    published_date = date_element.get_text(strip=True) if date_element else None
+    return ParsedPodscriptsTranscript(
+        raw_text=raw_text,
+        segments=segments,
+        published_date=published_date,
+    )
+
+
+def _parse_timestamp_seconds(timestamp: str) -> float | None:
+    """Convert a Podscripts timestamp label into seconds."""
+    match = re.search(r"(\d{1,2}:\d{2}(?::\d{2})?)", timestamp)
+    if match is None:
+        return None
+    values = [int(part) for part in match.group(1).split(":")]
+    if len(values) == 2:
+        return float(values[0] * 60 + values[1])
+    return float(values[0] * 3600 + values[1] * 60 + values[2])
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,16 +202,7 @@ class PodscriptsSource(TranscriptSource):
 
     def __init__(self, delay: float = 1.0) -> None:
         self.delay = delay
-        self.client = httpx.Client(
-            timeout=30.0,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            },
-        )
+        self.client = build_podscripts_client()
 
     @property
     def name(self) -> str:
@@ -187,19 +253,19 @@ class PodscriptsSource(TranscriptSource):
                 error=str(e),
             )
 
-        if not transcript_data["transcript"]:
+        if transcript_data is None:
             return TranscriptAcquisitionResult(
                 success=False,
                 result=None,
                 source=self.name,
-                error="No transcript text found on page",
+                error="No valid timestamped transcript content found on page",
             )
 
         # Build TranscriptResult
         result = TranscriptResult(
             provider=self.name,
-            raw_text=transcript_data["transcript"],
-            segments=transcript_data["segments"] or [],
+            raw_text=transcript_data.raw_text,
+            segments=transcript_data.segments,
             fetched_at=datetime.now(UTC),
             audio_duration_seconds=0.0,
         )
@@ -214,17 +280,22 @@ class PodscriptsSource(TranscriptSource):
         """Find the episode URL on podscripts.co.
 
         Try multiple strategies:
-        1. If episode has episode_number, construct URL directly
-        2. Search by title
+        1. Use a previously discovered Podscripts URL
+        2. If episode has episode_number, find it in the episode list
+        3. Search by title
         """
-        # Strategy 1: Direct URL by episode number
+        expected_prefix = f"{BASE_URL}/podcasts/{podcast_slug}/"
+        if episode.episode_url and episode.episode_url.startswith(expected_prefix):
+            return episode.episode_url
+
+        # Strategy 2: Direct URL by episode number
         if episode.episode_number:
             # Try to find a matching episode page
             url = self._search_by_episode_number(podcast_slug, episode.episode_number)
             if url:
                 return url
 
-        # Strategy 2: Search episode list
+        # Strategy 3: Search episode list
         return self._search_episode_list(podcast_slug, episode)
 
     def _search_by_episode_number(
@@ -239,13 +310,16 @@ class PodscriptsSource(TranscriptSource):
 
         while page <= max_pages:
             try:
-                response = self.client.get(f"{url}?page={page}")
-                response.raise_for_status()
+                html = fetch_podscripts_html(
+                    client=self.client,
+                    url=f"{url}?page={page}",
+                    retry_delay_seconds=self.delay,
+                )
             except httpx.HTTPError as e:
                 logger.warning(f"Error fetching page {page}: {e}")
                 break
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(html, "html.parser")
             episodes = []
 
             for link in soup.find_all("a", href=True):
@@ -292,12 +366,15 @@ class PodscriptsSource(TranscriptSource):
 
         while page <= max_pages:
             try:
-                response = self.client.get(f"{url}?page={page}")
-                response.raise_for_status()
+                html = fetch_podscripts_html(
+                    client=self.client,
+                    url=f"{url}?page={page}",
+                    retry_delay_seconds=self.delay,
+                )
             except httpx.HTTPError:
                 break
 
-            soup = BeautifulSoup(response.text, "html.parser")
+            soup = BeautifulSoup(html, "html.parser")
             found_any = False
 
             for link in soup.find_all("a", href=True):
@@ -342,92 +419,18 @@ class PodscriptsSource(TranscriptSource):
             and (title1 in title2 or title2 in title1)
         )
 
-    def _scrape_transcript(self, url: str) -> dict:
+    def _scrape_transcript(self, url: str) -> ParsedPodscriptsTranscript | None:
         """Scrape transcript from an episode page."""
         logger.info(f"Fetching transcript: {url}")
 
-        response = self.client.get(url)
-        response.raise_for_status()
-
-        soup = BeautifulSoup(response.text, "html.parser")
-
-        # Extract transcript text
-        transcript_text = ""
-        segments: list[dict] = []
-
-        # Look for transcript content - common patterns
-        content_area = (
-            soup.find("article")
-            or soup.find(class_=re.compile(r"transcript|content|episode"))
-            or soup.find("main")
+        html = fetch_podscripts_html(
+            client=self.client,
+            url=url,
+            retry_delay_seconds=self.delay,
         )
 
-        if content_area:
-            text = content_area.get_text(separator="\n")
-
-            # Try to parse timestamps
-            timestamp_pattern = r"(?:\[|\()?(\d{1,2}:\d{2}(?::\d{2})?)[\]\)]?"
-            lines = text.split("\n")
-
-            current_time = 0.0
-            current_text: list[str] = []
-
-            for line in lines:
-                line = line.strip()
-                if not line:
-                    continue
-
-                # Check for timestamp
-                ts_match = re.search(timestamp_pattern, line)
-                if ts_match:
-                    # Save previous segment
-                    if current_text:
-                        segments.append(
-                            {
-                                "start": current_time,
-                                "text": " ".join(current_text),
-                            }
-                        )
-                        current_text = []
-
-                    # Parse timestamp
-                    ts_str = ts_match.group(1)
-                    parts = ts_str.split(":")
-                    if len(parts) == 2:
-                        current_time = int(parts[0]) * 60 + int(parts[1])
-                    elif len(parts) == 3:
-                        current_time = (
-                            int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-                        )
-
-                    # Remove timestamp from line
-                    line = re.sub(timestamp_pattern, "", line).strip()
-
-                if line:
-                    current_text.append(line)
-
-            # Save last segment
-            if current_text:
-                segments.append(
-                    {
-                        "start": current_time,
-                        "text": " ".join(current_text),
-                    }
-                )
-
-            # Build full transcript
-            transcript_text = " ".join(seg["text"] for seg in segments)
-
-            # If no segments found, just get all text
-            if not segments:
-                transcript_text = text
-
         time.sleep(self.delay)
-
-        return {
-            "transcript": transcript_text,
-            "segments": segments if segments else None,
-        }
+        return parse_podscripts_transcript_html(html)
 
     def close(self) -> None:
         """Close the HTTP client."""

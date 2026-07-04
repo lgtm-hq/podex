@@ -24,6 +24,25 @@ podcasts:
       youtube_channel: UCzQUP1qoWDoEbmsQxvdjxgQ
 
   # Watchlist - interested but not processing yet
+  # Kept bounded for the initial public-source ingestion rehearsal.
+  - slug: crime-junkie
+    name: Crime Junkie
+    status: watchlist
+    sources:
+      podscripts: crime-junkie
+
+  - slug: the-rest-is-history
+    name: The Rest Is History
+    status: watchlist
+    sources:
+      podscripts: the-rest-is-history
+
+  - slug: pbd-podcast
+    name: PBD Podcast
+    status: watchlist
+    sources:
+      podscripts: pbd-podcast
+
   - slug: huberman-lab
     name: Huberman Lab
     status: watchlist

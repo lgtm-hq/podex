@@ -19,18 +19,35 @@ from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
 )
+from podex.services.podscripts_client import (
+    BASE_URL,
+    build_podscripts_client,
+    fetch_podscripts_html,
+)
 
 if TYPE_CHECKING:
     from podex.models import Podcast
 
 logger = logging.getLogger(__name__)
 
-BASE_URL = "https://podscripts.co"
-
 
 def _html_attr_to_str(value: object) -> str:
     """Return a BeautifulSoup attribute value when it is a single string."""
     return value if isinstance(value, str) else ""
+
+
+def _episode_link_title(*, href: str, link_text: str) -> tuple[int | None, str]:
+    """Extract a stable title and optional number from an episode link."""
+    slug = href.rstrip("/").split("/")[-1]
+    comment_label = re.fullmatch(r"\d+\s*comments?", link_text, flags=re.IGNORECASE)
+    title = link_text if link_text and comment_label is None else ""
+    match = re.match(r"(\d+)-(.+)", slug)
+    if match:
+        return (
+            int(match.group(1)),
+            title or match.group(2).replace("-", " ").title(),
+        )
+    return None, title or slug.replace("-", " ").title()
 
 
 class PodscriptsDiscovery:
@@ -42,16 +59,7 @@ class PodscriptsDiscovery:
 
     def __init__(self, delay: float = 1.0) -> None:
         self.delay = delay
-        self.client = httpx.Client(
-            timeout=30.0,
-            headers={
-                "User-Agent": (
-                    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-            },
-        )
+        self.client = build_podscripts_client()
 
     @property
     def name(self) -> str:
@@ -74,13 +82,16 @@ class PodscriptsDiscovery:
         url = f"{BASE_URL}/podcasts/{slug}"
 
         try:
-            response = self.client.get(url)
-            response.raise_for_status()
+            html = fetch_podscripts_html(
+                client=self.client,
+                url=url,
+                retry_delay_seconds=self.delay,
+            )
         except httpx.HTTPError as e:
             logger.warning(f"Failed to fetch podcast {slug}: {e}")
             return None
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
 
         # Extract podcast name from title or h1
         name = None
@@ -171,20 +182,26 @@ class PodscriptsDiscovery:
         logger.debug(f"Fetching page {page}: {url}")
 
         try:
-            response = self.client.get(url)
-            response.raise_for_status()
+            html = fetch_podscripts_html(
+                client=self.client,
+                url=url,
+                retry_delay_seconds=self.delay,
+            )
         except httpx.HTTPError as e:
             logger.warning(f"Failed to fetch page {page}: {e}")
             return []
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
         episodes = []
 
         for link in soup.find_all("a", href=True):
             href = _html_attr_to_str(link.get("href", ""))
             expected_prefix = f"/podcasts/{slug}/"
 
-            if expected_prefix in href and href != f"/podcasts/{slug}":
+            if (
+                href.startswith(expected_prefix)
+                and href.rstrip("/") != f"/podcasts/{slug}"
+            ):
                 episode = self._parse_episode_link(link, href, slug)
                 if episode:
                     episodes.append(episode)
@@ -207,18 +224,11 @@ class PodscriptsDiscovery:
         podcast_slug: str,
     ) -> DiscoveredEpisode | None:
         """Parse an episode from a link element."""
-        slug = href.split("/")[-1]
         link_text = link.get_text(strip=True)
-
-        # Try to extract episode number from slug
-        episode_number = None
-        title = link_text or slug.replace("-", " ").title()
-
-        match = re.match(r"(\d+)-(.+)", slug)
-        if match:
-            episode_number = int(match.group(1))
-            if not link_text:
-                title = match.group(2).replace("-", " ").title()
+        episode_number, title = _episode_link_title(
+            href=href,
+            link_text=link_text,
+        )
 
         episode_url = f"{BASE_URL}{href}" if href.startswith("/") else href
 
@@ -240,13 +250,16 @@ class PodscriptsDiscovery:
         url = f"{BASE_URL}/podcasts"
 
         try:
-            response = self.client.get(url)
-            response.raise_for_status()
+            html = fetch_podscripts_html(
+                client=self.client,
+                url=url,
+                retry_delay_seconds=self.delay,
+            )
         except httpx.HTTPError as e:
             logger.error(f"Failed to fetch podcast catalog: {e}")
             return []
 
-        soup = BeautifulSoup(response.text, "html.parser")
+        soup = BeautifulSoup(html, "html.parser")
 
         for link in soup.find_all("a", href=True):
             href = _html_attr_to_str(link.get("href", ""))
