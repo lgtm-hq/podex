@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.4.0] - 2026-07-05
+
+### Features
+
+- **api**: add media catalog model and read endpoints (#131) (8e02f82)
+
 ## [0.3.0] - 2026-07-05
 
 ### Features
