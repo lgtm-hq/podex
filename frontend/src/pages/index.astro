@@ -1,0 +1,39 @@
+---
+import PodcastCard from "../components/PodcastCard.astro";
+import { fetchPodcasts } from "../lib/api";
+import type { Podcast } from "../lib/types";
+import "../styles/global.css";
+
+let podcasts: Podcast[] = [];
+let loadError = false;
+try {
+  podcasts = await fetchPodcasts();
+} catch {
+  loadError = true;
+}
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Podex</title>
+  </head>
+  <body class="mx-auto max-w-3xl p-8">
+    <h1 class="mb-6 text-2xl font-bold">Podex</h1>
+    {
+      loadError ? (
+        <p class="text-red-600">Unable to load podcasts right now.</p>
+      ) : podcasts.length === 0 ? (
+        <p class="text-gray-600">No podcasts yet.</p>
+      ) : (
+        <ul class="space-y-3">
+          {podcasts.map((podcast) => (
+            <PodcastCard podcast={podcast} />
+          ))}
+        </ul>
+      )
+    }
+  </body>
+</html>
