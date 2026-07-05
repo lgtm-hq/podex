@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.3.0] - 2026-07-05
+
+### Features
+
+- **api**: add episodes catalog model and read endpoints (#129) (6a94676)
+
 ## [0.2.0] - 2026-07-05
 
 ### Features
