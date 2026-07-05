@@ -61,6 +61,14 @@ skip_covered = false
 python_version = "3.11"
 strict = true
 
+# The CI lint image type-checks without runtime deps installed, so SQLAlchemy
+# resolves to `Any` and strict `disallow_subclassing_any` rejects the ORM
+# declarative base. Scope that one check off for the ORM models only; every
+# other strict guarantee stays in force here and locally (where deps resolve).
+[[tool.mypy.overrides]]
+module = "podex.models.*"
+disallow_subclassing_any = false
+
 [tool.lintro]
 line_length = 88
 
