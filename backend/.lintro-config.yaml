@@ -1,0 +1,56 @@
+---
+# Lintro configuration — https://github.com/lgtm-hq/py-lintro
+# Lintro is the master configuration source for all tools.
+
+enforce:
+  line_length: 88
+
+execution:
+  enabled_tools: []
+  tool_order: 'priority'
+  fail_fast: false
+  parallel: true
+  max_workers: 10
+  auto_install_deps: true
+
+defaults:
+  markdownlint:
+    MD013:
+      line_length: 88
+      code_blocks: false
+      tables: false
+
+  yamllint:
+    extends: 'default'
+    rules:
+      comments-indentation: 'disable'
+      comments:
+        min-spaces-from-content: 1
+      truthy:
+        check-keys: true
+      line-length:
+        max: 88
+        allow-non-breakable-inline-mappings: true
+
+tools:
+  ruff:
+    enabled: true
+  mypy:
+    enabled: true
+  markdownlint:
+    enabled: true
+  yamllint:
+    enabled: true
+  bandit:
+    enabled: true
+  actionlint:
+    enabled: true
+  pydoclint:
+    enabled: true
+  gitleaks:
+    enabled: true
+  osv_scanner:
+    enabled: true
+
+ai:
+  enabled: false
