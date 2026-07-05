@@ -1,0 +1,38 @@
+# Configuration for the PR auto-labeler (actions/labeler).
+# Maps changed file paths to labels for automatic PR labeling.
+---
+backend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "backend/**"
+
+frontend:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "frontend/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/workflows/**"
+          - ".github/actions/**"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "README.md"
+          - "CHANGELOG.md"
+          - "**/*.md"
+          - "!.github/**/*.md"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "backend/pyproject.toml"
+          - "backend/uv.lock"
+          - "pyproject.toml"
+          - "uv.lock"
+          - "frontend/package.json"
+          - "frontend/bun.lock"
+          - "renovate.json"
