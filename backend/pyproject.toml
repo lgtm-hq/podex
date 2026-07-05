@@ -6,13 +6,11 @@ build-backend = "hatchling.build"
 name = "podex"
 version = "0.0.1"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
-readme = "../README.md"
 requires-python = ">=3.11"
 license = "AGPL-3.0-only"
 authors = [{ name = "lgtm-hq", email = "turbocoder13@gmail.com" }]
 classifiers = [
   "Development Status :: 2 - Pre-Alpha",
-  "License :: OSI Approved :: GNU Affero General Public License v3",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
