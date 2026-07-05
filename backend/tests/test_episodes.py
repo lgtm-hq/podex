@@ -1,5 +1,7 @@
 """Tests for the public episode endpoints."""
 
+from datetime import UTC, datetime
+
 from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
@@ -62,6 +64,30 @@ def test_list_episodes_filtered_by_podcast(
     body = response.json()
     assert_that(body).is_length(1)
     assert_that(body[0]["title"]).is_equal_to("A")
+
+
+def test_list_episodes_newest_first(client: TestClient, db_session: Session) -> None:
+    """Episodes are listed newest-first by published_at."""
+    podcast = _seed_podcast(db_session)
+    db_session.add(
+        Episode(
+            podcast_id=podcast.id,
+            title="Older",
+            published_at=datetime(2020, 1, 1, tzinfo=UTC),
+        ),
+    )
+    db_session.add(
+        Episode(
+            podcast_id=podcast.id,
+            title="Newer",
+            published_at=datetime(2024, 1, 1, tzinfo=UTC),
+        ),
+    )
+    db_session.commit()
+
+    body = client.get("/api/v2/episodes").json()
+
+    assert_that([episode["title"] for episode in body]).is_equal_to(["Newer", "Older"])
 
 
 def test_get_episode_not_found(client: TestClient) -> None:
