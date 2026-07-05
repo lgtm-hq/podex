@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.2.0] - 2026-07-05
+
+### Features
+
+- **api**: add podcasts catalog model and read endpoints (#127) (21a5c94)
+
+### Other Changes
+
+- **ci**: add action-pinning validation and dependency review (#126) (936a283)
+- **deps-dev**: update lintro to 0.64.5 (minor) (#120) (5b0ed52)
+
 ## [0.1.0] - 2026-07-05
 
 ### Features
