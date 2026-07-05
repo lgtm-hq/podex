@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v2_prefix: str = "/api/v2"
     cors_origins: list[str] = ["http://localhost:4321"]
+    database_url: str = "sqlite:///./podex.db"
 
 
 @lru_cache

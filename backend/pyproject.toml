@@ -22,6 +22,7 @@ dependencies = [
   "uvicorn[standard]>=0.32",
   "pydantic>=2.10",
   "pydantic-settings>=2.6",
+  "sqlalchemy>=2.0",
 ]
 
 [project.urls]
