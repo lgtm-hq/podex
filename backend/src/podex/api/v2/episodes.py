@@ -4,8 +4,9 @@ from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
 from podex.api.deps import DbSession
-from podex.models import Episode
+from podex.models import Episode, Mention
 from podex.schemas.episode import EpisodeRead
+from podex.schemas.mention import MentionRead
 
 router = APIRouter(prefix="/episodes", tags=["episodes"])
 
@@ -26,11 +27,29 @@ def get_episode(episode_id: int, db: DbSession) -> Episode:
     return episode
 
 
+def list_episode_mentions(episode_id: int, db: DbSession) -> list[Mention]:
+    """List media mentions within an episode, ordered by timestamp."""
+    if db.get(Episode, episode_id) is None:
+        raise HTTPException(status_code=404, detail="Episode not found")
+    statement = (
+        select(Mention)
+        .where(Mention.episode_id == episode_id)
+        .order_by(Mention.timestamp_seconds)
+    )
+    return list(db.execute(statement).scalars().all())
+
+
 router.add_api_route(
     "",
     list_episodes,
     methods=["GET"],
     response_model=list[EpisodeRead],
+)
+router.add_api_route(
+    "/{episode_id}/mentions",
+    list_episode_mentions,
+    methods=["GET"],
+    response_model=list[MentionRead],
 )
 router.add_api_route(
     "/{episode_id}",
