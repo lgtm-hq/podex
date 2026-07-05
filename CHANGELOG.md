@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.6.0] - 2026-07-05
+
+### Features
+
+- **db**: add Alembic migrations and a schema-drift guard (#135) (5a5a679)
+
 ## [0.5.0] - 2026-07-05
 
 ### Features
