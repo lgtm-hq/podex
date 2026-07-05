@@ -37,6 +37,7 @@ dev = [
   "mypy>=1.14",
   "pytest>=8.0",
   "pytest-cov>=6.0",
+  "types-assertpy>=1.1.0.20260518",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -54,9 +55,6 @@ branch = true
 fail_under = 85
 show_missing = true
 skip_covered = false
-
-[tool.bandit]
-exclude_dirs = ["tests"]
 
 [tool.mypy]
 python_version = "3.11"
