@@ -21,10 +21,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     )
     app.include_router(api_v2_router, prefix=resolved.api_v2_prefix)
 
-    @app.get("/health")
     def health() -> dict[str, str]:
         """Liveness probe."""
         return {"status": "ok"}
+
+    app.add_api_route("/health", health, methods=["GET"])
 
     return app
 
