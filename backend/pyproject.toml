@@ -33,7 +33,7 @@ Issues = "https://github.com/lgtm-hq/podex/issues"
 dev = [
   "assertpy>=1.1",
   "httpx>=0.28",
-  "lintro==0.61.0",
+  "lintro==0.64.5",
   "mypy>=1.14",
   "pytest>=8.0",
   "pytest-cov>=6.0",
