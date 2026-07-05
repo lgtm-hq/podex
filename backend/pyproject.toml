@@ -22,6 +22,7 @@ dependencies = [
   "uvicorn[standard]>=0.32",
   "pydantic>=2.10",
   "pydantic-settings>=2.6",
+  "sqlalchemy>=2.0",
 ]
 
 [project.urls]
@@ -59,6 +60,17 @@ skip_covered = false
 [tool.mypy]
 python_version = "3.11"
 strict = true
+
+# The CI lint image type-checks without runtime deps installed, so SQLAlchemy
+# resolves to `Any` and strict `disallow_subclassing_any` rejects the ORM
+# declarative base. Scope that one check off for the ORM models only; every
+# other strict guarantee stays in force here and locally (where deps resolve).
+# Both module spellings are listed because lintro runs mypy with
+# `--explicit-package-bases` from the project root (module `src.podex.models.*`)
+# while `mypy src` resolves it as `podex.models.*`.
+[[tool.mypy.overrides]]
+module = ["podex.models.*", "src.podex.models.*"]
+disallow_subclassing_any = false
 
 [tool.lintro]
 line_length = 88
