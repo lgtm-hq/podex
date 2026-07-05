@@ -23,6 +23,7 @@ dependencies = [
   "pydantic>=2.10",
   "pydantic-settings>=2.6",
   "sqlalchemy>=2.0",
+  "alembic>=1.13",
 ]
 
 [project.urls]
@@ -71,6 +72,27 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["podex.models.*", "src.podex.models.*"]
 disallow_subclassing_any = false
+
+# The CI lint image type-checks without runtime deps installed, so the bare
+# `alembic` import name resolves to the local `alembic/` migration directory
+# (a namespace package) instead of the installed library. Its runtime-proxy
+# attributes (`context`, `op`, `command`) are only available at runtime, so
+# mypy reports `attr-defined` on those imports in CI. The imports carry a
+# narrow `# type: ignore[attr-defined]`; here we only disable
+# `warn_unused_ignores` for these modules so the ignore stays clean locally
+# (where deps resolve and the ignore is otherwise unused). Every other strict
+# guarantee remains in force. Module spellings cover both `alembic upgrade`
+# execution (`env`, `versions.*`) and lint discovery (`alembic.*`, `tests.*`).
+[[tool.mypy.overrides]]
+module = [
+  "env",
+  "alembic.env",
+  "0001_initial_catalog",
+  "versions.*",
+  "alembic.versions.*",
+  "tests.test_migrations",
+]
+warn_unused_ignores = false
 
 [tool.lintro]
 line_length = 88
