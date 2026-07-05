@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.5.0] - 2026-07-05
+
+### Features
+
+- **api**: add mentions linking media to episodes (#133) (8a7c4f9)
+
 ## [0.4.0] - 2026-07-05
 
 ### Features
