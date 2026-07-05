@@ -65,8 +65,11 @@ strict = true
 # resolves to `Any` and strict `disallow_subclassing_any` rejects the ORM
 # declarative base. Scope that one check off for the ORM models only; every
 # other strict guarantee stays in force here and locally (where deps resolve).
+# Both module spellings are listed because lintro runs mypy with
+# `--explicit-package-bases` from the project root (module `src.podex.models.*`)
+# while `mypy src` resolves it as `podex.models.*`.
 [[tool.mypy.overrides]]
-module = "podex.models.*"
+module = ["podex.models.*", "src.podex.models.*"]
 disallow_subclassing_any = false
 
 [tool.lintro]
