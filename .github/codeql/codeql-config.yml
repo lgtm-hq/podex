@@ -1,0 +1,4 @@
+---
+paths-ignore:
+  - backend/tests/**
+  - backend/alembic/versions/**
