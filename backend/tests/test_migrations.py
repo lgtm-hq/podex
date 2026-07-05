@@ -8,7 +8,7 @@ from alembic.runtime.migration import MigrationContext
 from assertpy import assert_that
 from sqlalchemy import Engine, create_engine, inspect
 
-from alembic import command
+from alembic import command  # type: ignore[attr-defined]
 from podex.models import Base
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
