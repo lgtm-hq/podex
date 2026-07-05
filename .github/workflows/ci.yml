@@ -20,6 +20,6 @@ jobs:
     # Keep the uses entry and tooling-ref parameter on the same commit SHA.
     # GitHub Actions cannot parameterize uses, so update both places together.
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality.yml@fc73b3ab8342a24597c12d137d6ff7fca84b9fe2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality-lint.yml@96a42109637efd4c019d176e0902e3be23295716  # v0.45.1
     with:
-      tooling-ref: "fc73b3ab8342a24597c12d137d6ff7fca84b9fe2"
+      tooling-ref: "96a42109637efd4c019d176e0902e3be23295716"  # v0.45.1
