@@ -17,8 +17,9 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-release-auto-tag.yml@cecca744299be6a34f3b4ea4f18c00262081ab61  # v0.41.0
     with:
-      version-source: python
-      version-file: backend/pyproject.toml
+      # Default version-source (commit) reads the version from the merged
+      # `chore(release): version X.Y.Z` commit — language-agnostic, so no
+      # version-source/version-file needed for the backend/ monorepo layout.
       # Podex ships GitHub Releases (Docker images to GHCR on tag), not PyPI.
       create-release: true
       tooling-ref: 'cecca744299be6a34f3b4ea4f18c00262081ab61'  # v0.41.0
