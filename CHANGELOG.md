@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.7.0] - 2026-07-05
+
+### Features
+
+- **frontend**: scaffold Astro app with a podcasts home page (#138) (88f2d5e)
+
+### Other Changes
+
+- **ci**: add CodeQL code scanning (#137) (60b7b8b)
+
 ## [0.6.0] - 2026-07-05
 
 ### Features
