@@ -10,7 +10,7 @@ export default defineConfig({
       provider: "v8",
       include: ["src/lib/**", "src/components/**/*.tsx"],
       exclude: ["src/test/**", "**/*.d.ts"],
-      reporter: ["text", "lcovonly"],
+      reporter: ["text", "lcovonly", "json-summary"],
       thresholds: { lines: 85, functions: 85, branches: 85, statements: 85 },
     },
   },
