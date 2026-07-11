@@ -28,6 +28,21 @@ jobs:
       tooling-ref: '66cad82ead0e5d119928c895c7d7da9c837989e5'  # v0.52.3
       egress-policy: block
       egress-preset: pypi
+      # The reusable's version-pr job hardens with this raw input before the
+      # allowlist resolver can apply the pypi preset, and since lgtm-ci
+      # v0.50.0 a caller allowed-endpoints REPLACES the baseline, so the
+      # complete endpoint list (github baseline plus the PyPI hosts pip
+      # needs) must be passed (lgtm-hq/lgtm-ci#517).
+      allowed-endpoints: >-
+        github.com:443
+        api.github.com:443
+        codeload.github.com:443
+        objects.githubusercontent.com:443
+        raw.githubusercontent.com:443
+        uploads.github.com:443
+        pipelines.actions.githubusercontent.com:443
+        pypi.org:443
+        files.pythonhosted.org:443
     secrets:
       RELEASE_APP_ID: ${{ secrets.RELEASE_APP_ID }}
       RELEASE_APP_PRIVATE_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
