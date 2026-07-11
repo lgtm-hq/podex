@@ -22,8 +22,22 @@ jobs:
       tooling-ref: '66cad82ead0e5d119928c895c7d7da9c837989e5'  # v0.52.3
       egress-policy: block
       egress-preset: scorecard
-      allowed-endpoints-mode: append
+      # replace (not append): the reusable's first harden-runner step applies
+      # allowed-endpoints verbatim before presets resolve, so a partial append
+      # list blocks github.com at checkout. Full scorecard preset expansion
+      # plus project extras.
+      allowed-endpoints-mode: replace
       allowed-endpoints: >
+        github.com:443
+        api.github.com:443
+        codeload.github.com:443
+        objects.githubusercontent.com:443
+        raw.githubusercontent.com:443
+        pipelines.actions.githubusercontent.com:443
+        gcr.io:443
+        api.osv.dev:443
+        api.scorecard.dev:443
+        api.securityscorecards.dev:443
         agent.api.stepsecurity.io:443
         api.deps.dev:443
         api.osv.dev:443
