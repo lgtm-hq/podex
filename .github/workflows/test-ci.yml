@@ -30,7 +30,7 @@ jobs:
       coverage: false
       publish-test-summary: false
       draft-pr-skip: true
-      job-name: Python Compatibility
+      job-name: '🧪 Python Compatibility'
       runner-image: ubuntu-24.04
       tooling-ref: '66cad82ead0e5d119928c895c7d7da9c837989e5'  # v0.52.3
       egress-policy: block
@@ -56,7 +56,7 @@ jobs:
       upload-coverage: true
       publish-test-summary: true
       draft-pr-skip: true
-      job-name: Python Coverage
+      job-name: '🧪 Python Coverage'
       runner-image: ubuntu-24.04
       tooling-ref: '66cad82ead0e5d119928c895c7d7da9c837989e5'  # v0.52.3
       egress-policy: block
