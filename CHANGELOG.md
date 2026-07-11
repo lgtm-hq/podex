@@ -22,6 +22,24 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.8.0] - 2026-07-11
+
+### Added
+
+- **ci**: add merge_group trigger to PR title validation (#148) (ec64c41)
+
+### Changed
+
+- **ci**: adopt canonical emoji check names (#157) (e792512)
+- **ci**: adopt lgtm-ci v0.52.3 (#152) (4c2cfd7)
+- add frontend CI (astro check + vitest) (#145) (b64beab)
+- **deps**: upgrade to Astro 7, React integration 6, Node adapter 11 (#143) (95574fd)
+- **deps**: update digest (#141) (582039c)
+
+### Fixed
+
+- **ci**: pass complete egress allowlists to main-only workflows (#161) (b1a6bac)
+
 ## [0.7.0] - 2026-07-05
 
 ### Features
