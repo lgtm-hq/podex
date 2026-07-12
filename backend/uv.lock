@@ -386,6 +386,15 @@ wheels = [
 ]
 
 [[package]]
+name = "identify"
+version = "2.6.19"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/52/63/51723b5f116cc04b061cb6f5a561790abf249d25931d515cd375e063e0f4/identify-2.6.19.tar.gz", hash = "sha256:6be5020c38fcb07da56c53733538a3081ea5aa70d36a156f83044bfbf9173842", size = 99567, upload-time = "2026-04-17T18:39:50.265Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/94/84/d9273cd09688070a6523c4aee4663a8538721b2b755c4962aafae0011e72/identify-2.6.19-py2.py3-none-any.whl", hash = "sha256:20e6a87f786f768c092a721ad107fc9df0eb89347be9396cadf3f4abbd1fb78a", size = 99397, upload-time = "2026-04-17T18:39:49.221Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.18"
 source = { registry = "https://pypi.org/simple" }
@@ -480,22 +489,24 @@ wheels = [
 
 [[package]]
 name = "lintro"
-version = "0.64.5"
+version = "0.77.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
     { name = "defusedxml" },
     { name = "httpx" },
+    { name = "identify" },
     { name = "loguru" },
     { name = "packaging" },
     { name = "pathspec" },
     { name = "pydantic" },
+    { name = "pyyaml" },
     { name = "rich" },
     { name = "tabulate" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/9f/96/090c45e821f12185754809dc78d2f352e1a5674ec23934cec5446b2c43cc/lintro-0.64.5.tar.gz", hash = "sha256:83512d575f5535ce7208af00b08e44ea6ed78b0219fea95a20c6f2d00e49dd5c", size = 2135320, upload-time = "2026-06-19T20:59:59.887Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/05/8390df4c6bb5ebab0d8cc7cc3460733927f5a134bfd5c02b52789962ce00/lintro-0.77.1.tar.gz", hash = "sha256:6df965d58d1b008c743c83de7b2ff361d274a7d08f8eaccd560a1687c74c9771", size = 2512275, upload-time = "2026-07-11T21:06:54.185Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f6/0e/dce1325efd3171c4d1354722740e0fefaa1c66009d2c8d25b034487fd502/lintro-0.64.5-py3-none-any.whl", hash = "sha256:1144866def9eff27738b565d29311400f2db37725027d536f4307374999c5f4d", size = 666764, upload-time = "2026-06-19T20:59:58.011Z" },
+    { url = "https://files.pythonhosted.org/packages/a7/67/9eb4c6de11d9cc3b0629b8d4f6b391845bf24d171a4de2e7db48aca5adf8/lintro-0.77.1-py3-none-any.whl", hash = "sha256:764d05ccac21a69adfa25781029bc24a2cf99c96c3e09fbca2c6913fa6a16e0f", size = 901716, upload-time = "2026-07-11T21:06:52.45Z" },
 ]
 
 [[package]]
@@ -743,7 +754,7 @@ requires-dist = [
 dev = [
     { name = "assertpy", specifier = ">=1.1" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "lintro", specifier = "==0.64.5" },
+    { name = "lintro", specifier = "==0.77.1" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
