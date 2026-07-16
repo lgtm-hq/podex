@@ -1,4 +1,11 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["local>lgtm-hq/.github:renovate-config"]
+  "extends": ["local>lgtm-hq/.github:renovate-config"],
+  "packageRules": [
+    {
+      "description": "Hold TypeScript 7 until Astro/@astrojs/check support it",
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7"
+    }
+  ]
 }
