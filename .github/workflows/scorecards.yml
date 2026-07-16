@@ -19,14 +19,7 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-scorecards.yml@31c25ef2e8992960e218524780e34f44f51271b5  # v0.54.0
     with:
       job-name: "🛡️ Scorecard Analysis"
-      tooling-ref: '31c25ef2e8992960e218524780e34f44f51271b5'  # v0.54.0
       egress-policy: block
-      egress-preset: scorecard
-      # replace (not append): the reusable's first harden-runner step applies
-      # allowed-endpoints verbatim before presets resolve, so a partial append
-      # list blocks github.com at checkout. Full scorecard preset expansion
-      # plus project extras.
-      allowed-endpoints-mode: replace
       allowed-endpoints: >
         github.com:443
         api.github.com:443
