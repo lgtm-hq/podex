@@ -28,9 +28,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
     method, path, status code, and wall-clock duration.
     """
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponder
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponder) -> Response:
         """Wrap the downstream handler with request-id and access logging.
 
         Args:
@@ -73,6 +71,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Exempt paths (health probes by default) bypass the limiter entirely.
     Allowed responses carry ``X-RateLimit-*`` headers; rejected requests receive
     a ``429`` with ``Retry-After`` and the same rate-limit headers.
+
+    Args:
+        app: The wrapped ASGI application.
+        limiter: The limiter instance enforcing per-client budgets.
+        exempt_paths: Paths that bypass rate limiting entirely.
     """
 
     def __init__(
@@ -82,13 +85,6 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limiter: SlidingWindowRateLimiter,
         exempt_paths: tuple[str, ...] = (),
     ) -> None:
-        """Initialise the middleware.
-
-        Args:
-            app: The wrapped ASGI application.
-            limiter: The limiter instance enforcing per-client budgets.
-            exempt_paths: Paths that bypass rate limiting entirely.
-        """
         super().__init__(app)
         self._limiter = limiter
         self._exempt_paths = frozenset(exempt_paths)
@@ -106,9 +102,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             return request.client.host
         return "unknown"
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponder
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponder) -> Response:
         """Apply rate limiting before delegating to the downstream handler.
 
         Args:

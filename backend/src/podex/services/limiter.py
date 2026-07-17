@@ -38,21 +38,18 @@ class SlidingWindowRateLimiter:
     A request is allowed when the number of hits recorded within the trailing
     ``window_seconds`` is below ``max_requests``. Timestamps outside the window
     are evicted lazily on each check.
+
+    Args:
+        max_requests: Maximum requests permitted per rolling window. Must be
+            a positive integer.
+        window_seconds: Length of the rolling window in seconds. Must be
+            positive.
+
+    Raises:
+        ValueError: If ``max_requests`` or ``window_seconds`` is not positive.
     """
 
     def __init__(self, *, max_requests: int, window_seconds: float) -> None:
-        """Initialise the limiter.
-
-        Args:
-            max_requests: Maximum requests permitted per rolling window. Must be
-                a positive integer.
-            window_seconds: Length of the rolling window in seconds. Must be
-                positive.
-
-        Raises:
-            ValueError: If ``max_requests`` or ``window_seconds`` is not
-                positive.
-        """
         if max_requests <= 0:
             raise ValueError("max_requests must be positive")
         if window_seconds <= 0:
