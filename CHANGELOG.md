@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.10.0] - 2026-07-17
+
+### Added
+
+- **api**: add per-IP rate limiting and request-context logging (#183) (970d3d5)
+
+### Changed
+
+- **security**: allowlist example env placeholders in secret scanning (#186) (57c2c1a)
+- **deps-dev**: update dependency lintro to 0.80.8 (patch) (#191) (aa9d538)
+
 ## [0.9.0] - 2026-07-17
 
 ### Added
