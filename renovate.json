@@ -6,6 +6,12 @@
       "description": "Hold TypeScript 7 until Astro/@astrojs/check support it",
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7"
+    },
+    {
+      "description": "Group TypeScript with Astro tooling to prevent split PRs",
+      "matchPackageNames": ["typescript", "@astrojs/check", "@astrojs/language-server"],
+      "groupName": "TypeScript and Astro tooling",
+      "groupSlug": "typescript-astro-tooling"
     }
   ]
 }
