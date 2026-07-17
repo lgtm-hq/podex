@@ -1,0 +1,5 @@
+[allowlist]
+# Allowlist real env files that may live locally but must never be committed.
+# These paths are excluded from gitleaks scanning when the files are present on disk.
+# Patterns are TOML multiline strings (raw strings with ''') matching Go regexp.
+paths = ['''backend/\.env''', '''\.env''', '''\.env\..*''']

@@ -1,0 +1,7 @@
+# gitleaks ignore list — exact paths relative to repo root.
+# Files listed here are skipped by gitleaks even if they contain secret-like content.
+# Real env files should never be committed; this list exists for belt-and-suspenders
+# coverage when gitleaks is run against the working tree rather than git history.
+backend/.env
+.env
+*.env.local

@@ -1,0 +1,35 @@
+# GitGuardian configuration — allowlist for example env templates and placeholder values.
+# Docs: https://docs.gitguardian.com/ggshield-docs/configuration
+#
+# IMPORTANT: real secret files (.env, backend/.env, .env.staging) are NOT ignored here;
+# they must never be committed and are covered by .gitignore only.
+version: 2
+
+secret:
+  # Ignore example / template files that intentionally contain placeholder values.
+  # These patterns match *.env*.example and .env*.example anywhere in the tree,
+  # plus the top-level staging template explicitly.
+  ignored_paths:
+    - '**/*.env*.example'
+    - '**/.env*.example'
+    - '.env.staging.example'
+
+  # Ignore the known change-me-* placeholder strings used in staging templates (#103).
+  # Each entry is the literal placeholder value, not a regex.
+  ignored_matches:
+    - name: staging placeholder — postgres password
+      match: change-me-postgres-password
+    - name: staging placeholder — fernet encryption key
+      match: change-me-fernet-key
+    - name: staging placeholder — private S3 transcript bucket
+      match: change-me-private-transcript-bucket
+    - name: staging placeholder — meilisearch master key
+      match: change-me-meilisearch-master-key
+    - name: staging placeholder — podex API key
+      match: change-me-podex-api-key
+    - name: staging placeholder — SMTP host
+      match: change-me-smtp-host
+    - name: staging placeholder — SMTP username
+      match: change-me-smtp-user
+    - name: staging placeholder — SMTP password
+      match: change-me-smtp-password
