@@ -21,6 +21,15 @@ class Settings(BaseSettings):
     cors_origins: list[str] = ["http://localhost:4321"]
     database_url: str = "sqlite:///./podex.db"
 
+    # Rate limiting. Defaults are deliberately generous so ordinary traffic
+    # (and the test suite) never trips the limiter; tests inject tight values.
+    # The limiter is process-local for now; follow-up #107 moves it to a
+    # shared store so limits hold across workers.
+    rate_limit_enabled: bool = True
+    rate_limit_max_requests: int = 120
+    rate_limit_window_seconds: float = 60.0
+    rate_limit_exempt_paths: list[str] = ["/health"]
+
 
 @lru_cache
 def get_settings() -> Settings:
