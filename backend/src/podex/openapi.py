@@ -14,14 +14,14 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from podex.main import app
 
 
 def build_openapi_schema() -> dict[str, Any]:
     """Return the application's OpenAPI schema as a plain dict."""
-    return app.openapi()
+    return cast("dict[str, Any]", app.openapi())
 
 
 def render_openapi_json() -> str:

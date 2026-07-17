@@ -6,9 +6,7 @@ from assertpy import assert_that
 
 from podex.openapi import render_openapi_json
 
-OPENAPI_ARTIFACT = (
-    Path(__file__).resolve().parents[2] / "frontend" / "openapi.json"
-)
+OPENAPI_ARTIFACT = Path(__file__).resolve().parents[2] / "frontend" / "openapi.json"
 
 REGEN_HINT = (
     "frontend/openapi.json is stale. Regenerate it with "
