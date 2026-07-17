@@ -15,7 +15,7 @@ concurrency:
 jobs:
   version-pr:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-release-version-pr.yml@31c25ef2e8992960e218524780e34f44f51271b5  # v0.54.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-release-version-pr.yml@e3a404117355194de72f09a3c8a1dc341bc9cabb  # v0.55.0
     with:
       ecosystems: python
       # yamllint disable-line rule:line-length
@@ -25,7 +25,7 @@ jobs:
       max-bump: major
       # Patch releases auto-merge; minor/major need explicit review.
       auto-merge-patch-only: true
-      tooling-ref: '31c25ef2e8992960e218524780e34f44f51271b5'  # v0.54.0
+      tooling-ref: 'e3a404117355194de72f09a3c8a1dc341bc9cabb'  # v0.55.0
       egress-policy: block
       egress-preset: pypi
       # The reusable's version-pr job hardens with this raw input before the
