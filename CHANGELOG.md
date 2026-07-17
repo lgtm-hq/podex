@@ -22,6 +22,40 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.9.0] - 2026-07-17
+
+### Added
+
+- **frontend**: add loading and empty state components (#185) (317c9c6)
+
+### Changed
+
+- **backend**: add Google docstrings to helper functions (#182) (2f8c1b6)
+- add AGENTS.md with Cursor Cloud setup instructions (#178) (b6760d4)
+- **api**: add cross-resource v2 API smoke coverage (#187) (960d14e)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.57.1 (minor) (#189) (6df75e3)
+- **deps**: group TypeScript with Astro tooling in Renovate (#181) (943d6bb)
+- **deps-dev**: update dependency lintro to 0.80.7 (patch) (#188) (effe1ff)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.55.0 (minor) (#176) (50cbd50)
+- **deps-dev**: update dependency lintro to 0.80.6 (patch) (#180) (97c74d1)
+- **deps-dev**: update dependency lintro to 0.80.5 (patch) (#179) (41544e7)
+- **deps-dev**: update dependency lintro to 0.80.4 (patch) (#177) (5b44506)
+- **deps-dev**: update dependency lintro to 0.80.3 (patch) (#175) (a8a4a44)
+- **deps**: hold TypeScript 7 in Renovate (#174) (e5ceb31)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.54.0 (minor) (#150) (7e79ad8)
+- **deps-dev**: update dependency lintro to 0.80.1 (minor) (#172) (a480b56)
+- **deps-dev**: update dependency lintro to 0.79.4 (patch) (#171) (ad93634)
+- **deps-dev**: update dependency lintro to 0.79.1 (minor) (#167) (dc64a5a)
+- **deps**: lock file maintenance (#166) (e771f9b)
+- **deps**: lock file maintenance (#165) (f72670a)
+- **deps**: update dependency typescript to 7.0.2 (major) (#142) (3ee9191)
+- **deps**: lock file maintenance (#164) (b9346be)
+- **deps-dev**: update dependency lintro to 0.78.2 (patch) (#163) (233a23b)
+- **deps-dev**: update dependency lintro to 0.78.1 (minor) (#162) (98e4a71)
+- **deps**: pin dependencies (#154) (88ef9ab)
+- **deps**: pin dependencies (#153) (9e8d8d6)
+- **deps-dev**: update dependency lintro to 0.77.1 (minor) (#159) (5ec05fe)
+
 ## [0.8.0] - 2026-07-11
 
 ### Added
