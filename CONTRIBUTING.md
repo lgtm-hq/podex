@@ -21,6 +21,15 @@ bun install
 bun run test
 ```
 
+The frontend API types (`src/lib/types.gen.ts`) are generated from the backend
+OpenAPI schema (`frontend/openapi.json`). After changing an API route or schema,
+regenerate both and commit the result (`bun run check` fails on drift):
+
+```bash
+cd backend && uv run python -m podex.openapi ../frontend/openapi.json
+cd frontend && bun run generate:api
+```
+
 ## Linting and formatting
 
 Podex uses [`lintro`](https://github.com/lgtm-hq/py-lintro) as the single entry

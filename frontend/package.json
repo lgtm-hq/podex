@@ -7,7 +7,9 @@
     "dev": "astro dev",
     "build": "astro check && astro build",
     "preview": "astro preview",
-    "check": "astro check",
+    "generate:api": "openapi-typescript ./openapi.json -o ./src/lib/types.gen.ts",
+    "check:api": "bun run generate:api && git diff --exit-code -- src/lib/types.gen.ts",
+    "check": "astro check && bun run check:api",
     "test": "vitest",
     "test:run": "vitest run",
     "test:coverage": "vitest run --coverage"
@@ -30,6 +32,7 @@
     "@types/react-dom": "19.2.3",
     "@vitest/coverage-v8": "4.1.10",
     "happy-dom": "20.10.6",
+    "openapi-typescript": "^7.13.0",
     "vitest": "4.1.10"
   }
 }
