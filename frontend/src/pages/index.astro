@@ -1,4 +1,6 @@
 ---
+import DegradedBanner from "../components/DegradedBanner";
+import EmptyState from "../components/EmptyState";
 import PodcastCard from "../components/PodcastCard.astro";
 import { fetchPodcasts } from "../lib/api";
 import type { Podcast } from "../lib/types";
@@ -24,9 +26,9 @@ try {
     <h1 class="mb-6 text-2xl font-bold">Podex</h1>
     {
       loadError ? (
-        <p class="text-red-600">Unable to load podcasts right now.</p>
+        <DegradedBanner />
       ) : podcasts.length === 0 ? (
-        <p class="text-gray-600">No podcasts yet.</p>
+        <EmptyState title="No podcasts yet." />
       ) : (
         <ul class="space-y-3">
           {podcasts.map((podcast) => (
