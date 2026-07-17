@@ -1,8 +1,4 @@
+import type { components } from "./types.gen";
+
 /** A podcast source in the catalog. */
-export interface Podcast {
-  id: number;
-  name: string;
-  slug: string;
-  description: string | null;
-  created_at: string;
-}
+export type Podcast = components["schemas"]["PodcastRead"];
