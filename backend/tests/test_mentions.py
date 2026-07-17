@@ -8,7 +8,9 @@ from podex.models import Episode, Media, MediaType, Mention, Podcast
 
 
 def _seed_mention(db: Session) -> Mention:
-    """Insert a complete mention fixture (podcast, episode, media, mention) and return it.
+    """Insert and return a complete mention fixture.
+
+    Builds a podcast, episode, media item, and the mention that links them.
 
     Args:
         db: Active SQLAlchemy session.
