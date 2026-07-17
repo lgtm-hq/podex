@@ -99,6 +99,24 @@ def test_uses_monotonic_clock_by_default() -> None:
     assert_that(decision.allowed).is_true()
 
 
+def test_stale_keys_are_swept_to_bound_memory() -> None:
+    """Buckets for clients that stopped sending are eventually dropped.
+
+    Without the periodic sweep, every distinct key ever checked would keep an
+    entry in the internal store forever (unbounded growth under IP rotation).
+    """
+    limiter = SlidingWindowRateLimiter(max_requests=5, window_seconds=10.0)
+
+    for index in range(1023):
+        limiter.check(f"key-{index}", now=0.0)
+    # The 1024th check triggers the sweep; every key last seen at t=0 is
+    # stale relative to the window ending at t=100.
+    limiter.check("fresh", now=100.0)
+
+    assert_that(limiter._hits).is_length(1)
+    assert_that(limiter._hits).contains_key("fresh")
+
+
 @pytest.mark.parametrize("bad_window", [-1.0, 0.0])
 def test_window_must_be_positive(bad_window: float) -> None:
     """Non-positive windows are rejected regardless of the exact value."""

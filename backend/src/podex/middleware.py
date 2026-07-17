@@ -43,26 +43,53 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         request.state.request_id = request_id
 
         start = time.perf_counter()
-        response = await call_next(request)
-        duration_ms = (time.perf_counter() - start) * 1000.0
+        status_code = 500
+        try:
+            response = await call_next(request)
+        except Exception:
+            # Still emit the access log (as a 500) so failed requests remain
+            # traceable by request id; the exception propagates to Starlette's
+            # error handling unchanged.
+            self._log_access(
+                request, status_code=status_code, start=start, request_id=request_id
+            )
+            raise
+        status_code = response.status_code
 
         response.headers[REQUEST_ID_HEADER] = request_id
+        self._log_access(
+            request, status_code=status_code, start=start, request_id=request_id
+        )
+        return response
+
+    @staticmethod
+    def _log_access(
+        request: Request, *, status_code: int, start: float, request_id: str
+    ) -> None:
+        """Emit one structured access-log line for a completed request.
+
+        Args:
+            request: The request being logged.
+            status_code: The response status code (500 for unhandled errors).
+            start: The ``time.perf_counter`` value captured at request start.
+            request_id: The request id associated with this request.
+        """
+        duration_ms = (time.perf_counter() - start) * 1000.0
         _access_logger.info(
             "%s %s %s %.2fms request_id=%s",
             request.method,
             request.url.path,
-            response.status_code,
+            status_code,
             duration_ms,
             request_id,
             extra={
                 "method": request.method,
                 "path": request.url.path,
-                "status_code": response.status_code,
+                "status_code": status_code,
                 "duration_ms": round(duration_ms, 2),
                 "request_id": request_id,
             },
         )
-        return response
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -91,6 +118,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     def _client_key(self, request: Request) -> str:
         """Derive the limiter key for a request.
+
+        ``X-Forwarded-For`` is deliberately not parsed here: it is trivially
+        spoofable unless validated against a trusted-proxy list. When deploying
+        behind a reverse proxy, run uvicorn with ``--proxy-headers`` (and
+        ``--forwarded-allow-ips``) so ``request.client`` already reflects the
+        real client address by the time it reaches this middleware.
 
         Args:
             request: The incoming request.

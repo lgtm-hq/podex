@@ -119,6 +119,44 @@ def test_client_key_falls_back_when_client_unknown() -> None:
     assert_that(middleware._client_key(request)).is_equal_to("unknown")
 
 
+def test_access_log_emitted_when_handler_raises(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unhandled handler exceptions still produce a 500 access-log line."""
+    app = create_app(Settings(rate_limit_enabled=False))
+
+    async def _boom() -> None:
+        """Route handler that always fails."""
+        raise RuntimeError("boom")
+
+    app.add_api_route("/boom", _boom, methods=["GET"])
+
+    with TestClient(app, raise_server_exceptions=False) as client:
+        with caplog.at_level(logging.INFO, logger="podex.access"):
+            response = client.get("/boom", headers={REQUEST_ID_HEADER: "err-1"})
+
+    assert_that(response.status_code).is_equal_to(500)
+    records = [r for r in caplog.records if r.name == "podex.access"]
+    assert_that(records).is_not_empty()
+    record = records[-1]
+    assert_that(record.__dict__["status_code"]).is_equal_to(500)
+    assert_that(record.__dict__["request_id"]).is_equal_to("err-1")
+
+
+def test_cors_exposes_rate_limit_headers_to_browsers() -> None:
+    """Cross-origin responses expose the request-id and rate-limit headers."""
+    settings = Settings(rate_limit_enabled=True)
+    with _make_client(settings) as client:
+        response = client.get(
+            "/api/v2/status", headers={"Origin": "http://localhost:4321"}
+        )
+
+    exposed = response.headers.get("Access-Control-Expose-Headers", "")
+    assert_that(exposed).contains("X-Request-ID")
+    assert_that(exposed).contains("X-RateLimit-Limit")
+    assert_that(exposed).contains("Retry-After")
+
+
 def test_access_log_records_request_details(
     tight_client: TestClient, caplog: pytest.LogCaptureFixture
 ) -> None:

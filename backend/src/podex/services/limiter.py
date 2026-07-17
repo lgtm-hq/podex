@@ -8,8 +8,10 @@ backend (e.g. Redis) so limits hold across multiple workers/instances.
 
 import threading
 import time
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass
+
+_SWEEP_INTERVAL_CHECKS = 1024
 
 
 @dataclass(frozen=True)
@@ -56,8 +58,9 @@ class SlidingWindowRateLimiter:
             raise ValueError("window_seconds must be positive")
         self._max_requests = max_requests
         self._window_seconds = window_seconds
-        self._hits: dict[str, deque[float]] = defaultdict(deque)
+        self._hits: dict[str, deque[float]] = {}
         self._lock = threading.Lock()
+        self._checks_since_sweep = 0
 
     @property
     def max_requests(self) -> int:
@@ -68,6 +71,29 @@ class SlidingWindowRateLimiter:
     def window_seconds(self) -> float:
         """Return the configured rolling window length in seconds."""
         return self._window_seconds
+
+    def _maybe_sweep(self, window_start: float) -> None:
+        """Periodically drop keys whose hits have all aged out of the window.
+
+        Without this, a client that stops sending requests (or an attacker
+        rotating source IPs) would leave its bucket in memory forever. The
+        sweep runs every ``_SWEEP_INTERVAL_CHECKS`` checks so the amortized
+        cost per request stays O(1). Must be called with ``self._lock`` held.
+
+        Args:
+            window_start: Timestamps at or before this instant are stale.
+        """
+        self._checks_since_sweep += 1
+        if self._checks_since_sweep < _SWEEP_INTERVAL_CHECKS:
+            return
+        self._checks_since_sweep = 0
+        stale = [
+            key
+            for key, hits in self._hits.items()
+            if not hits or hits[-1] <= window_start
+        ]
+        for key in stale:
+            del self._hits[key]
 
     def check(self, key: str, *, now: float | None = None) -> RateLimitDecision:
         """Record and evaluate a request for ``key`` against the window.
@@ -88,7 +114,8 @@ class SlidingWindowRateLimiter:
         current = time.monotonic() if now is None else now
         window_start = current - self._window_seconds
         with self._lock:
-            hits = self._hits[key]
+            self._maybe_sweep(window_start)
+            hits = self._hits.setdefault(key, deque())
             while hits and hits[0] <= window_start:
                 hits.popleft()
 
@@ -118,3 +145,4 @@ class SlidingWindowRateLimiter:
         """Clear all recorded hits, primarily to isolate tests."""
         with self._lock:
             self._hits.clear()
+            self._checks_since_sweep = 0

@@ -36,6 +36,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_origins=resolved.cors_origins,
         allow_methods=["*"],
         allow_headers=["*"],
+        # Non-safelisted response headers are invisible to cross-origin
+        # browser code unless exposed explicitly.
+        expose_headers=[
+            "X-Request-ID",
+            "X-RateLimit-Limit",
+            "X-RateLimit-Remaining",
+            "X-RateLimit-Reset",
+            "Retry-After",
+        ],
     )
     app.include_router(api_v2_router, prefix=resolved.api_v2_prefix)
 
