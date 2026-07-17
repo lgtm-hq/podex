@@ -38,6 +38,7 @@ def client(db_session: Session) -> Iterator[TestClient]:
     app = create_app()
 
     def override_get_db() -> Iterator[Session]:
+        """Yield the test database session in place of the real one."""
         yield db_session
 
     app.dependency_overrides[get_db] = override_get_db
