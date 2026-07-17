@@ -15,6 +15,14 @@ _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 
 def _upgraded_engine(db_url: str) -> Engine:
+    """Run Alembic migrations to head and return the resulting engine.
+
+    Args:
+        db_url: SQLAlchemy-compatible database URL for the target database.
+
+    Returns:
+        Engine connected to the fully migrated database.
+    """
     config = Config(str(_ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", db_url)
     command.upgrade(config, "head")

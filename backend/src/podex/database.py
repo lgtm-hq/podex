@@ -15,6 +15,12 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
         return
 
     def _set_pragma(dbapi_connection: Any, _record: Any) -> None:
+        """Enable the foreign_keys pragma on each new SQLite connection.
+
+        Args:
+            dbapi_connection: The raw DBAPI connection being checked out.
+            _record: The connection pool record (unused).
+        """
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON")
         cursor.close()

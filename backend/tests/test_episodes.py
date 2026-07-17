@@ -15,6 +15,16 @@ def _seed_podcast(
     slug: str = "example-show",
     name: str = "The Example Show",
 ) -> Podcast:
+    """Insert a podcast row into the database and return it.
+
+    Args:
+        db: Active SQLAlchemy session.
+        slug: URL-safe podcast identifier.
+        name: Human-readable podcast title.
+
+    Returns:
+        The newly created and committed Podcast instance.
+    """
     podcast = Podcast(name=name, slug=slug)
     db.add(podcast)
     db.commit()
