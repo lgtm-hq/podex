@@ -1,0 +1,12 @@
+# A custom gitleaks config REPLACES the built-in ruleset unless it extends it;
+# without this extend block no rules run at all and nothing is ever detected.
+[extend]
+useDefault = true
+
+[allowlist]
+# Allowlist ONLY example/template env files and their change-me-* placeholder
+# values. Real env files (.env, backend/.env, .env.staging) must stay fully
+# scannable so an accidental commit of real secrets is still caught.
+# Patterns are Go regexps in TOML raw strings.
+paths = ['''(^|/)\.env(\.[a-z0-9-]+)?\.example$''']
+regexes = ['''change-me-[a-z0-9-]+''']
