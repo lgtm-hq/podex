@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.11.0] - 2026-07-17
+
+### Added
+
+- **frontend**: generate typed API client from OpenAPI schema (#184) (450c90b)
+
 ## [0.10.0] - 2026-07-17
 
 ### Added
