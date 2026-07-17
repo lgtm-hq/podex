@@ -15,10 +15,10 @@ concurrency:
 jobs:
   dependency-review:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-dependency-review.yml@e3a404117355194de72f09a3c8a1dc341bc9cabb  # v0.55.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-dependency-review.yml@698a8e882384872913a9b5cf31a38eb240efb549  # v0.57.1
     with:
       fail-on-severity: high
-      tooling-ref: 'e3a404117355194de72f09a3c8a1dc341bc9cabb'  # v0.55.0
+      tooling-ref: '698a8e882384872913a9b5cf31a38eb240efb549'  # v0.57.1
       egress-policy: block
       egress-preset: scorecard
       # replace (not append): the reusable's first harden-runner step applies
