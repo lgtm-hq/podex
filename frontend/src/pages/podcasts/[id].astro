@@ -1,0 +1,129 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import { fetchPodcast } from "../../lib/api";
+import { SITE_NAME, SITE_URL, absoluteUrl } from "../../lib/site";
+import type { Podcast } from "../../lib/types";
+
+const idParam = Astro.params.id;
+const podcastId = idParam ? Number.parseInt(idParam, 10) : Number.NaN;
+
+let podcast: Podcast | null = null;
+let loadError = false;
+
+if (Number.isFinite(podcastId) && podcastId > 0) {
+  try {
+    podcast = await fetchPodcast(podcastId);
+  } catch {
+    loadError = true;
+  }
+} else {
+  loadError = true;
+}
+
+if (!loadError && podcast === null) {
+  return new Response("Podcast not found", { status: 404 });
+}
+
+const canonicalPath = podcast ? `/podcasts/${podcast.id}` : `/podcasts/${idParam}`;
+const description = podcast?.description
+  ? podcast.description
+  : podcast
+    ? `${podcast.name} on ${SITE_NAME}.`
+    : `Podcast on ${SITE_NAME}.`;
+
+const podcastJsonLd = podcast
+  ? {
+      "@context": "https://schema.org",
+      "@type": "PodcastSeries",
+      name: podcast.name,
+      url: absoluteUrl(canonicalPath),
+      description: podcast.description ?? undefined,
+      inLanguage: "en",
+    }
+  : null;
+
+const breadcrumbJsonLd = podcast
+  ? {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        {
+          "@type": "ListItem",
+          position: 1,
+          name: "Discover",
+          item: `${SITE_URL}/`,
+        },
+        {
+          "@type": "ListItem",
+          position: 2,
+          name: podcast.name,
+          item: absoluteUrl(canonicalPath),
+        },
+      ],
+    }
+  : null;
+
+const jsonLd = [podcastJsonLd, breadcrumbJsonLd].filter(
+  (entry) => entry !== null,
+);
+---
+
+<Layout
+  title={podcast ? podcast.name : "Podcast unavailable"}
+  description={description}
+  canonicalPath={canonicalPath}
+  ogType="article"
+  jsonLd={jsonLd}
+>
+  <article class="max-w-2xl">
+    <a
+      href="/"
+      class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)] hover:underline"
+    >
+      ← Back to discovery
+    </a>
+
+    {
+      loadError ? (
+        <p role="alert" class="mt-8 text-[color:var(--color-ink)]">
+          We couldn't load this podcast right now. Please try again shortly.
+        </p>
+      ) : podcast ? (
+        <>
+          <h1
+            class="font-display mt-6 text-4xl leading-[1.1] font-medium tracking-tight text-[color:var(--color-ink)] sm:text-5xl"
+          >
+            {podcast.name}
+          </h1>
+          {podcast.description && (
+            <p class="mt-5 text-lg text-[color:var(--color-muted)]">
+              {podcast.description}
+            </p>
+          )}
+          <dl
+            class="mt-10 grid grid-cols-1 gap-4 text-sm sm:grid-cols-2"
+          >
+            <div>
+              <dt class="uppercase tracking-[0.2em] text-xs text-[color:var(--color-muted)]">
+                Slug
+              </dt>
+              <dd class="mt-1 text-[color:var(--color-ink)]">{podcast.slug}</dd>
+            </div>
+            <div>
+              <dt class="uppercase tracking-[0.2em] text-xs text-[color:var(--color-muted)]">
+                Added
+              </dt>
+              <dd class="mt-1 text-[color:var(--color-ink)]">
+                {new Date(podcast.created_at).toLocaleDateString("en-US", {
+                  year: "numeric",
+                  month: "long",
+                  day: "numeric",
+                })}
+              </dd>
+            </div>
+          </dl>
+        </>
+      ) : null
+    }
+  </article>
+</Layout>

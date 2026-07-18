@@ -1,0 +1,137 @@
+---
+import "../styles/global.css";
+import {
+  SITE_DESCRIPTION,
+  SITE_NAME,
+  SITE_TAGLINE,
+  SITE_URL,
+  absoluteUrl,
+} from "../lib/site";
+
+interface Props {
+  /** Page title. Suffixed with the site name automatically. */
+  title?: string;
+  /** Meta description; falls back to the site description. */
+  description?: string;
+  /**
+   * Canonical path (leading slash). If omitted, the current request pathname
+   * is used. Query strings and fragments are stripped from the canonical URL.
+   */
+  canonicalPath?: string;
+  /** OpenGraph type; defaults to "website". */
+  ogType?: "website" | "article";
+  /**
+   * Optional JSON-LD payload(s) to embed in the head. Each entry is emitted as
+   * a separate `<script type="application/ld+json">`.
+   */
+  jsonLd?: unknown | unknown[];
+}
+
+const {
+  title,
+  description = SITE_DESCRIPTION,
+  canonicalPath,
+  ogType = "website",
+  jsonLd,
+} = Astro.props;
+
+const pathname = canonicalPath ?? Astro.url.pathname;
+const canonical = absoluteUrl(pathname);
+const fullTitle = title ? `${title} · ${SITE_NAME}` : `${SITE_NAME} — ${SITE_TAGLINE}`;
+const structuredEntries: unknown[] = Array.isArray(jsonLd)
+  ? jsonLd
+  : jsonLd !== undefined
+    ? [jsonLd]
+    : [];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+
+    <meta property="og:site_name" content={SITE_NAME} />
+    <meta property="og:type" content={ogType} />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content="en_US" />
+
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={fullTitle} />
+    <meta name="twitter:description" content={description} />
+
+    <link rel="sitemap" type="application/xml" href={`${SITE_URL}/sitemap.xml`} />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&display=swap"
+    />
+
+    {
+      structuredEntries.map((entry) => (
+        <script
+          is:inline
+          type="application/ld+json"
+          set:html={JSON.stringify(entry)}
+        />
+      ))
+    }
+  </head>
+  <body class="min-h-screen">
+    <div class="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-10 sm:px-8">
+      <header class="mb-14 flex items-center justify-between">
+        <a
+          href="/"
+          class="font-display text-3xl font-medium tracking-tight text-[color:var(--color-ink)] hover:text-[color:var(--color-accent)]"
+        >
+          {SITE_NAME}
+        </a>
+        <nav aria-label="Primary" class="text-sm text-[color:var(--color-muted)]">
+          <a
+            href="/"
+            class="hover:text-[color:var(--color-accent)]"
+          >
+            Discover
+          </a>
+        </nav>
+      </header>
+
+      <main class="flex-1">
+        <slot />
+      </main>
+
+      <footer
+        class="mt-20 border-t border-[color:var(--color-hairline)] pt-6 text-sm text-[color:var(--color-muted)]"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <p class="font-display text-base tracking-tight text-[color:var(--color-ink)]">
+            {SITE_NAME}
+          </p>
+          <ul class="flex flex-wrap gap-x-5 gap-y-2">
+            <li>
+              <a
+                href="/sitemap.xml"
+                class="hover:text-[color:var(--color-accent)]"
+              >
+                Sitemap
+              </a>
+            </li>
+          </ul>
+        </div>
+        <p class="mt-4 text-xs text-[color:var(--color-muted)]">
+          © {new Date().getFullYear()} {SITE_NAME}. All rights reserved.
+        </p>
+      </footer>
+    </div>
+  </body>
+</html>

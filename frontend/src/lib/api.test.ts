@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { fetchPodcastPage, fetchPodcasts } from "./api";
+import { fetchPodcast, fetchPodcastPage, fetchPodcasts } from "./api";
 import type { Podcast, PodcastPage } from "./types";
 
 afterEach(() => {
@@ -88,5 +88,44 @@ describe("fetchPodcasts", () => {
     );
 
     await expect(fetchPodcasts()).rejects.toThrow(/500/);
+  });
+});
+
+describe("fetchPodcast", () => {
+  it("returns the parsed podcast on 200", async () => {
+    const podcast: Podcast = buildPodcast({
+      id: 3,
+      name: "One Show",
+      slug: "one-show",
+      description: "Just one",
+      created_at: "2026-02-02T00:00:00Z",
+      public_id: "pod_c",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () => new Response(JSON.stringify(podcast), { status: 200 }),
+      ),
+    );
+
+    await expect(fetchPodcast(3)).resolves.toEqual(podcast);
+  });
+
+  it("resolves to null on 404", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("", { status: 404 })),
+    );
+
+    await expect(fetchPodcast(99)).resolves.toBeNull();
+  });
+
+  it("throws on other non-ok responses", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("", { status: 500 })),
+    );
+
+    await expect(fetchPodcast(1)).rejects.toThrow(/500/);
   });
 });
