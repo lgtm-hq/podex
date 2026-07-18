@@ -2,13 +2,17 @@
 
 from datetime import datetime
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
 from podex.models.episode import DiscoverySource
+
+if TYPE_CHECKING:
+    from podex.models.episode import Episode
 
 
 class PodcastStatus(StrEnum):
@@ -60,3 +64,5 @@ class Podcast(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+
+    episodes: Mapped[list["Episode"]] = relationship(back_populates="podcast")
