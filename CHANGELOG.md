@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.26.1] - 2026-07-18
+
+### Fixed
+
+- **security**: harden LLM extraction against transcript prompt injection (#266)
+  (4a341af)
+
 ## [0.26.0] - 2026-07-18
 
 ### Added
