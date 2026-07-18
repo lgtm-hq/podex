@@ -4,6 +4,9 @@ Importing the models here registers them on ``Base.metadata`` so that
 metadata-based table creation and Alembic autogenerate see every table.
 """
 
+from podex.models.account_alert_event import AccountAlertEvent
+from podex.models.account_alert_rule import AccountAlertRule
+from podex.models.account_digest import AccountDigest
 from podex.models.account_followed_podcast import AccountFollowedPodcast
 from podex.models.account_preference import AccountPreference
 from podex.models.account_saved_media import AccountSavedMedia
@@ -53,6 +56,9 @@ from podex.models.transcript_source_retention_policy import (
 from podex.models.user_session import UserSession
 
 __all__ = [
+    "AccountAlertEvent",
+    "AccountAlertRule",
+    "AccountDigest",
     "AccountFollowedPodcast",
     "AccountPreference",
     "AccountSavedMedia",
