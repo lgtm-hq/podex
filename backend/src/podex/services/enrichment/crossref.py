@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -310,8 +311,12 @@ class CrossRefProvider(EnrichmentProvider):
             license_url = licenses[0].get("URL")
             if license_url:
                 metadata["license_url"] = license_url
-                # Check if it's open access
-                if "creativecommons.org" in license_url:
+                # Check if it's open access — parse the host rather than
+                # substring-matching so a lookalike URL cannot spoof it.
+                host = urlparse(license_url).hostname or ""
+                if host == "creativecommons.org" or host.endswith(
+                    ".creativecommons.org",
+                ):
                     metadata["open_access"] = True
 
         # Subject areas
