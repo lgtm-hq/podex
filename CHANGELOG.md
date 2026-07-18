@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.14.0] - 2026-07-18
+
+### Added
+
+- **api**: standardize v2 pagination, error envelope, and public IDs (#217) (5a8dc45)
+
+### Changed
+
+- **deps**: pin postgres docker tag to 57c72fd (#228) (bf4f4fa)
+- **deps**: update node.js to 22.23.1 (minor) (#214) (06924ee)
+- **deps**: update docker/dockerfile docker tag to 1.25 (minor) (#213) (90ebe57)
+- **env**: add staging deployment compose and docs (#203) (37ef427)
+
 ## [0.13.0] - 2026-07-18
 
 ### Added
