@@ -220,7 +220,7 @@ CATEGORY_TYPE_PATTERNS: dict[str, list[str]] = {
 }
 
 
-class WikipediaProvider(EnrichmentProvider):
+class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich media from Wikipedia with strict type validation.
 
     Wikipedia API is free with no authentication required.

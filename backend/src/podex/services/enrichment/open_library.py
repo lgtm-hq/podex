@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class OpenLibraryProvider(EnrichmentProvider):
+class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich books from OpenLibrary (free, no API key).
 
     Args:
