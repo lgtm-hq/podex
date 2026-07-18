@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.17.0] - 2026-07-18
+
+### Added
+
+- **models**: add discovery-tracking columns for cross-provider dedup (#245) (80589b3)
+
 ## [0.16.0] - 2026-07-18
 
 ### Added
