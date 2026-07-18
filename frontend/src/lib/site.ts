@@ -29,6 +29,17 @@ export const SITE_URL: string = (
 ).replace(/\/+$/, "");
 
 /**
+ * Legal document version + effective date shared by the Terms and Privacy
+ * pages. Bump the version and effective date together whenever the policy
+ * content materially changes; the same identifiers should be persisted with
+ * per-user acceptance records once #82 lands.
+ *
+ * Content is currently marked as draft pending legal review (#82).
+ */
+export const LEGAL_VERSION = "0.1.0-draft";
+export const LEGAL_EFFECTIVE_DATE = "2026-07-18";
+
+/**
  * Absolute URL helper. Guarantees exactly one slash between origin and path.
  */
 export function absoluteUrl(path: string): string {

@@ -16,10 +16,10 @@ function makePodcast(overrides: Partial<Podcast> = {}): Podcast {
 }
 
 describe("buildSitemapEntries", () => {
-  it("always includes the home page", () => {
+  it("always includes home and both legal pages", () => {
     const entries = buildSitemapEntries([]);
     const paths = entries.map((entry) => entry.path);
-    expect(paths).toEqual(["/"]);
+    expect(paths).toEqual(["/", "/legal/terms", "/legal/privacy"]);
   });
 
   it("appends one entry per podcast, keyed by id", () => {
@@ -34,7 +34,7 @@ describe("buildSitemapEntries", () => {
   });
 
   it("uses podcast.created_at as lastmod for podcast entries", () => {
-    const [, podcastEntry] = buildSitemapEntries([
+    const [, , , podcastEntry] = buildSitemapEntries([
       makePodcast({ id: 3, created_at: "2026-05-10T12:34:56Z" }),
     ]);
     expect(podcastEntry).toBeDefined();
@@ -47,7 +47,9 @@ describe("buildSitemapEntries", () => {
       { staticLastmod: "2026-07-18T00:00:00Z" },
     );
     expect(entries[0]!.lastmod).toBe("2026-07-18T00:00:00Z");
-    expect(entries[1]!.lastmod).toBe("2026-01-15T00:00:00Z");
+    expect(entries[1]!.lastmod).toBe("2026-07-18T00:00:00Z");
+    expect(entries[2]!.lastmod).toBe("2026-07-18T00:00:00Z");
+    expect(entries[3]!.lastmod).toBe("2026-01-15T00:00:00Z");
   });
 });
 

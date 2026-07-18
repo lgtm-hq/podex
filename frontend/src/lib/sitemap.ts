@@ -38,10 +38,11 @@ function joinUrl(siteUrl: string, path: string): string {
 }
 
 /**
- * Build the entry list for a Podex sitemap: the home page plus one entry per
- * podcast (by numeric id, matching `/podcasts/[id].astro`).
+ * Build the entry list for a Podex sitemap: the home page, the two legal
+ * pages, and one entry per podcast (by numeric id, matching
+ * `/podcasts/[id].astro`).
  *
- * `lastmod` values are optional — the home entry uses the provided
+ * `lastmod` values are optional — home + legal pages use the provided
  * `staticLastmod`, and podcast entries use `podcast.created_at` if present.
  */
 export function buildSitemapEntries(
@@ -55,6 +56,18 @@ export function buildSitemapEntries(
       lastmod: staticLastmod,
       changefreq: "daily",
       priority: 1.0,
+    },
+    {
+      path: "/legal/terms",
+      lastmod: staticLastmod,
+      changefreq: "yearly",
+      priority: 0.3,
+    },
+    {
+      path: "/legal/privacy",
+      lastmod: staticLastmod,
+      changefreq: "yearly",
+      priority: 0.3,
     },
   ];
 
