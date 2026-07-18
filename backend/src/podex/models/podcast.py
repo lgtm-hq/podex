@@ -1,6 +1,7 @@
 """Podcast source ORM model."""
 
 from datetime import datetime
+from enum import StrEnum, auto
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy import Enum as SAEnum
@@ -8,6 +9,14 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from podex.models.base import Base
 from podex.models.episode import DiscoverySource
+
+
+class PodcastStatus(StrEnum):
+    """Status of a podcast in the processing workflow."""
+
+    WATCHLIST = auto()
+    ACTIVE = auto()
+    PAUSED = auto()
 
 
 class Podcast(Base):
@@ -19,6 +28,12 @@ class Podcast(Base):
     name: Mapped[str] = mapped_column(String(255), index=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(String(2000), default=None)
+    status: Mapped[PodcastStatus] = mapped_column(
+        SAEnum(PodcastStatus, native_enum=False, length=20),
+        default=PodcastStatus.WATCHLIST,
+        server_default=PodcastStatus.WATCHLIST.value,
+        index=True,
+    )
     # Provider handles used by discovery to locate this podcast's feeds.
     rss_url: Mapped[str | None] = mapped_column(
         String(500),

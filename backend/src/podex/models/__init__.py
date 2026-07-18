@@ -9,7 +9,12 @@ from podex.models.episode import DiscoverySource, Episode
 from podex.models.ingestion_run import IngestionRun, IngestionRunStatus
 from podex.models.media import Media, MediaType
 from podex.models.mention import Mention
-from podex.models.podcast import Podcast
+from podex.models.podcast import Podcast, PodcastStatus
+from podex.models.scheduled_work import (
+    PipelineSchedule,
+    ScheduledWorkItemModel,
+    ScheduledWorkStatus,
+)
 
 __all__ = [
     "Base",
@@ -20,5 +25,9 @@ __all__ = [
     "Media",
     "MediaType",
     "Mention",
+    "PipelineSchedule",
     "Podcast",
+    "PodcastStatus",
+    "ScheduledWorkItemModel",
+    "ScheduledWorkStatus",
 ]
