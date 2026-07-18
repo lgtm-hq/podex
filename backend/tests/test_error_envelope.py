@@ -1,4 +1,4 @@
-"""Tests for the unified v2 error envelope."""
+"""Tests for the v2 RFC 9457 problem-details error bodies."""
 
 import logging
 
@@ -7,6 +7,8 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 
 from podex.api.v2.errors import (
+    PROBLEM_JSON_MEDIA_TYPE,
+    PROBLEM_TYPE_BASE,
     STATUS_CODE_TO_ERROR_CODE,
     error_code_for_status,
 )
@@ -15,17 +17,21 @@ from podex.main import create_app
 from podex.middleware import REQUEST_ID_HEADER
 
 
-def test_not_found_returns_error_envelope(client: TestClient) -> None:
-    """404 responses use the standard envelope with ``not_found`` code."""
+def test_not_found_returns_problem_details(client: TestClient) -> None:
+    """404 responses use the RFC 9457 body with the ``not_found`` code."""
     response = client.get("/api/v2/podcasts/9999")
 
     assert_that(response.status_code).is_equal_to(404)
+    assert_that(response.headers["content-type"]).is_equal_to(
+        PROBLEM_JSON_MEDIA_TYPE,
+    )
     body = response.json()
-    assert_that(body).contains_key("error")
-    error = body["error"]
-    assert_that(error["code"]).is_equal_to("not_found")
-    assert_that(error["message"]).is_equal_to("Podcast not found")
-    assert_that(error["request_id"]).is_equal_to(response.headers[REQUEST_ID_HEADER])
+    assert_that(body["type"]).is_equal_to(f"{PROBLEM_TYPE_BASE}not_found")
+    assert_that(body["title"]).is_equal_to("Not Found")
+    assert_that(body["status"]).is_equal_to(404)
+    assert_that(body["code"]).is_equal_to("not_found")
+    assert_that(body["detail"]).is_equal_to("Podcast not found")
+    assert_that(body["request_id"]).is_equal_to(response.headers[REQUEST_ID_HEADER])
 
 
 def test_validation_error_returns_details(client: TestClient) -> None:
@@ -33,10 +39,14 @@ def test_validation_error_returns_details(client: TestClient) -> None:
     response = client.get("/api/v2/podcasts", params={"limit": 0})
 
     assert_that(response.status_code).is_equal_to(422)
+    assert_that(response.headers["content-type"]).is_equal_to(
+        PROBLEM_JSON_MEDIA_TYPE,
+    )
     body = response.json()
-    assert_that(body["error"]["code"]).is_equal_to("unprocessable_entity")
-    assert_that(body["error"]["details"]).is_not_empty()
-    loc_paths = [tuple(item["loc"]) for item in body["error"]["details"]]
+    assert_that(body["status"]).is_equal_to(422)
+    assert_that(body["code"]).is_equal_to("unprocessable_entity")
+    assert_that(body["errors"]).is_not_empty()
+    loc_paths = [tuple(item["loc"]) for item in body["errors"]]
     assert_that(loc_paths).contains(("query", "limit"))
 
 
@@ -58,9 +68,9 @@ def test_unhandled_exception_returns_500_envelope(
 
     assert_that(response.status_code).is_equal_to(500)
     body = response.json()
-    assert_that(body["error"]["code"]).is_equal_to("internal_server_error")
-    assert_that(body["error"]["message"]).is_equal_to("Internal server error.")
-    assert_that(body["error"]["request_id"]).is_equal_to("err-1")
+    assert_that(body["code"]).is_equal_to("internal_server_error")
+    assert_that(body["detail"]).is_equal_to("Internal server error.")
+    assert_that(body["request_id"]).is_equal_to("err-1")
 
 
 def test_error_code_for_status_uses_registered_map() -> None:
@@ -104,7 +114,7 @@ def test_http_exception_with_structured_detail_preserves_code(
         response = test_client.get("/custom-conflict")
 
     assert_that(response.status_code).is_equal_to(409)
-    error = response.json()["error"]
+    error = response.json()
     assert_that(error["code"]).is_equal_to("custom_conflict")
-    assert_that(error["message"]).is_equal_to("already exists")
-    assert_that(error["details"][0]["loc"]).is_equal_to(["body", "slug"])
+    assert_that(error["detail"]).is_equal_to("already exists")
+    assert_that(error["errors"][0]["loc"]).is_equal_to(["body", "slug"])

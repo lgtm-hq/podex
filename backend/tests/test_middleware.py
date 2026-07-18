@@ -84,9 +84,14 @@ def test_blocks_requests_over_limit_with_429(tight_client: TestClient) -> None:
     assert_that(blocked.headers).contains_key("Retry-After")
     assert_that(blocked.headers["X-RateLimit-Remaining"]).is_equal_to("0")
     body = blocked.json()
-    assert_that(body["error"]["code"]).is_equal_to("rate_limited")
-    assert_that(body["error"]["message"]).contains("Rate limit")
-    assert_that(body["error"]["request_id"]).is_equal_to(
+    assert_that(blocked.headers["content-type"]).is_equal_to(
+        "application/problem+json",
+    )
+    assert_that(body["status"]).is_equal_to(429)
+    assert_that(body["title"]).is_equal_to("Too Many Requests")
+    assert_that(body["code"]).is_equal_to("rate_limited")
+    assert_that(body["detail"]).contains("Rate limit")
+    assert_that(body["request_id"]).is_equal_to(
         blocked.headers[REQUEST_ID_HEADER],
     )
     assert_that(blocked.headers).contains_key(REQUEST_ID_HEADER)
@@ -199,7 +204,7 @@ def test_middleware_works_with_redis_backed_limiter(
     assert_that(second.status_code).is_equal_to(200)
     assert_that(third.status_code).is_equal_to(429)
     assert_that(third.headers).contains_key("Retry-After")
-    assert_that(third.json()["error"]["code"]).is_equal_to("rate_limited")
+    assert_that(third.json()["code"]).is_equal_to("rate_limited")
 
 
 def test_access_log_records_request_details(

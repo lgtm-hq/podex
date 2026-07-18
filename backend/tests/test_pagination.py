@@ -63,8 +63,8 @@ def test_pagination_rejects_out_of_range_limit(client: TestClient) -> None:
 
     assert_that(response.status_code).is_equal_to(422)
     body = response.json()
-    assert_that(body["error"]["code"]).is_equal_to("unprocessable_entity")
-    loc_paths = [tuple(item["loc"]) for item in body["error"]["details"]]
+    assert_that(body["code"]).is_equal_to("unprocessable_entity")
+    loc_paths = [tuple(item["loc"]) for item in body["errors"]]
     assert_that(loc_paths).contains(("query", "limit"))
 
 
@@ -74,7 +74,7 @@ def test_pagination_rejects_negative_offset(client: TestClient) -> None:
 
     assert_that(response.status_code).is_equal_to(422)
     body = response.json()
-    assert_that(body["error"]["code"]).is_equal_to("unprocessable_entity")
+    assert_that(body["code"]).is_equal_to("unprocessable_entity")
 
 
 def test_pagination_applies_to_episode_and_media_lists(

@@ -89,7 +89,7 @@ def test_episode_mentions_not_found(client: TestClient) -> None:
     response = client.get("/api/v2/episodes/999/mentions")
 
     assert_that(response.status_code).is_equal_to(404)
-    assert_that(response.json()["error"]["code"]).is_equal_to("not_found")
+    assert_that(response.json()["code"]).is_equal_to("not_found")
 
 
 def test_media_mentions_not_found(client: TestClient) -> None:
@@ -97,4 +97,4 @@ def test_media_mentions_not_found(client: TestClient) -> None:
     response = client.get("/api/v2/media/999/mentions")
 
     assert_that(response.status_code).is_equal_to(404)
-    assert_that(response.json()["error"]["code"]).is_equal_to("not_found")
+    assert_that(response.json()["code"]).is_equal_to("not_found")

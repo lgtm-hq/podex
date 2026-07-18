@@ -9,8 +9,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from podex.api.v2.errors import error_code_for_status
-from podex.api.v2.schemas import ErrorBody, ErrorResponse
+from podex.api.v2.errors import PROBLEM_JSON_MEDIA_TYPE, build_problem
 from podex.logging_config import get_logger
 from podex.services.limiter import RateLimiter
 
@@ -167,17 +166,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             retry_after = math.ceil(decision.retry_after)
             headers["Retry-After"] = str(retry_after)
             request_id = getattr(request.state, "request_id", None)
-            envelope = ErrorResponse(
-                error=ErrorBody(
-                    code=error_code_for_status(429),
-                    message=RATE_LIMIT_MESSAGE,
-                    request_id=request_id,
-                ),
+            problem = build_problem(
+                status_code=429,
+                detail=RATE_LIMIT_MESSAGE,
+                request_id=request_id,
             )
             return JSONResponse(
                 status_code=429,
-                content=envelope.model_dump(exclude_none=True),
+                content=problem.model_dump(exclude_none=True),
                 headers=headers,
+                media_type=PROBLEM_JSON_MEDIA_TYPE,
             )
 
         response = await call_next(request)

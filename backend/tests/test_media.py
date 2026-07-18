@@ -57,5 +57,5 @@ def test_get_media_not_found(client: TestClient) -> None:
 
     assert_that(response.status_code).is_equal_to(404)
     body = response.json()
-    assert_that(body["error"]["code"]).is_equal_to("not_found")
-    assert_that(body["error"]["message"]).is_equal_to("Media not found")
+    assert_that(body["code"]).is_equal_to("not_found")
+    assert_that(body["detail"]).is_equal_to("Media not found")
