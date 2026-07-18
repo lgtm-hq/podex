@@ -1,6 +1,317 @@
 {
   "components": {
     "schemas": {
+      "AccountUserRead": {
+        "description": "Public representation of the signed-in account.",
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_signed_in_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Signed In At"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "created_at",
+          "last_signed_in_at"
+        ],
+        "title": "AccountUserRead",
+        "type": "object"
+      },
+      "AlertEvaluationRead": {
+        "description": "Result of evaluating the account's alert rules.",
+        "properties": {
+          "generated": {
+            "title": "Generated",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AlertEventRead"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "generated"
+        ],
+        "title": "AlertEvaluationRead",
+        "type": "object"
+      },
+      "AlertEventRead": {
+        "description": "A generated alert event and its owning rule.",
+        "properties": {
+          "observed_count": {
+            "title": "Observed Count",
+            "type": "integer"
+          },
+          "previous_count": {
+            "title": "Previous Count",
+            "type": "integer"
+          },
+          "rule": {
+            "$ref": "#/components/schemas/AlertRuleRead"
+          }
+        },
+        "required": [
+          "rule",
+          "previous_count",
+          "observed_count"
+        ],
+        "title": "AlertEventRead",
+        "type": "object"
+      },
+      "AlertRuleCreateRequest": {
+        "description": "Create an alert rule over a linked public resource.",
+        "properties": {
+          "event_type": {
+            "enum": [
+              "new_mention",
+              "new_episode"
+            ],
+            "title": "Event Type",
+            "type": "string"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "integer"
+          },
+          "target_type": {
+            "enum": [
+              "media",
+              "podcast"
+            ],
+            "title": "Target Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_type",
+          "target_id",
+          "event_type"
+        ],
+        "title": "AlertRuleCreateRequest",
+        "type": "object"
+      },
+      "AlertRuleDeleteResponse": {
+        "description": "Result of removing an alert rule.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "AlertRuleDeleteResponse",
+        "type": "object"
+      },
+      "AlertRuleListRead": {
+        "description": "Alert rule collection for the current account.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AlertRuleRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "AlertRuleListRead",
+        "type": "object"
+      },
+      "AlertRuleRead": {
+        "description": "Public representation of one account alert rule.",
+        "properties": {
+          "baseline_count": {
+            "title": "Baseline Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "event_type": {
+            "title": "Event Type",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_evaluated_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Evaluated At"
+          },
+          "target_id": {
+            "title": "Target Id",
+            "type": "integer"
+          },
+          "target_type": {
+            "title": "Target Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "target_type",
+          "target_id",
+          "event_type",
+          "enabled",
+          "baseline_count",
+          "last_evaluated_at",
+          "created_at"
+        ],
+        "title": "AlertRuleRead",
+        "type": "object"
+      },
+      "AlertRuleUpdateRequest": {
+        "description": "Pause or resume an alert rule.",
+        "properties": {
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "enabled"
+        ],
+        "title": "AlertRuleUpdateRequest",
+        "type": "object"
+      },
+      "AuthLogoutResponse": {
+        "description": "Result of revoking the current browser session.",
+        "properties": {
+          "signed_out": {
+            "title": "Signed Out",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "signed_out"
+        ],
+        "title": "AuthLogoutResponse",
+        "type": "object"
+      },
+      "AuthMagicLinkRequest": {
+        "description": "Request delivery of a one-time email sign-in link.",
+        "properties": {
+          "email": {
+            "format": "email",
+            "title": "Email",
+            "type": "string"
+          },
+          "redirect_path": {
+            "anyOf": [
+              {
+                "maxLength": 300,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Redirect Path"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "AuthMagicLinkRequest",
+        "type": "object"
+      },
+      "AuthMagicLinkRequestResponse": {
+        "description": "Acknowledgement that a sign-in link was accepted for delivery.",
+        "properties": {
+          "accepted": {
+            "default": true,
+            "title": "Accepted",
+            "type": "boolean"
+          }
+        },
+        "title": "AuthMagicLinkRequestResponse",
+        "type": "object"
+      },
+      "AuthMagicLinkVerifyRequest": {
+        "description": "Redeem a one-time sign-in token.",
+        "properties": {
+          "token": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "AuthMagicLinkVerifyRequest",
+        "type": "object"
+      },
+      "AuthSessionRead": {
+        "description": "Authenticated session summary returned after verification.",
+        "properties": {
+          "expires_at": {
+            "format": "date-time",
+            "title": "Expires At",
+            "type": "string"
+          },
+          "user": {
+            "$ref": "#/components/schemas/AccountUserRead"
+          }
+        },
+        "required": [
+          "user",
+          "expires_at"
+        ],
+        "title": "AuthSessionRead",
+        "type": "object"
+      },
       "CatalogStats": {
         "description": "Top-level catalog counters plus a small top-list breakdown.\n\nAttributes:\n    podcasts: Total podcast sources in the catalog.\n    episodes: Total episodes across all sources.\n    media: Total canonical media items in the catalog. Counts every\n        ``Media`` row, not just those referenced by a mention.\n    mentions: Total episode<->media mention links.\n    top_media_types: Up to five media types ordered by descending count,\n        with ties broken alphabetically by type name for stability.",
         "properties": {
@@ -43,6 +354,105 @@
           "top_media_types"
         ],
         "title": "CatalogStats",
+        "type": "object"
+      },
+      "DigestListRead": {
+        "description": "Delivered digest collection for the current account.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DigestRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "DigestListRead",
+        "type": "object"
+      },
+      "DigestRead": {
+        "description": "Public representation of a delivered notification digest.",
+        "properties": {
+          "body_text": {
+            "title": "Body Text",
+            "type": "string"
+          },
+          "channel": {
+            "title": "Channel",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "delivered_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Delivered At"
+          },
+          "event_count": {
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "subject": {
+            "title": "Subject",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "channel",
+          "subject",
+          "body_text",
+          "event_count",
+          "created_at",
+          "delivered_at"
+        ],
+        "title": "DigestRead",
+        "type": "object"
+      },
+      "DigestSendResponse": {
+        "description": "Result of an on-demand digest delivery attempt.",
+        "properties": {
+          "delivered": {
+            "title": "Delivered",
+            "type": "boolean"
+          },
+          "digest": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DigestRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "delivered"
+        ],
+        "title": "DigestSendResponse",
         "type": "object"
       },
       "EpisodeRead": {
@@ -112,6 +522,61 @@
           "podcast_public_id"
         ],
         "title": "EpisodeRead",
+        "type": "object"
+      },
+      "FollowedPodcastDeleteResponse": {
+        "description": "Result of removing a followed podcast.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "FollowedPodcastDeleteResponse",
+        "type": "object"
+      },
+      "FollowedPodcastListRead": {
+        "description": "Followed podcast collection for the current account.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FollowedPodcastRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "FollowedPodcastListRead",
+        "type": "object"
+      },
+      "FollowedPodcastRead": {
+        "description": "A followed public podcast source and when it was followed.",
+        "properties": {
+          "followed_at": {
+            "format": "date-time",
+            "title": "Followed At",
+            "type": "string"
+          },
+          "podcast": {
+            "$ref": "#/components/schemas/PodcastRead"
+          }
+        },
+        "required": [
+          "podcast",
+          "followed_at"
+        ],
+        "title": "FollowedPodcastRead",
         "type": "object"
       },
       "HTTPValidationError": {
@@ -521,6 +986,208 @@
         "title": "PodcastRead",
         "type": "object"
       },
+      "PreferenceRead": {
+        "description": "Notification preferences for the current account.",
+        "properties": {
+          "digest_enabled": {
+            "title": "Digest Enabled",
+            "type": "boolean"
+          },
+          "digest_frequency": {
+            "title": "Digest Frequency",
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "title": "Updated At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "digest_enabled",
+          "digest_frequency",
+          "updated_at"
+        ],
+        "title": "PreferenceRead",
+        "type": "object"
+      },
+      "PreferenceUpdateRequest": {
+        "description": "Update notification preferences.",
+        "properties": {
+          "digest_enabled": {
+            "title": "Digest Enabled",
+            "type": "boolean"
+          },
+          "digest_frequency": {
+            "enum": [
+              "immediate",
+              "daily",
+              "weekly"
+            ],
+            "title": "Digest Frequency",
+            "type": "string"
+          }
+        },
+        "required": [
+          "digest_enabled",
+          "digest_frequency"
+        ],
+        "title": "PreferenceUpdateRequest",
+        "type": "object"
+      },
+      "QuotaRead": {
+        "description": "One monthly feature quota and its current consumption.",
+        "properties": {
+          "feature": {
+            "title": "Feature",
+            "type": "string"
+          },
+          "limit": {
+            "title": "Limit",
+            "type": "integer"
+          },
+          "period": {
+            "title": "Period",
+            "type": "string"
+          },
+          "remaining": {
+            "title": "Remaining",
+            "type": "integer"
+          },
+          "used": {
+            "title": "Used",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period",
+          "feature",
+          "limit",
+          "used",
+          "remaining"
+        ],
+        "title": "QuotaRead",
+        "type": "object"
+      },
+      "SavedMediaDeleteResponse": {
+        "description": "Result of removing a saved media record.",
+        "properties": {
+          "deleted": {
+            "title": "Deleted",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "deleted"
+        ],
+        "title": "SavedMediaDeleteResponse",
+        "type": "object"
+      },
+      "SavedMediaListRead": {
+        "description": "Saved media collection for the current account.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SavedMediaRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total"
+        ],
+        "title": "SavedMediaListRead",
+        "type": "object"
+      },
+      "SavedMediaRead": {
+        "description": "A saved public media record and when it was saved.",
+        "properties": {
+          "media": {
+            "$ref": "#/components/schemas/MediaRead"
+          },
+          "saved_at": {
+            "format": "date-time",
+            "title": "Saved At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media",
+          "saved_at"
+        ],
+        "title": "SavedMediaRead",
+        "type": "object"
+      },
+      "SubscriptionCheckoutRead": {
+        "description": "External provider-hosted checkout destination.",
+        "properties": {
+          "checkout_url": {
+            "title": "Checkout Url",
+            "type": "string"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          }
+        },
+        "required": [
+          "provider",
+          "checkout_url"
+        ],
+        "title": "SubscriptionCheckoutRead",
+        "type": "object"
+      },
+      "SubscriptionRead": {
+        "description": "Hosted plan entitlement and current monthly usage.",
+        "properties": {
+          "current_period_ends_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Current Period Ends At"
+          },
+          "paid_features_enforced": {
+            "title": "Paid Features Enforced",
+            "type": "boolean"
+          },
+          "quotas": {
+            "items": {
+              "$ref": "#/components/schemas/QuotaRead"
+            },
+            "title": "Quotas",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "status",
+          "paid_features_enforced",
+          "current_period_ends_at",
+          "quotas"
+        ],
+        "title": "SubscriptionRead",
+        "type": "object"
+      },
       "ValidationError": {
         "properties": {
           "ctx": {
@@ -569,6 +1236,115 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/auth/logout": {
+      "post": {
+        "description": "Revoke the current account session and expire its browser cookie.",
+        "operationId": "logout_account_session_api_v2_auth_logout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthLogoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout Account Session",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/auth/magic-link/request": {
+      "post": {
+        "description": "Request delivery of a short-lived, single-use email sign-in link.",
+        "operationId": "request_auth_magic_link_api_v2_auth_magic_link_request_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthMagicLinkRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthMagicLinkRequestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Request Auth Magic Link",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/auth/magic-link/verify": {
+      "post": {
+        "description": "Verify a one-time link token and begin an authenticated session.",
+        "operationId": "verify_auth_magic_link_api_v2_auth_magic_link_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AuthMagicLinkVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthSessionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Verify Auth Magic Link",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
     "/api/v2/episodes": {
       "get": {
         "description": "List episodes, optionally filtered by podcast, paginated.",
@@ -759,6 +1535,586 @@
         "tags": [
           "v2",
           "episodes"
+        ]
+      }
+    },
+    "/api/v2/me": {
+      "get": {
+        "description": "Return the account represented by the current browser session.",
+        "operationId": "get_current_account_api_v2_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountUserRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Current Account",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/alerts": {
+      "get": {
+        "description": "List alert rules belonging to the authenticated account.",
+        "operationId": "list_account_alert_rules_api_v2_me_alerts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRuleListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Account Alert Rules",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
+      "post": {
+        "description": "Create an alert rule for a saved media or followed podcast resource.",
+        "operationId": "create_account_alert_rule_api_v2_me_alerts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertRuleCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRuleRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Account Alert Rule",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/alerts/evaluate": {
+      "post": {
+        "description": "Evaluate alert rules and generate events for new published activity.",
+        "operationId": "evaluate_account_alert_rules_api_v2_me_alerts_evaluate_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertEvaluationRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Evaluate Account Alert Rules",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/alerts/{rule_id}": {
+      "delete": {
+        "description": "Remove an alert rule belonging to the authenticated account.",
+        "operationId": "delete_account_alert_rule_api_v2_me_alerts__rule_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRuleDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account Alert Rule",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
+      "patch": {
+        "description": "Pause or resume an account alert rule.",
+        "operationId": "update_account_alert_rule_api_v2_me_alerts__rule_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "rule_id",
+            "required": true,
+            "schema": {
+              "title": "Rule Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AlertRuleUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AlertRuleRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Account Alert Rule",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/digests": {
+      "get": {
+        "description": "List delivered notification digests for the current account.",
+        "operationId": "list_current_account_digests_api_v2_me_digests_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Current Account Digests",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/digests/send": {
+      "post": {
+        "description": "Evaluate alert rules and deliver pending activity by email.",
+        "operationId": "send_current_account_digest_api_v2_me_digests_send_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DigestSendResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Send Current Account Digest",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/follows": {
+      "get": {
+        "description": "List followed public podcast sources for the current account.",
+        "operationId": "list_account_followed_podcasts_api_v2_me_follows_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowedPodcastListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Account Followed Podcasts",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/follows/{podcast_id}": {
+      "delete": {
+        "description": "Remove a public podcast source from the current account's follows.",
+        "operationId": "delete_account_followed_podcast_api_v2_me_follows__podcast_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "podcast_id",
+            "required": true,
+            "schema": {
+              "title": "Podcast Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowedPodcastDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account Followed Podcast",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
+      "put": {
+        "description": "Idempotently follow a public podcast source.",
+        "operationId": "put_account_followed_podcast_api_v2_me_follows__podcast_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "podcast_id",
+            "required": true,
+            "schema": {
+              "title": "Podcast Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FollowedPodcastRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Account Followed Podcast",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/preferences": {
+      "get": {
+        "description": "Return persisted notification preferences for the signed-in account.",
+        "operationId": "get_current_account_preferences_api_v2_me_preferences_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Current Account Preferences",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
+      "patch": {
+        "description": "Update notification preferences for the signed-in account.",
+        "operationId": "update_current_account_preferences_api_v2_me_preferences_patch",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PreferenceUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PreferenceRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Current Account Preferences",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/saves": {
+      "get": {
+        "description": "List saved public catalog media for the current account.",
+        "operationId": "list_account_saved_media_api_v2_me_saves_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedMediaListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "List Account Saved Media",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/saves/{media_id}": {
+      "delete": {
+        "description": "Remove a public catalog media record from the current account's saves.",
+        "operationId": "delete_account_saved_media_api_v2_me_saves__media_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "title": "Media Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedMediaDeleteResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Account Saved Media",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
+      "put": {
+        "description": "Idempotently save a public catalog media record.",
+        "operationId": "put_account_saved_media_api_v2_me_saves__media_id__put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "media_id",
+            "required": true,
+            "schema": {
+              "title": "Media Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SavedMediaRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Put Account Saved Media",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/subscription": {
+      "get": {
+        "description": "Return hosted plan entitlement and current monthly usage.",
+        "operationId": "get_current_account_subscription_api_v2_me_subscription_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Current Account Subscription",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/subscription/checkout": {
+      "post": {
+        "description": "Start provider-hosted paid-tier checkout once launch gates are enabled.",
+        "operationId": "begin_current_account_checkout_api_v2_me_subscription_checkout_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubscriptionCheckoutRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Begin Current Account Checkout",
+        "tags": [
+          "v2",
+          "auth"
         ]
       }
     },

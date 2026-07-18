@@ -204,12 +204,19 @@ def test_not_found_responses_use_error_envelope(client: TestClient) -> None:
 
 
 def test_openapi_surface_is_read_only_get() -> None:
-    """The v2 catalog contract exposes only GET handlers (no writes yet)."""
+    """The v2 public catalog contract exposes only GET handlers.
+
+    Account endpoints (``/api/v2/auth/*`` and ``/api/v2/me*``) are the
+    authenticated write surface and are exempt from this invariant.
+    """
     schema = build_openapi_schema()
     catalog_prefix = "/api/v2/"
+    account_prefixes = ("/api/v2/auth", "/api/v2/me")
 
     for path, operations in schema["paths"].items():
         if not path.startswith(catalog_prefix):
+            continue
+        if path.startswith(account_prefixes):
             continue
         assert_that(set(operations)).is_equal_to({"get"})
 
@@ -226,6 +233,8 @@ def test_openapi_response_schemas_reference_read_dtos() -> None:
 
     for path, operations in schema["paths"].items():
         if not path.startswith("/api/v2/") or path.endswith("/status"):
+            continue
+        if path.startswith(("/api/v2/auth", "/api/v2/me")):
             continue
         success = operations["get"]["responses"]["200"]["content"]["application/json"][
             "schema"

@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     debug: bool = False
     api_v2_prefix: str = "/api/v2"
     cors_origins: list[str] = ["http://localhost:4321"]
+    public_web_url: str = "http://localhost:4321"
     database_url: str = "sqlite:///./podex.db"
 
     # Rate limiting. Defaults are deliberately generous so ordinary traffic
@@ -70,6 +71,17 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_from_email: str = ""
     smtp_starttls: bool = True
+
+    # Paid tier and billing. Both gates default off: ``paid_tier_enabled``
+    # controls whether checkout can begin, ``paid_tier_enforced`` controls
+    # whether personalization writes require entitlement. The checkout URL
+    # and provider name come from the deployment environment.
+    paid_tier_enabled: bool = False
+    paid_tier_enforced: bool = False
+    paid_api_requests_per_month: int = 500
+    paid_llm_requests_per_month: int = 25
+    billing_provider_name: str = ""
+    billing_checkout_url: str = ""
 
 
 @lru_cache
