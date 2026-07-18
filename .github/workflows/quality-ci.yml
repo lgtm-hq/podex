@@ -28,6 +28,10 @@ jobs:
       job-name: '🛠️ Lintro Code Quality'
       tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
       working-directory: backend
+      # Route semgrep to the repo-local #29 prompt-boundary rules (issue #236)
+      # instead of the registry "auto" config, which egress-blocked CI cannot
+      # reach anyway.
+      lintro-tool-options: 'semgrep:config=.semgrep/prompt-boundary.yaml'
       # yamllint disable-line rule:line-length
       lintro-image: ghcr.io/lgtm-hq/py-lintro@sha256:95b9fd9d62c3ca1227447467767ec915e78a7eef62282dd18c0b1c02ee4d3887
       egress-policy: block

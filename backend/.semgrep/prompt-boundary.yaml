@@ -1,0 +1,42 @@
+---
+# Enforces the #29 open/closed prompt boundary (see issue #236).
+#
+# LLM prompt text may exist in exactly one public module:
+# src/podex/services/prompts_default.py (generic fallbacks only).
+# Tuned prompts are podex-ops data injected at runtime via the
+# prompt_config seam and must never be committed to this repo.
+rules:
+  - id: podex-prompt-constant-outside-designated-module
+    languages: [python]
+    severity: ERROR
+    message: >
+      Assignment to a *_PROMPT identifier outside the designated fallback
+      module. Prompt text is podex-ops data (issue #29): load it via the
+      prompt_config injection seam, or add a generic fallback to
+      src/podex/services/prompts_default.py.
+    patterns:
+      - pattern: $NAME = $VALUE
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: '.*_PROMPT$'
+    paths:
+      exclude:
+        - '**/services/prompts_default.py'
+
+  - id: podex-prompt-marker-text-outside-designated-module
+    languages: [generic]
+    severity: ERROR
+    message: >
+      Prompt-shaped text ("<role>", "You are a", "Your task is to") outside
+      the designated fallback module. Prompt text is podex-ops data (issue
+      #29): load it via the prompt_config injection seam, or add a generic
+      fallback to src/podex/services/prompts_default.py.
+    pattern-either:
+      - pattern: <role>
+      - pattern: You are a
+      - pattern: Your task is to
+    paths:
+      include:
+        - '*.py'
+      exclude:
+        - '**/services/prompts_default.py'
