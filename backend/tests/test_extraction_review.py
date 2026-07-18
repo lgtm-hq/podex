@@ -158,3 +158,32 @@ def test_persist_skips_items_with_existing_published_mentions(
 
     assert_that(result.skipped_existing_mentions).is_equal_to(1)
     assert_that(result.candidates_created).is_equal_to(0)
+
+
+def test_persist_caps_candidates_per_episode(db_session: Session) -> None:
+    """A hostile flood of items stops at the per-episode candidate cap."""
+    from podex.models.media import MediaType as _MediaType
+
+    episode = _episode(db_session)
+    flood = [
+        ExtractedMedia(
+            title=f"Injected title {index}",
+            media_type=_MediaType.BOOK,
+            confidence=0.9,
+        )
+        for index in range(5)
+    ]
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=flood,
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+        max_candidates_per_episode=3,
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_created).is_equal_to(3)
+    assert_that(result.skipped_over_limit).is_equal_to(2)

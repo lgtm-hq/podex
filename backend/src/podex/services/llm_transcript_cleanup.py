@@ -125,7 +125,8 @@ class TranscriptCleaner:
 
         user_message = (
             f"CONTEXT:\n{context}\n\n"
-            f"TRANSCRIPT TO CLEAN:\n{transcript_text}\n\n"
+            "TRANSCRIPT TO CLEAN:\n"
+            f"<transcript>\n{transcript_text}\n</transcript>\n\n"
             "Please analyze the transcript and fix any transcription errors. "
             "Return as JSON."
         )

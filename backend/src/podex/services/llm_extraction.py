@@ -23,6 +23,59 @@ logger = logging.getLogger(__name__)
 DEFAULT_EXTRACTION_MODEL = "claude-opus-4-8"
 _MAX_OUTPUT_TOKENS = 4000
 _MIN_TRANSCRIPT_CHARS = 100
+_MAX_TITLE_CHARS = 500
+_MAX_CREATOR_CHARS = 255
+_MIN_YEAR = 1000
+_MAX_YEAR = 2100
+
+
+def _validate_item(*, item: dict[str, Any], title: str) -> ExtractedMedia | None:
+    """Validate an extracted item against the persistence schema.
+
+    Transcripts are untrusted input, so items that fall outside the schema
+    (unknown type, out-of-range confidence or year, oversized strings) are
+    rejected rather than coerced.
+
+    Args:
+        item: Raw parsed item from model output.
+        title: Pre-stripped title text.
+
+    Returns:
+        A validated ExtractedMedia, or None when the item is rejected.
+    """
+    if not title or len(title) > _MAX_TITLE_CHARS:
+        return None
+
+    try:
+        media_type = MediaType(str(item.get("type", "")))
+    except ValueError:
+        return None
+
+    creator = item.get("creator")
+    if creator is not None:
+        creator = str(creator).strip() or None
+        if creator is not None and len(creator) > _MAX_CREATOR_CHARS:
+            return None
+
+    year = item.get("year")
+    if year is not None:
+        if not isinstance(year, int) or not _MIN_YEAR <= year <= _MAX_YEAR:
+            return None
+
+    try:
+        confidence = float(item.get("confidence", 0.8))
+    except (TypeError, ValueError):
+        return None
+    if not 0.0 <= confidence <= 1.0:
+        return None
+
+    return ExtractedMedia(
+        title=title,
+        media_type=media_type,
+        creator=creator,
+        year=year,
+        confidence=confidence,
+    )
 
 
 class ExtractionError(Exception):
@@ -107,7 +160,12 @@ class LLMExtractor:
                 model=self.model,
                 max_tokens=_MAX_OUTPUT_TOKENS,
                 system=self.system_prompt,
-                messages=[{"role": "user", "content": f"TRANSCRIPT:\n\n{full_text}"}],
+                messages=[
+                    {
+                        "role": "user",
+                        "content": ("<transcript>\n" + full_text + "\n</transcript>"),
+                    },
+                ],
             )
         except anthropic.APIStatusError as exc:
             error_msg = f"API request failed: {exc.status_code}"
@@ -141,21 +199,10 @@ class LLMExtractor:
                 continue
             seen_titles.add(title_lower)
 
-            media_type_str = item.get("type", "article")
-            try:
-                media_type = MediaType(media_type_str)
-            except ValueError:
-                media_type = MediaType.ARTICLE
-
-            result.items.append(
-                ExtractedMedia(
-                    title=title,
-                    media_type=media_type,
-                    creator=item.get("creator"),
-                    year=item.get("year"),
-                    confidence=float(item.get("confidence", 0.8)),
-                ),
-            )
+            validated = _validate_item(item=item, title=title)
+            if validated is None:
+                continue
+            result.items.append(validated)
 
         logger.info("Extracted %d media items", len(result.items))
         return result
