@@ -23,6 +23,8 @@ from podex.models import (
 )
 from podex.services.llm_extraction import ExtractedMedia
 
+MAX_CANDIDATES_PER_EPISODE = 200
+
 
 @dataclass(frozen=True, slots=True)
 class PersistedExtractionReviewData:
@@ -35,6 +37,9 @@ class PersistedExtractionReviewData:
         skipped_low_confidence: Number of extracted items skipped for low confidence.
         skipped_existing_mentions: Number of extracted items skipped because a
             published mention already exists for the same episode and media.
+        skipped_over_limit: Number of items skipped once the per-episode
+            candidate cap was reached (bounds review-queue flooding from a
+            hostile transcript).
     """
 
     candidates_created: int = 0
@@ -42,6 +47,7 @@ class PersistedExtractionReviewData:
     review_items_created: int = 0
     skipped_low_confidence: int = 0
     skipped_existing_mentions: int = 0
+    skipped_over_limit: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -481,6 +487,7 @@ def persist_extracted_candidates(
     segments: Sequence[dict[str, Any]] | None,
     min_confidence: float,
     extraction_source: str,
+    max_candidates_per_episode: int = MAX_CANDIDATES_PER_EPISODE,
 ) -> PersistedExtractionReviewData:
     """Persist extraction results as replay-safe review candidates.
 
@@ -491,6 +498,8 @@ def persist_extracted_candidates(
         segments: Ordered transcript segments for context matching.
         min_confidence: Minimum confidence threshold to persist.
         extraction_source: Extraction provider identifier.
+        max_candidates_per_episode: Cap on total candidates per episode;
+            items beyond it are counted as skipped_over_limit.
 
     Returns:
         Summary of persisted candidate and review queue changes.
@@ -546,6 +555,16 @@ def persist_extracted_candidates(
         )
 
         if candidate is None:
+            if len(existing_candidates) >= max_candidates_per_episode:
+                summary = PersistedExtractionReviewData(
+                    candidates_created=summary.candidates_created,
+                    candidates_updated=summary.candidates_updated,
+                    review_items_created=summary.review_items_created,
+                    skipped_low_confidence=summary.skipped_low_confidence,
+                    skipped_existing_mentions=summary.skipped_existing_mentions,
+                    skipped_over_limit=summary.skipped_over_limit + 1,
+                )
+                continue
             candidate = MentionCandidate(
                 episode_id=episode.id,
                 media_id=matched_media.id if matched_media is not None else None,

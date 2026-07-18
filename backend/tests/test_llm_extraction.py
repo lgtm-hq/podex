@@ -71,9 +71,10 @@ def test_extractor_uses_default_prompt_and_parses_items() -> None:
     )
 
     assert_that(result.success).is_true()
-    assert_that(result.items).is_length(2)
+    # The unknown "mystery_type" item is rejected (untrusted input), not
+    # coerced — only the deduplicated book survives.
+    assert_that(result.items).is_length(1)
     assert_that(result.items[0].media_type).is_equal_to(MediaType.BOOK)
-    assert_that(result.items[1].media_type).is_equal_to(MediaType.ARTICLE)
     sent = client.messages.calls[0]
     assert_that(sent["system"]).is_equal_to(DEFAULT_EXTRACTION_SYSTEM_PROMPT)
     assert_that(sent["model"]).is_equal_to("claude-opus-4-8")
@@ -273,3 +274,49 @@ def test_prompt_config_invalid_json_returns_none(tmp_path: Path) -> None:
     assert_that(
         PromptConfig.load_for_podcast("broken", config_dir=tmp_path),
     ).is_none()
+
+
+def test_extractor_rejects_out_of_schema_items() -> None:
+    """Injected junk items outside the schema are dropped, not coerced."""
+    payload = json.dumps(
+        [
+            {"title": "Valid", "type": "book", "confidence": 0.9},
+            {"title": "Bad confidence", "type": "book", "confidence": 5.0},
+            {"title": "Bad year", "type": "book", "year": 99},
+            {"title": "x" * 600, "type": "book"},
+            {"title": "Bad type", "type": "exploit"},
+            {"title": "Bad creator", "type": "book", "creator": "c" * 300},
+        ],
+    )
+    client = _fake_client(text=payload)
+
+    result = LLMExtractor(client=client).extract_from_transcript(
+        [{"text": _LONG_TEXT}],
+    )
+
+    assert_that(result.items).is_length(1)
+    assert_that(result.items[0].title).is_equal_to("Valid")
+
+
+def test_extractor_wraps_transcript_in_delimiters() -> None:
+    """The transcript reaches the model inside <transcript> tags."""
+    client = _fake_client(text="[]")
+
+    LLMExtractor(client=client).extract_from_transcript(
+        [{"text": _LONG_TEXT}],
+    )
+
+    content = client.messages.calls[0]["messages"][0]["content"]
+    assert_that(content).starts_with("<transcript>")
+    assert_that(content).ends_with("</transcript>")
+
+
+def test_cleaner_wraps_transcript_in_delimiters() -> None:
+    """Cleanup requests also delimit the untrusted transcript."""
+    client = _fake_client(text="{}")
+
+    TranscriptCleaner(client=client).cleanup_transcript(_LONG_TEXT)
+
+    content = client.messages.calls[0]["messages"][0]["content"]
+    assert_that(content).contains("<transcript>")
+    assert_that(content).contains("</transcript>")
