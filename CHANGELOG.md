@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.21.0] - 2026-07-18
+
+### Added
+
+- **extraction**: add LLM extraction workflow behind the prompt injection seam (#253)
+  (a7604cd)
+
 ## [0.20.0] - 2026-07-18
 
 ### Added
