@@ -1,0 +1,23 @@
+---
+# Hadolint configuration for Podex Dockerfiles
+# https://github.com/hadolint/hadolint
+#
+# Mirrors the org-standard config from lgtm-hq/Rustume: only trusted registries
+# are allowed for `FROM ...`, and DL3018 is ignored because our base images
+# (python:*-slim-bookworm, node:*-bookworm-slim, oven/bun:*) are Debian-based
+# and use `apt-get` when needed — but we also want the same file to remain
+# valid if a future stage swaps in an Alpine base (e.g. static-tool copies
+# from an alpine-based helper image), where Alpine's per-release package
+# versions make apk pinning impractical.
+
+trustedRegistries:
+  - docker.io
+  - gcr.io
+  - ghcr.io
+
+ignored:
+  # DL3018: Pin versions in `apk add`. Alpine ships one version of each
+  # package per release; pinning breaks whenever Renovate bumps a base
+  # image digest to a newer Alpine minor. The base image itself is already
+  # pinned by digest, which effectively pins the available packages.
+  - DL3018
