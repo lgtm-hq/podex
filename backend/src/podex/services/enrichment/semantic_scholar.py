@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class SemanticScholarProvider(EnrichmentProvider):
+class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich academic papers from Semantic Scholar.
 
     Uses Semantic Scholar Academic Graph API (free, 100 req/sec).

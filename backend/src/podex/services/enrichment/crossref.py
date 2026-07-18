@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class CrossRefProvider(EnrichmentProvider):
+class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich academic papers from CrossRef DOI registry.
 
     Uses CrossRef REST API (free, polite pool with mailto header).

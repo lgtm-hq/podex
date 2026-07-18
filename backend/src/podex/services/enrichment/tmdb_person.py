@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TMDBPersonProvider(EnrichmentProvider):
+class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich people from TMDB Person API.
 
     Also used as fallback for standup_special when the title

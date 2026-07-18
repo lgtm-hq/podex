@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class TMDBProvider(EnrichmentProvider):
+class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich movies and TV shows from The Movie Database.
 
     Args:

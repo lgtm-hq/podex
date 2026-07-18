@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class iTunesProvider(EnrichmentProvider):
+class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich podcasts from iTunes Search API.
 
     Free API, no authentication required.

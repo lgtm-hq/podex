@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class PubMedProvider(EnrichmentProvider):
+class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich academic papers from PubMed/NCBI databases.
 
     Uses NCBI E-utilities API (free, 3 req/sec without API key, 10/sec with key).

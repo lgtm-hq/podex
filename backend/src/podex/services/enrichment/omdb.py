@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class OMDBProvider(EnrichmentProvider):
+class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich movies and TV shows from OMDB (IMDB data wrapper).
 
     Args:
