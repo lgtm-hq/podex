@@ -32,11 +32,13 @@ def _seed_podcast(
 
 
 def test_list_episodes_empty(client: TestClient) -> None:
-    """An empty catalog returns an empty list."""
+    """An empty catalog returns an empty page envelope."""
     response = client.get("/api/v2/episodes")
 
     assert_that(response.status_code).is_equal_to(200)
-    assert_that(response.json()).is_equal_to([])
+    body = response.json()
+    assert_that(body["items"]).is_equal_to([])
+    assert_that(body["total"]).is_equal_to(0)
 
 
 def test_list_and_get_episode(client: TestClient, db_session: Session) -> None:
@@ -48,10 +50,11 @@ def test_list_and_get_episode(client: TestClient, db_session: Session) -> None:
     listed = client.get("/api/v2/episodes")
     assert_that(listed.status_code).is_equal_to(200)
     body = listed.json()
-    assert_that(body).is_length(1)
-    assert_that(body[0]["title"]).is_equal_to("Pilot")
+    assert_that(body["items"]).is_length(1)
+    assert_that(body["items"][0]["title"]).is_equal_to("Pilot")
+    assert_that(body["items"][0]).contains_key("public_id", "podcast_public_id")
 
-    episode_id = body[0]["id"]
+    episode_id = body["items"][0]["id"]
     fetched = client.get(f"/api/v2/episodes/{episode_id}")
     assert_that(fetched.status_code).is_equal_to(200)
     assert_that(fetched.json()["title"]).is_equal_to("Pilot")
@@ -72,8 +75,9 @@ def test_list_episodes_filtered_by_podcast(
 
     assert_that(response.status_code).is_equal_to(200)
     body = response.json()
-    assert_that(body).is_length(1)
-    assert_that(body[0]["title"]).is_equal_to("A")
+    assert_that(body["items"]).is_length(1)
+    assert_that(body["items"][0]["title"]).is_equal_to("A")
+    assert_that(body["total"]).is_equal_to(1)
 
 
 def test_list_episodes_newest_first(client: TestClient, db_session: Session) -> None:
@@ -97,11 +101,15 @@ def test_list_episodes_newest_first(client: TestClient, db_session: Session) -> 
 
     body = client.get("/api/v2/episodes").json()
 
-    assert_that([episode["title"] for episode in body]).is_equal_to(["Newer", "Older"])
+    titles = [episode["title"] for episode in body["items"]]
+    assert_that(titles).is_equal_to(["Newer", "Older"])
 
 
 def test_get_episode_not_found(client: TestClient) -> None:
-    """An unknown episode id returns 404."""
+    """An unknown episode id returns the v2 error envelope."""
     response = client.get("/api/v2/episodes/999")
 
     assert_that(response.status_code).is_equal_to(404)
+    body = response.json()
+    assert_that(body["error"]["code"]).is_equal_to("not_found")
+    assert_that(body["error"]["message"]).is_equal_to("Episode not found")

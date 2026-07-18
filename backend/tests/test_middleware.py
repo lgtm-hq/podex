@@ -81,7 +81,12 @@ def test_blocks_requests_over_limit_with_429(tight_client: TestClient) -> None:
     assert_that(blocked.status_code).is_equal_to(429)
     assert_that(blocked.headers).contains_key("Retry-After")
     assert_that(blocked.headers["X-RateLimit-Remaining"]).is_equal_to("0")
-    assert_that(blocked.json()["detail"]).contains("Rate limit")
+    body = blocked.json()
+    assert_that(body["error"]["code"]).is_equal_to("rate_limited")
+    assert_that(body["error"]["message"]).contains("Rate limit")
+    assert_that(body["error"]["request_id"]).is_equal_to(
+        blocked.headers[REQUEST_ID_HEADER],
+    )
     assert_that(blocked.headers).contains_key(REQUEST_ID_HEADER)
 
 

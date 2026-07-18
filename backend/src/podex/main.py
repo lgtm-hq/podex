@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from podex.api.v2.errors import install_exception_handlers
 from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
@@ -15,6 +16,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     configure_logging()
     app = FastAPI(title=resolved.app_name, debug=resolved.debug)
+    app.state.settings = resolved
+
+    install_exception_handlers(app)
 
     # Middleware is applied in reverse registration order (last added runs
     # outermost). Register the rate limiter and request-context logger first so

@@ -9,10 +9,13 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from podex.api.v2.errors import error_code_for_status
+from podex.api.v2.schemas import ErrorBody, ErrorResponse
 from podex.logging_config import get_logger
 from podex.services.limiter import SlidingWindowRateLimiter
 
 REQUEST_ID_HEADER = "X-Request-ID"
+RATE_LIMIT_MESSAGE = "Rate limit exceeded. Try again later."
 
 _access_logger = get_logger("podex.access")
 
@@ -160,9 +163,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if not decision.allowed:
             retry_after = math.ceil(decision.retry_after)
             headers["Retry-After"] = str(retry_after)
+            request_id = getattr(request.state, "request_id", None)
+            envelope = ErrorResponse(
+                error=ErrorBody(
+                    code=error_code_for_status(429),
+                    message=RATE_LIMIT_MESSAGE,
+                    request_id=request_id,
+                ),
+            )
             return JSONResponse(
                 status_code=429,
-                content={"detail": "Rate limit exceeded. Try again later."},
+                content=envelope.model_dump(exclude_none=True),
                 headers=headers,
             )
 
