@@ -6,9 +6,25 @@ interface Props {
 }
 
 const { podcast } = Astro.props;
+const href = `/podcasts/${podcast.id}`;
 ---
 
-<li class="rounded-lg border border-gray-200 p-4">
-  <h2 class="font-semibold">{podcast.name}</h2>
-  {podcast.description && <p class="text-sm text-gray-600">{podcast.description}</p>}
+<li>
+  <a
+    href={href}
+    class="group block rounded-xl border border-[color:var(--color-hairline)] bg-[color:var(--color-surface)] p-5 transition hover:border-[color:var(--color-accent)] hover:shadow-sm"
+  >
+    <h2
+      class="font-display text-xl font-medium tracking-tight text-[color:var(--color-ink)] group-hover:text-[color:var(--color-accent)]"
+    >
+      {podcast.name}
+    </h2>
+    {
+      podcast.description && (
+        <p class="mt-1 text-sm text-[color:var(--color-muted)]">
+          {podcast.description}
+        </p>
+      )
+    }
+  </a>
 </li>

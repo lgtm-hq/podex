@@ -2,9 +2,15 @@
 import DegradedBanner from "../components/DegradedBanner";
 import EmptyState from "../components/EmptyState";
 import PodcastCard from "../components/PodcastCard.astro";
+import Layout from "../layouts/Layout.astro";
 import { fetchPodcasts } from "../lib/api";
+import {
+  SITE_DESCRIPTION,
+  SITE_NAME,
+  SITE_TAGLINE,
+  SITE_URL,
+} from "../lib/site";
 import type { Podcast } from "../lib/types";
-import "../styles/global.css";
 
 let podcasts: Podcast[] = [];
 let loadError = false;
@@ -13,29 +19,55 @@ try {
 } catch {
   loadError = true;
 }
+
+const websiteJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  name: SITE_NAME,
+  url: `${SITE_URL}/`,
+  description: SITE_DESCRIPTION,
+  inLanguage: "en",
+};
+
+const organisationJsonLd = {
+  "@context": "https://schema.org",
+  "@type": "Organization",
+  name: SITE_NAME,
+  url: `${SITE_URL}/`,
+};
 ---
 
-<html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <title>Podex</title>
-  </head>
-  <body class="mx-auto max-w-3xl p-8">
-    <h1 class="mb-6 text-2xl font-bold">Podex</h1>
-    {
-      loadError ? (
-        <DegradedBanner />
-      ) : podcasts.length === 0 ? (
-        <EmptyState title="No podcasts yet." />
-      ) : (
-        <ul class="space-y-3">
-          {podcasts.map((podcast) => (
-            <PodcastCard podcast={podcast} />
-          ))}
-        </ul>
-      )
-    }
-  </body>
-</html>
+<Layout
+  description={SITE_DESCRIPTION}
+  canonicalPath="/"
+  jsonLd={[websiteJsonLd, organisationJsonLd]}
+>
+  <section class="mb-12 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Discovery
+    </p>
+    <h1
+      class="font-display mt-3 text-5xl leading-[1.05] font-medium tracking-tight text-[color:var(--color-ink)] sm:text-6xl"
+    >
+      {SITE_TAGLINE}
+    </h1>
+    <p class="mt-5 text-lg text-[color:var(--color-muted)]">
+      A quiet, curated index of shows and the ideas inside them. Browse the
+      catalog below.
+    </p>
+  </section>
+
+  {
+    loadError ? (
+      <DegradedBanner />
+    ) : podcasts.length === 0 ? (
+      <EmptyState title="No podcasts yet." />
+    ) : (
+      <ul class="grid gap-3">
+        {podcasts.map((podcast) => (
+          <PodcastCard podcast={podcast} />
+        ))}
+      </ul>
+    )
+  }
+</Layout>

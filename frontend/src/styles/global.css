@@ -1,1 +1,72 @@
 @import "tailwindcss";
+
+/*
+ * Podex visual identity.
+ *
+ * The palette is a warm-stone light theme with a single deep-forest accent —
+ * deliberately avoiding purple-on-white AI clichés, cream+terracotta editorial
+ * looks, and generic broadsheet serifs. Typography pairs Fraunces (variable
+ * serif, used sparingly as a display face) with Bricolage Grotesque (variable
+ * grotesque, used for body + UI).
+ */
+@theme {
+  --font-display:
+    "Fraunces", "Iowan Old Style", "Georgia", ui-serif, serif;
+  --font-sans:
+    "Bricolage Grotesque", "Segoe UI", ui-sans-serif, sans-serif;
+
+  --color-paper: #f2efe9;
+  --color-ink: #191a1c;
+  --color-muted: #5c6068;
+  --color-accent: #334f3a;
+  --color-accent-soft: #4a6b53;
+  --color-hairline: #dcdcd2;
+  --color-surface: #fbfaf6;
+}
+
+html,
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "ss01", "ss02";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/*
+ * Atmospheric background: two very soft radial glows (forest + warm ochre) sit
+ * behind a faint dot grid. This keeps the surface from feeling like a flat
+ * single color without leaning into the "purple gradient" AI look.
+ */
+body {
+  min-height: 100vh;
+  background-image:
+    radial-gradient(
+      1200px 700px at 12% -10%,
+      rgba(51, 79, 58, 0.14),
+      transparent 60%
+    ),
+    radial-gradient(
+      900px 600px at 110% 10%,
+      rgba(184, 138, 78, 0.09),
+      transparent 65%
+    ),
+    radial-gradient(
+      circle at 1px 1px,
+      rgba(25, 26, 28, 0.06) 1px,
+      transparent 0
+    );
+  background-size:
+    auto,
+    auto,
+    22px 22px;
+  background-attachment: fixed, fixed, fixed;
+}
+
+.font-display {
+  font-family: var(--font-display);
+  font-optical-sizing: auto;
+  font-variation-settings: "SOFT" 30, "WONK" 0, "opsz" 48;
+  letter-spacing: -0.02em;
+}
