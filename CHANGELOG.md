@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.19.0] - 2026-07-18
+
+### Added
+
+- **scheduler**: add scheduling primitives and recurring episode discovery (#249)
+  (6cbb8a1)
+
 ## [0.18.0] - 2026-07-18
 
 ### Added
