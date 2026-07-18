@@ -18,7 +18,11 @@ router = APIRouter(prefix="/media", tags=["media"])
 
 def list_media(db: DbSession, media_type: MediaType | None = None) -> list[Media]:
     """List media items, optionally filtered by type, ordered by title."""
-    return media_queries.list_media(db, media_type=media_type)
+    # Explicit annotation keeps the return well-typed even when the CI lint
+    # image type-checks without SQLAlchemy installed, where the service
+    # call would otherwise resolve to bare ``Any``.
+    items: list[Media] = media_queries.list_media(db, media_type=media_type)
+    return items
 
 
 def get_media(media_id: int, db: DbSession) -> Media:
@@ -31,7 +35,8 @@ def get_media(media_id: int, db: DbSession) -> Media:
 
 def list_media_mentions(media_id: int, db: DbSession) -> list[Mention]:
     """List episode mentions of a media item."""
-    mentions = media_queries.list_media_mentions(db, media_id)
+    # See ``list_media`` for why the annotation is spelled out here.
+    mentions: list[Mention] | None = media_queries.list_media_mentions(db, media_id)
     if mentions is None:
         raise HTTPException(status_code=404, detail="Media not found")
     return mentions

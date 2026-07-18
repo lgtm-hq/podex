@@ -40,7 +40,10 @@ def get_episode(db: Session, episode_id: int) -> Episode | None:
     Returns:
         The matching Episode row, or ``None`` when no such row exists.
     """
-    return db.get(Episode, episode_id)
+    # Explicit local annotation keeps the return well-typed under the CI
+    # lint image where ``Session.get`` resolves to ``Any``.
+    episode: Episode | None = db.get(Episode, episode_id)
+    return episode
 
 
 def list_episode_mentions(db: Session, episode_id: int) -> list[Mention] | None:

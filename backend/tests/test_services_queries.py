@@ -7,6 +7,7 @@ route handlers only need to translate service outcomes to HTTP responses.
 """
 
 from datetime import UTC, datetime
+from typing import cast
 
 from assertpy import assert_that
 from sqlalchemy.orm import Session
@@ -95,8 +96,11 @@ def test_list_episode_mentions_orders_by_timestamp(db_session: Session) -> None:
 
     mentions = episode_queries.list_episode_mentions(db_session, episode.id)
 
-    assert mentions is not None
-    assert_that([mention.timestamp_seconds for mention in mentions]).is_equal_to(
+    assert_that(mentions).is_not_none()
+    # ``assert_that(...).is_not_none()`` doesn't narrow the type for mypy, so
+    # cast to the non-optional variant before iterating.
+    narrowed = cast("list[Mention]", mentions)
+    assert_that([mention.timestamp_seconds for mention in narrowed]).is_equal_to(
         [30, 120],
     )
 

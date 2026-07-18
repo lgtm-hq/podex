@@ -39,7 +39,10 @@ def get_media(db: Session, media_id: int) -> Media | None:
     Returns:
         The matching Media row, or ``None`` when no such row exists.
     """
-    return db.get(Media, media_id)
+    # Explicit local annotation keeps the return well-typed under the CI
+    # lint image where ``Session.get`` resolves to ``Any``.
+    media: Media | None = db.get(Media, media_id)
+    return media
 
 
 def list_media_mentions(db: Session, media_id: int) -> list[Mention] | None:

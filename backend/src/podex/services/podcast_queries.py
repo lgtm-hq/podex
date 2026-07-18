@@ -37,4 +37,7 @@ def get_podcast(db: Session, podcast_id: int) -> Podcast | None:
     Returns:
         The matching Podcast row, or ``None`` when no such row exists.
     """
-    return db.get(Podcast, podcast_id)
+    # Explicit local annotation keeps the return well-typed under the CI
+    # lint image where ``Session.get`` resolves to ``Any``.
+    podcast: Podcast | None = db.get(Podcast, podcast_id)
+    return podcast

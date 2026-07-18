@@ -18,7 +18,11 @@ router = APIRouter(prefix="/episodes", tags=["episodes"])
 
 def list_episodes(db: DbSession, podcast_id: int | None = None) -> list[Episode]:
     """List episodes, optionally filtered by podcast."""
-    return episode_queries.list_episodes(db, podcast_id=podcast_id)
+    # Explicit annotation keeps the return well-typed even when the CI lint
+    # image type-checks without SQLAlchemy installed, where the service
+    # call would otherwise resolve to bare ``Any``.
+    episodes: list[Episode] = episode_queries.list_episodes(db, podcast_id=podcast_id)
+    return episodes
 
 
 def get_episode(episode_id: int, db: DbSession) -> Episode:
@@ -31,7 +35,11 @@ def get_episode(episode_id: int, db: DbSession) -> Episode:
 
 def list_episode_mentions(episode_id: int, db: DbSession) -> list[Mention]:
     """List media mentions within an episode, ordered by timestamp."""
-    mentions = episode_queries.list_episode_mentions(db, episode_id)
+    # See ``list_episodes`` for why the annotation is spelled out here.
+    mentions: list[Mention] | None = episode_queries.list_episode_mentions(
+        db,
+        episode_id,
+    )
     if mentions is None:
         raise HTTPException(status_code=404, detail="Episode not found")
     return mentions

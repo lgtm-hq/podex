@@ -17,7 +17,11 @@ router = APIRouter(prefix="/podcasts", tags=["podcasts"])
 
 def list_podcasts(db: DbSession) -> list[Podcast]:
     """List podcast sources ordered by name."""
-    return podcast_queries.list_podcasts(db)
+    # Explicit annotation keeps the return well-typed even when the CI lint
+    # image type-checks without SQLAlchemy installed, where the service
+    # call would otherwise resolve to bare ``Any``.
+    podcasts: list[Podcast] = podcast_queries.list_podcasts(db)
+    return podcasts
 
 
 def get_podcast(podcast_id: int, db: DbSession) -> Podcast:
