@@ -7,7 +7,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from assertpy import assert_that
-from sqlalchemy import Engine, create_engine, inspect, select, text
+from sqlalchemy import Engine, create_engine, inspect, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.elements import ClauseElement
@@ -52,7 +52,7 @@ def _explain_query_plan(connection: Connection, statement: ClauseElement) -> str
         dialect=connection.dialect,
         compile_kwargs={"literal_binds": True},
     )
-    rows = connection.execute(text(f"EXPLAIN QUERY PLAN {compiled}")).fetchall()
+    rows = connection.exec_driver_sql(f"EXPLAIN QUERY PLAN {compiled}").fetchall()
     return " ".join(str(row) for row in rows)
 
 
@@ -82,12 +82,12 @@ def test_hot_query_indexes_exist(tmp_path: Path) -> None:
     engine = _upgraded_engine(f"sqlite:///{tmp_path / 'indexes.db'}")
     inspector = inspect(engine)
 
-    assert_that(_index_column_names(inspector, "episodes", "ix_episodes_published_at")).is_equal_to(
-        ("published_at",),
-    )
-    assert_that(_index_column_names(inspector, "media", "ix_media_type_title")).is_equal_to(
-        ("type", "title"),
-    )
+    assert_that(
+        _index_column_names(inspector, "episodes", "ix_episodes_published_at"),
+    ).is_equal_to(("published_at",))
+    assert_that(
+        _index_column_names(inspector, "media", "ix_media_type_title"),
+    ).is_equal_to(("type", "title"))
     assert_that(
         _index_column_names(inspector, "mentions", "ix_mentions_media_id_episode_id"),
     ).is_equal_to(("media_id", "episode_id"))
@@ -106,9 +106,7 @@ def test_hot_query_indexes_exist(tmp_path: Path) -> None:
         )
         media_by_type_plan = _explain_query_plan(
             connection,
-            select(Media)
-            .where(Media.type == MediaType.BOOK)
-            .order_by(Media.title),
+            select(Media).where(Media.type == MediaType.BOOK).order_by(Media.title),
         )
         episode_mentions_plan = _explain_query_plan(
             connection,
