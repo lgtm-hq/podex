@@ -1,0 +1,39 @@
+---
+name: Security - SBOM Generation
+# Generate an SBOM for the podex monorepo on main and on-demand.
+# Syft directory scan at repo root covers both backend (uv.lock,
+# pyproject.toml) and frontend (bun.lock, package.json) ecosystems.
+
+"on":
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: sbom-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  sbom:
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    with:
+      target: .
+      target-type: dir
+      sbom-format: cyclonedx-json
+      scan-vulnerabilities: true
+      create-attestation: true
+      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      egress-policy: block
+      egress-preset: sbom
+    permissions:
+      # read: checkout repository for Syft scan
+      contents: read
+      # write: upload Grype SARIF findings when upload-sarif is enabled
+      security-events: write
+      # write: OIDC token for SBOM attestation signing (create-attestation)
+      id-token: write
+      # write: publish SBOM build attestations
+      attestations: write
