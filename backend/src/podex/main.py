@@ -7,6 +7,7 @@ from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
+from podex.services.cache import TTLCache
 from podex.services.limiter import SlidingWindowRateLimiter
 
 
@@ -15,6 +16,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     configure_logging()
     app = FastAPI(title=resolved.app_name, debug=resolved.debug)
+    # Process-wide read-through cache for aggregate/stats endpoints. Shared
+    # across requests (and workers within this process) so the aggregation
+    # queries only run once per TTL window.
+    app.state.cache = TTLCache()
 
     # Middleware is applied in reverse registration order (last added runs
     # outermost). Register the rate limiter and request-context logger first so

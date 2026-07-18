@@ -30,6 +30,11 @@ class Settings(BaseSettings):
     rate_limit_window_seconds: float = 60.0
     rate_limit_exempt_paths: list[str] = ["/health"]
 
+    # Aggregate/stats caching. Short TTL because we currently have no
+    # write-time invalidation hooks (see ``services/stats_queries.py``);
+    # setting the TTL to ``0`` disables caching entirely.
+    stats_cache_ttl_seconds: float = 30.0
+
 
 @lru_cache
 def get_settings() -> Settings:

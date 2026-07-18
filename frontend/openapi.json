@@ -1,6 +1,47 @@
 {
   "components": {
     "schemas": {
+      "CatalogStats": {
+        "description": "Top-level catalog counters plus a small top-list breakdown.\n\nAttributes:\n    podcasts: Total podcast sources in the catalog.\n    episodes: Total episodes across all sources.\n    media: Total canonical media items referenced by episodes.\n    mentions: Total episode<->media mention links.\n    top_media_types: Up to five media types ordered by descending count,\n        with ties broken alphabetically by type name for stability.",
+        "properties": {
+          "episodes": {
+            "minimum": 0.0,
+            "title": "Episodes",
+            "type": "integer"
+          },
+          "media": {
+            "minimum": 0.0,
+            "title": "Media",
+            "type": "integer"
+          },
+          "mentions": {
+            "minimum": 0.0,
+            "title": "Mentions",
+            "type": "integer"
+          },
+          "podcasts": {
+            "minimum": 0.0,
+            "title": "Podcasts",
+            "type": "integer"
+          },
+          "top_media_types": {
+            "items": {
+              "$ref": "#/components/schemas/MediaTypeCount"
+            },
+            "title": "Top Media Types",
+            "type": "array"
+          }
+        },
+        "required": [
+          "podcasts",
+          "episodes",
+          "media",
+          "mentions",
+          "top_media_types"
+        ],
+        "title": "CatalogStats",
+        "type": "object"
+      },
       "EpisodeRead": {
         "description": "Public representation of a podcast episode.",
         "properties": {
@@ -161,6 +202,28 @@
         ],
         "title": "MediaType",
         "type": "string"
+      },
+      "MediaTypeCount": {
+        "description": "One row of the ``top_media_types`` breakdown.",
+        "properties": {
+          "count": {
+            "description": "Number of media rows of this type.",
+            "minimum": 0.0,
+            "title": "Count",
+            "type": "integer"
+          },
+          "media_type": {
+            "description": "MediaType value (e.g. ``book``, ``movie``).",
+            "title": "Media Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "media_type",
+          "count"
+        ],
+        "title": "MediaTypeCount",
+        "type": "object"
       },
       "MentionRead": {
         "description": "Public representation of a media mention within an episode.",
@@ -680,6 +743,29 @@
         "tags": [
           "v2",
           "podcasts"
+        ]
+      }
+    },
+    "/api/v2/stats": {
+      "get": {
+        "description": "Return catalog-wide counts and a small top-media-types breakdown.\n\nResponses are cached in-process for\n``PODEX_STATS_CACHE_TTL_SECONDS`` seconds (configurable via\n:class:`~podex.config.Settings`); set the TTL to ``0`` to bypass the\ncache entirely.",
+        "operationId": "get_catalog_stats_api_v2_stats_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogStats"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Catalog Stats",
+        "tags": [
+          "v2",
+          "stats"
         ]
       }
     },
