@@ -48,9 +48,8 @@ def test_stats_cache_ttl_rejects_negative_values() -> None:
 
 def test_stats_cache_ttl_accepts_zero_and_positive() -> None:
     """``0`` (disabled) and positive floats are accepted."""
-    assert_that(Settings(stats_cache_ttl_seconds=0).stats_cache_ttl_seconds).is_equal_to(
-        0,
-    )
-    assert_that(
-        Settings(stats_cache_ttl_seconds=45.5).stats_cache_ttl_seconds,
-    ).is_equal_to(45.5)
+    zero = Settings(stats_cache_ttl_seconds=0).stats_cache_ttl_seconds
+    positive = Settings(stats_cache_ttl_seconds=45.5).stats_cache_ttl_seconds
+
+    assert_that(zero).is_equal_to(0)
+    assert_that(positive).is_equal_to(45.5)
