@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.15.1] - 2026-07-18
+
+### Changed
+
+- **lint**: enforce #29 prompt boundary with repo-local semgrep rule (#237) (90b9d81)
+- **deps-dev**: update dependency lintro to 0.81.1 (patch) (#238) (65ba153)
+- **deps-dev**: update dependency lintro to 0.81.0 (minor) (#231) (aa1da78)
+- **deps**: update all major dependencies (major) (#219) (3ec3764)
+- **deps**: update python docker tag to 3.14 (minor) (#218) (ce15832)
+
+### Fixed
+
+- **cache**: distinguish cached None from a miss in get_or_compute (#239) (7fdc6a2)
+
 ## [0.15.0] - 2026-07-18
 
 ### Added
