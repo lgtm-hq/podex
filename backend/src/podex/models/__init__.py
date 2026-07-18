@@ -4,6 +4,10 @@ Importing the models here registers them on ``Base.metadata`` so that
 metadata-based table creation and Alembic autogenerate see every table.
 """
 
+from podex.models.account_followed_podcast import AccountFollowedPodcast
+from podex.models.account_preference import AccountPreference
+from podex.models.account_saved_media import AccountSavedMedia
+from podex.models.account_user import AccountUser
 from podex.models.base import Base
 from podex.models.derivative_generation_run import (
     DerivativeGenerationRun,
@@ -17,6 +21,7 @@ from podex.models.episode import DiscoverySource, Episode
 from podex.models.episode_summary import EpisodeSummary
 from podex.models.graph_triple import GraphTriple, GraphTripleObjectKind
 from podex.models.ingestion_run import IngestionRun, IngestionRunStatus
+from podex.models.magic_link_token import MagicLinkToken
 from podex.models.media import Media, MediaType
 from podex.models.media_alias import MediaAlias, MediaAliasSourceType
 from podex.models.media_external_ref import MediaExternalRef, MediaExternalRefSource
@@ -45,8 +50,13 @@ from podex.models.transcript_digest import TranscriptDigest
 from podex.models.transcript_source_retention_policy import (
     TranscriptSourceRetentionPolicy,
 )
+from podex.models.user_session import UserSession
 
 __all__ = [
+    "AccountFollowedPodcast",
+    "AccountPreference",
+    "AccountSavedMedia",
+    "AccountUser",
     "Base",
     "DerivativeGenerationRun",
     "DerivativeGenerationRunStatus",
@@ -55,6 +65,7 @@ __all__ = [
     "EpisodeSummary",
     "GraphTriple",
     "GraphTripleObjectKind",
+    "MagicLinkToken",
     "MediaSummary",
     "SemanticChunk",
     "SemanticChunkEmbeddingStatus",
@@ -87,4 +98,5 @@ __all__ = [
     "TranscriptDigest",
     "TranscriptSourceRetentionPolicy",
     "ScheduledWorkStatus",
+    "UserSession",
 ]

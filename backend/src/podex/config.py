@@ -57,6 +57,20 @@ class Settings(BaseSettings):
     transcript_artifact_s3_access_key_id: str = ""
     transcript_artifact_s3_secret_access_key: str = ""
 
+    # Passwordless account authentication. Magic-link email delivery stays
+    # disabled until SMTP settings are provided by the deployment
+    # environment; defaults are placeholder-free.
+    auth_magic_link_ttl_minutes: int = 15
+    auth_session_ttl_days: int = 30
+    auth_session_cookie_name: str = "podex_session"
+    auth_session_cookie_secure: bool = True
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_from_email: str = ""
+    smtp_starttls: bool = True
+
 
 @lru_cache
 def get_settings() -> Settings:
