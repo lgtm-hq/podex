@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.27.0] - 2026-07-18
+
+### Added
+
+- **models**: add derivative-layer models and migration (#268) (a1d4adb)
+
 ## [0.26.1] - 2026-07-18
 
 ### Fixed
