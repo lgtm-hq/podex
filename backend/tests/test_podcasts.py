@@ -4,7 +4,7 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.api.v2.identifiers import PODCAST_PREFIX, encode
+from podex.api.v2.identifiers import IdentifierKind, encode
 from podex.models import Podcast
 
 
@@ -36,7 +36,7 @@ def test_list_and_get_podcast(client: TestClient, db_session: Session) -> None:
 
     podcast_id = body["items"][0]["id"]
     assert_that(body["items"][0]["public_id"]).is_equal_to(
-        encode(PODCAST_PREFIX, podcast_id),
+        encode(IdentifierKind.PODCAST, podcast_id),
     )
     fetched = client.get(f"/api/v2/podcasts/{podcast_id}")
     assert_that(fetched.status_code).is_equal_to(200)

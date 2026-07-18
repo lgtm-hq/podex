@@ -5,7 +5,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from podex.api.v2.identifiers import EPISODE_PREFIX, PODCAST_PREFIX, encode
+from podex.api.v2.identifiers import IdentifierKind, encode
 
 
 class EpisodeRead(BaseModel):
@@ -24,10 +24,10 @@ class EpisodeRead(BaseModel):
     @property
     def public_id(self) -> str:
         """The opaque, prefixed public identifier for this episode."""
-        return cast("str", encode(EPISODE_PREFIX, self.id))
+        return cast("str", encode(IdentifierKind.EPISODE, self.id))
 
     @computed_field  # type: ignore[prop-decorator]
     @property
     def podcast_public_id(self) -> str:
         """The opaque public identifier of the owning podcast."""
-        return cast("str", encode(PODCAST_PREFIX, self.podcast_id))
+        return cast("str", encode(IdentifierKind.PODCAST, self.podcast_id))
