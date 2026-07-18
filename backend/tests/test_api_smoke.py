@@ -6,70 +6,18 @@ through the running FastAPI application so that a regression in wiring
 end-to-end walk across podcasts, episodes, media, and mentions.
 """
 
-from dataclasses import dataclass
-
 from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.models import Episode, Media, MediaType, Mention, Podcast
+from podex.models import Episode
+from tests.conftest import SeededGraph, seed_catalog_graph
 
 
-@dataclass
-class SeededGraph:
-    """Identifiers for a linked podcast, episode, media, and mention graph.
-
-    Attributes:
-        podcast_id: Identifier of the seeded podcast source.
-        episode_id: Identifier of the seeded episode belonging to the podcast.
-        media_id: Identifier of the seeded canonical media item.
-        mention_id: Identifier of the mention linking the episode to the media.
-    """
-
-    podcast_id: int
-    episode_id: int
-    media_id: int
-    mention_id: int
-
-
-def _seed_graph(db: Session) -> SeededGraph:
-    """Persist a fully connected catalog graph and return its identifiers.
-
-    Args:
-        db: Database session used to persist the catalog rows.
-
-    Returns:
-        The identifiers of the seeded podcast, episode, media, and mention.
-    """
-    podcast = Podcast(
-        name="The Example Show",
-        slug="example-show",
-        description="A show about examples.",
-    )
-    db.add(podcast)
-    db.commit()
-
-    episode = Episode(podcast_id=podcast.id, title="Pilot", episode_number=1)
-    media = Media(type=MediaType.BOOK, title="Dune", author="Herbert", year=1965)
-    db.add_all([episode, media])
-    db.commit()
-
-    mention = Mention(
-        episode_id=episode.id,
-        media_id=media.id,
-        timestamp_seconds=42,
-        context="a great book",
-        confidence=0.9,
-    )
-    db.add(mention)
-    db.commit()
-
-    return SeededGraph(
-        podcast_id=podcast.id,
-        episode_id=episode.id,
-        media_id=media.id,
-        mention_id=mention.id,
-    )
+def _assert_empty_page(body: dict[str, object]) -> None:
+    """Assert that a list response is an empty page envelope."""
+    assert_that(body["items"]).is_equal_to([])
+    assert_that(body["total"]).is_equal_to(0)
 
 
 def test_health_and_status_smoke(client: TestClient) -> None:
@@ -83,30 +31,43 @@ def test_health_and_status_smoke(client: TestClient) -> None:
     assert_that(status.json()).is_equal_to({"status": "ok", "api": "v2"})
 
 
-def test_podcast_resource_smoke(client: TestClient, db_session: Session) -> None:
-    """Podcasts are listed, individually fetchable, and 404 when unknown."""
-    graph = _seed_graph(db_session)
+def test_empty_catalog_smoke(client: TestClient) -> None:
+    """An unseeded database returns empty page envelopes across the catalog."""
+    _assert_empty_page(client.get("/api/v2/podcasts").json())
+    _assert_empty_page(client.get("/api/v2/episodes").json())
+    _assert_empty_page(client.get("/api/v2/media").json())
 
+
+def test_podcast_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> None:
+    """Podcasts are listed, individually fetchable, and 404 when unknown."""
     listed = client.get("/api/v2/podcasts")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
+<<<<<<< HEAD
     assert_that([item["id"] for item in listed_items]).contains(graph.podcast_id)
+=======
+    assert_that([item["id"] for item in listed_items]).contains(
+        seeded_graph.podcast_id,
+    )
+>>>>>>> origin/main
 
-    fetched = client.get(f"/api/v2/podcasts/{graph.podcast_id}")
+    fetched = client.get(f"/api/v2/podcasts/{seeded_graph.podcast_id}")
     assert_that(fetched.status_code).is_equal_to(200)
     assert_that(fetched.json()["slug"]).is_equal_to("example-show")
 
     missing = client.get("/api/v2/podcasts/999")
     assert_that(missing.status_code).is_equal_to(404)
+    error = missing.json()["error"]
+    assert_that(error["code"]).is_equal_to("not_found")
+    assert_that(error["message"]).is_equal_to("Podcast not found")
 
 
-def test_episode_resource_smoke(client: TestClient, db_session: Session) -> None:
+def test_episode_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> None:
     """Episodes list, filter by podcast, fetch, expose mentions, and 404."""
-    graph = _seed_graph(db_session)
-
     listed = client.get("/api/v2/episodes")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
+<<<<<<< HEAD
     assert_that([item["id"] for item in listed_items]).contains(graph.episode_id)
 
     filtered = client.get("/api/v2/episodes", params={"podcast_id": graph.podcast_id})
@@ -114,88 +75,155 @@ def test_episode_resource_smoke(client: TestClient, db_session: Session) -> None
     filtered_items = filtered.json()["items"]
     assert_that([item["id"] for item in filtered_items]).is_equal_to(
         [graph.episode_id],
+=======
+    assert_that([item["id"] for item in listed_items]).contains(
+        seeded_graph.episode_id,
+>>>>>>> origin/main
     )
 
-    fetched = client.get(f"/api/v2/episodes/{graph.episode_id}")
+    filtered = client.get(
+        "/api/v2/episodes",
+        params={"podcast_id": seeded_graph.podcast_id},
+    )
+    assert_that(filtered.status_code).is_equal_to(200)
+    filtered_items = filtered.json()["items"]
+    assert_that([item["id"] for item in filtered_items]).is_equal_to(
+        [seeded_graph.episode_id],
+    )
+
+    no_matches = client.get("/api/v2/episodes", params={"podcast_id": 999})
+    assert_that(no_matches.status_code).is_equal_to(200)
+    _assert_empty_page(no_matches.json())
+
+    fetched = client.get(f"/api/v2/episodes/{seeded_graph.episode_id}")
     assert_that(fetched.status_code).is_equal_to(200)
     assert_that(fetched.json()["title"]).is_equal_to("Pilot")
 
-    mentions = client.get(f"/api/v2/episodes/{graph.episode_id}/mentions")
+    mentions = client.get(f"/api/v2/episodes/{seeded_graph.episode_id}/mentions")
     assert_that(mentions.status_code).is_equal_to(200)
     mention_items = mentions.json()["items"]
     assert_that([item["id"] for item in mention_items]).is_equal_to(
+<<<<<<< HEAD
         [graph.mention_id],
+=======
+        [seeded_graph.mention_id],
+>>>>>>> origin/main
     )
 
     missing = client.get("/api/v2/episodes/999")
     assert_that(missing.status_code).is_equal_to(404)
+    error = missing.json()["error"]
+    assert_that(error["code"]).is_equal_to("not_found")
+    assert_that(error["message"]).is_equal_to("Episode not found")
+
+    missing_mentions = client.get("/api/v2/episodes/999/mentions")
+    assert_that(missing_mentions.status_code).is_equal_to(404)
+    assert_that(missing_mentions.json()["error"]["code"]).is_equal_to("not_found")
 
 
-def test_media_resource_smoke(client: TestClient, db_session: Session) -> None:
+def test_media_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> None:
     """Media list, filter by type, fetch, expose mentions, and 404."""
-    graph = _seed_graph(db_session)
-
     listed = client.get("/api/v2/media")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
+<<<<<<< HEAD
     assert_that([item["id"] for item in listed_items]).contains(graph.media_id)
+=======
+    assert_that([item["id"] for item in listed_items]).contains(seeded_graph.media_id)
+>>>>>>> origin/main
 
     filtered = client.get("/api/v2/media", params={"media_type": "book"})
     assert_that(filtered.status_code).is_equal_to(200)
     filtered_items = filtered.json()["items"]
+<<<<<<< HEAD
     assert_that([item["id"] for item in filtered_items]).is_equal_to([graph.media_id])
+=======
+    assert_that([item["id"] for item in filtered_items]).is_equal_to(
+        [seeded_graph.media_id],
+    )
+>>>>>>> origin/main
 
     empty = client.get("/api/v2/media", params={"media_type": "movie"})
     assert_that(empty.status_code).is_equal_to(200)
     assert_that(empty.json()["items"]).is_equal_to([])
 
-    fetched = client.get(f"/api/v2/media/{graph.media_id}")
+    fetched = client.get(f"/api/v2/media/{seeded_graph.media_id}")
     assert_that(fetched.status_code).is_equal_to(200)
     assert_that(fetched.json()["author"]).is_equal_to("Herbert")
 
-    mentions = client.get(f"/api/v2/media/{graph.media_id}/mentions")
+    mentions = client.get(f"/api/v2/media/{seeded_graph.media_id}/mentions")
     assert_that(mentions.status_code).is_equal_to(200)
     mention_items = mentions.json()["items"]
     assert_that([item["id"] for item in mention_items]).is_equal_to(
+<<<<<<< HEAD
         [graph.mention_id],
+=======
+        [seeded_graph.mention_id],
+>>>>>>> origin/main
     )
 
     missing = client.get("/api/v2/media/999")
     assert_that(missing.status_code).is_equal_to(404)
+    error = missing.json()["error"]
+    assert_that(error["code"]).is_equal_to("not_found")
+    assert_that(error["message"]).is_equal_to("Media not found")
+
+    missing_mentions = client.get("/api/v2/media/999/mentions")
+    assert_that(missing_mentions.status_code).is_equal_to(404)
+    assert_that(missing_mentions.json()["error"]["code"]).is_equal_to("not_found")
 
 
-def test_full_graph_walk_via_http(client: TestClient, db_session: Session) -> None:
+def test_full_graph_walk_via_http(
+    client: TestClient, seeded_graph: SeededGraph
+) -> None:
     """A seeded graph is fully traversable through the public HTTP surface.
 
     Starting from the podcast, the walk follows episodes to their mentions and
     then resolves each mention back to its canonical media item, asserting that
     the foreign-key relationships survive serialization end to end.
     """
-    graph = _seed_graph(db_session)
-
-    podcast = client.get(f"/api/v2/podcasts/{graph.podcast_id}").json()
-    assert_that(podcast["id"]).is_equal_to(graph.podcast_id)
+    podcast = client.get(f"/api/v2/podcasts/{seeded_graph.podcast_id}").json()
+    assert_that(podcast["id"]).is_equal_to(seeded_graph.podcast_id)
 
     episodes = client.get(
         "/api/v2/episodes",
+<<<<<<< HEAD
         params={"podcast_id": graph.podcast_id},
+=======
+        params={"podcast_id": seeded_graph.podcast_id},
+>>>>>>> origin/main
     ).json()["items"]
     assert_that(episodes).is_length(1)
     episode = episodes[0]
-    assert_that(episode["podcast_id"]).is_equal_to(graph.podcast_id)
+    assert_that(episode["podcast_id"]).is_equal_to(seeded_graph.podcast_id)
 
     mentions = client.get(f"/api/v2/episodes/{episode['id']}/mentions").json()["items"]
     assert_that(mentions).is_length(1)
     mention = mentions[0]
     assert_that(mention["episode_id"]).is_equal_to(episode["id"])
-    assert_that(mention["media_id"]).is_equal_to(graph.media_id)
+    assert_that(mention["media_id"]).is_equal_to(seeded_graph.media_id)
     assert_that(mention["timestamp_seconds"]).is_equal_to(42)
 
     media = client.get(f"/api/v2/media/{mention['media_id']}").json()
-    assert_that(media["id"]).is_equal_to(graph.media_id)
+    assert_that(media["id"]).is_equal_to(seeded_graph.media_id)
     assert_that(media["title"]).is_equal_to("Dune")
 
     back_reference = client.get(f"/api/v2/media/{media['id']}/mentions").json()["items"]
     assert_that([item["id"] for item in back_reference]).is_equal_to(
-        [graph.mention_id],
+        [seeded_graph.mention_id],
     )
+
+
+def test_episode_without_mentions_returns_empty_page(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """An episode with no linked mentions still returns a 200 empty page."""
+    graph = seed_catalog_graph(db_session)
+    second = Episode(podcast_id=graph.podcast_id, title="Solo")
+    db_session.add(second)
+    db_session.commit()
+
+    response = client.get(f"/api/v2/episodes/{second.id}/mentions")
+    assert_that(response.status_code).is_equal_to(200)
+    _assert_empty_page(response.json())

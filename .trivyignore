@@ -1,0 +1,36 @@
+# Trivy suppressions for the tag-publish vulnerability gate (docker-ci.yml).
+#
+# Policy (#220): only CRITICAL/HIGH CVEs with NO fixed Debian 12 package may
+# be listed here. Each entry names the affected package(s); prune entries as
+# Debian ships fixes — Renovate base-image digest bumps re-run the scan and
+# will fail if an entry stops matching a fixed package. Never list a CVE that
+# has a fixed version available; fix the image instead.
+
+# zlib1g — integer overflow in zipOpenNewFileInZip4_64 (contrib/minizip; not
+# shipped as a runtime code path for this app).
+CVE-2023-45853
+
+# libsqlite3-0 — SQLite integer overflow.
+CVE-2025-7458
+
+# perl-base — perl core / Archive-Tar / IO-Compress issues; perl-base is an
+# essential dpkg dependency in bookworm and cannot be removed from slim images.
+CVE-2026-8376
+CVE-2026-13221
+CVE-2026-42496
+CVE-2026-42497
+CVE-2026-48962
+CVE-2026-57432
+CVE-2026-9538
+
+# ncurses (ncurses-base/ncurses-bin/libtinfo6) — buffer overflow.
+CVE-2025-69720
+
+# util-linux / libblkid / libuuid1 / mount — integer overflow in dos.c.
+CVE-2026-53615
+
+# gzip — no fixed version.
+CVE-2026-41992
+
+# libacl1 — no fixed version.
+CVE-2026-54369

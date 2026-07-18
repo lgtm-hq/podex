@@ -12,7 +12,7 @@ from starlette.responses import JSONResponse, Response
 from podex.api.v2.errors import error_code_for_status
 from podex.api.v2.schemas import ErrorBody, ErrorResponse
 from podex.logging_config import get_logger
-from podex.services.limiter import SlidingWindowRateLimiter
+from podex.services.limiter import RateLimiter
 
 REQUEST_ID_HEADER = "X-Request-ID"
 RATE_LIMIT_MESSAGE = "Rate limit exceeded. Try again later."
@@ -104,7 +104,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     Args:
         app: The wrapped ASGI application.
-        limiter: The limiter instance enforcing per-client budgets.
+        limiter: The limiter instance enforcing per-client budgets. Any object
+            implementing the :class:`RateLimiter` protocol (in-memory sliding
+            window in dev/tests, Redis-backed sliding window in production) is
+            accepted.
         exempt_paths: Paths that bypass rate limiting entirely.
     """
 
@@ -112,7 +115,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         self,
         app: Callable[..., Awaitable[None]],
         *,
-        limiter: SlidingWindowRateLimiter,
+        limiter: RateLimiter,
         exempt_paths: tuple[str, ...] = (),
     ) -> None:
         super().__init__(app)

@@ -15,6 +15,8 @@ class Episode(Base):
     __table_args__ = (
         # Serves both the podcast_id filter and the published_at ordering.
         Index("ix_episodes_podcast_id_published_at", "podcast_id", "published_at"),
+        # Supports global episode listings ordered by published_at.
+        Index("ix_episodes_published_at", "published_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
