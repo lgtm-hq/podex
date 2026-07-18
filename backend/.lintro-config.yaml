@@ -51,6 +51,8 @@ tools:
     enabled: true
   osv_scanner:
     enabled: true
+  semgrep:
+    enabled: true
 
 ai:
   enabled: false
