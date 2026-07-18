@@ -69,9 +69,12 @@ jobs:
       runner-map: '{"linux/arm64":"ubuntu-24.04-arm"}'
       tag-latest: true
       scan: true
-      # Advisory-only on non-tag; fail the tag publish on CRITICAL/HIGH.
-      scan-exit-code: >-
-        ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+      # Advisory-only everywhere for now: reusable-docker's scan job never
+      # checks out this repo and hardcodes ignore-unfixed, so .trivyignore
+      # cannot load on the tag path and unfixed base CVEs would fail every
+      # release (#223). Restore '1' on tags once lgtm-hq/lgtm-ci#626 ships a
+      # scan-ignore-unfixed input (or caller checkout).
+      scan-exit-code: '0'
       cosign-sign: ${{ startsWith(github.ref, 'refs/tags/v') }}
       cache-registry-ref: ghcr.io/lgtm-hq/podex-backend:cache
       no-cache: ${{ startsWith(github.ref, 'refs/tags/v') }}
@@ -152,8 +155,9 @@ jobs:
       runner-map: '{"linux/arm64":"ubuntu-24.04-arm"}'
       tag-latest: true
       scan: true
-      scan-exit-code: >-
-        ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+      # Advisory-only everywhere for now — see backend job comment (#223,
+      # lgtm-hq/lgtm-ci#626).
+      scan-exit-code: '0'
       cosign-sign: ${{ startsWith(github.ref, 'refs/tags/v') }}
       cache-registry-ref: ghcr.io/lgtm-hq/podex-frontend:cache
       no-cache: ${{ startsWith(github.ref, 'refs/tags/v') }}
