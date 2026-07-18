@@ -324,9 +324,7 @@ def test_build_rate_limiter_returns_redis_backend_when_url_set(
 
 def test_both_backends_satisfy_the_rate_limiter_protocol() -> None:
     """Both backends structurally implement the ``RateLimiter`` protocol."""
-    memory: RateLimiter = SlidingWindowRateLimiter(
-        max_requests=1, window_seconds=60.0
-    )
+    memory: RateLimiter = SlidingWindowRateLimiter(max_requests=1, window_seconds=60.0)
     shared: RateLimiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
 
     assert_that(isinstance(memory, RateLimiter)).is_true()
