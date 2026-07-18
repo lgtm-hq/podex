@@ -39,7 +39,7 @@ dev = [
   "assertpy>=1.1",
   "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.80.10",
+  "lintro==0.81.0",
   "mypy>=1.14",
   "pytest>=8.0",
   "pytest-cov>=6.0",
