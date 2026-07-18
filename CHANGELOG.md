@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.13.0] - 2026-07-18
+
+### Added
+
+- **api**: extract query services and add cached stats (#204) (c440338)
+
 ## [0.12.3] - 2026-07-18
 
 ### Fixed
