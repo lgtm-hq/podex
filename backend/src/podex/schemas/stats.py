@@ -16,7 +16,8 @@ class CatalogStats(BaseModel):
     Attributes:
         podcasts: Total podcast sources in the catalog.
         episodes: Total episodes across all sources.
-        media: Total canonical media items referenced by episodes.
+        media: Total canonical media items in the catalog. Counts every
+            ``Media`` row, not just those referenced by a mention.
         mentions: Total episode<->media mention links.
         top_media_types: Up to five media types ordered by descending count,
             with ties broken alphabetically by type name for stability.
@@ -24,6 +25,15 @@ class CatalogStats(BaseModel):
 
     podcasts: int = Field(ge=0)
     episodes: int = Field(ge=0)
-    media: int = Field(ge=0)
+    media: int = Field(
+        ge=0,
+        description="Total canonical media items in the catalog (every Media row).",
+    )
     mentions: int = Field(ge=0)
-    top_media_types: list[MediaTypeCount]
+    top_media_types: list[MediaTypeCount] = Field(
+        max_length=5,
+        description=(
+            "Up to five media types ordered by descending count; ties broken "
+            "alphabetically by type name."
+        ),
+    )

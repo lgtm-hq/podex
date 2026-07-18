@@ -119,3 +119,32 @@ def test_list_media_filters_by_type(db_session: Session) -> None:
 def test_list_media_mentions_returns_none_for_missing(db_session: Session) -> None:
     """A missing parent media item yields ``None`` so the API can 404."""
     assert_that(media_queries.list_media_mentions(db_session, 999)).is_none()
+
+
+def test_list_media_mentions_orders_by_episode_id(db_session: Session) -> None:
+    """Mentions for an existing media item order by ``episode_id``."""
+    podcast = Podcast(name="Show", slug="show")
+    db_session.add(podcast)
+    db_session.commit()
+    episode_a = Episode(podcast_id=podcast.id, title="Episode A")
+    episode_b = Episode(podcast_id=podcast.id, title="Episode B")
+    media = Media(type=MediaType.BOOK, title="Dune")
+    db_session.add_all([episode_a, episode_b, media])
+    db_session.commit()
+    # Insert the higher-``episode_id`` mention first to prove the service is
+    # sorting rather than returning insertion order.
+    db_session.add(
+        Mention(episode_id=episode_b.id, media_id=media.id, timestamp_seconds=30),
+    )
+    db_session.add(
+        Mention(episode_id=episode_a.id, media_id=media.id, timestamp_seconds=120),
+    )
+    db_session.commit()
+
+    mentions = media_queries.list_media_mentions(db_session, media.id)
+
+    assert_that(mentions).is_not_none()
+    narrowed = cast("list[Mention]", mentions)
+    assert_that([mention.episode_id for mention in narrowed]).is_equal_to(
+        [episode_a.id, episode_b.id],
+    )

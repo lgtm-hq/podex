@@ -2,6 +2,7 @@
 
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,8 +33,12 @@ class Settings(BaseSettings):
 
     # Aggregate/stats caching. Short TTL because we currently have no
     # write-time invalidation hooks (see ``services/stats_queries.py``);
-    # setting the TTL to ``0`` disables caching entirely.
-    stats_cache_ttl_seconds: float = 30.0
+    # setting the TTL to ``0`` disables caching entirely. ``allow_inf_nan``
+    # rejects ``NaN`` (which would silently bypass caching after mypy-safe
+    # comparisons) and ``inf`` (which would keep entries alive forever); the
+    # ``ge=0`` bound catches negative overrides at startup instead of allowing
+    # a misconfigured value to disable caching in a surprising way.
+    stats_cache_ttl_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
 
 
 @lru_cache

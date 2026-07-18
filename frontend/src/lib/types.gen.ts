@@ -240,7 +240,8 @@ export interface components {
          *     Attributes:
          *         podcasts: Total podcast sources in the catalog.
          *         episodes: Total episodes across all sources.
-         *         media: Total canonical media items referenced by episodes.
+         *         media: Total canonical media items in the catalog. Counts every
+         *             ``Media`` row, not just those referenced by a mention.
          *         mentions: Total episode<->media mention links.
          *         top_media_types: Up to five media types ordered by descending count,
          *             with ties broken alphabetically by type name for stability.
@@ -248,13 +249,19 @@ export interface components {
         CatalogStats: {
             /** Episodes */
             episodes: number;
-            /** Media */
+            /**
+             * Media
+             * @description Total canonical media items in the catalog (every Media row).
+             */
             media: number;
             /** Mentions */
             mentions: number;
             /** Podcasts */
             podcasts: number;
-            /** Top Media Types */
+            /**
+             * Top Media Types
+             * @description Up to five media types ordered by descending count; ties broken alphabetically by type name.
+             */
             top_media_types: components["schemas"]["MediaTypeCount"][];
         };
         /**

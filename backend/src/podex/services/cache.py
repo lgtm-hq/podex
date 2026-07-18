@@ -19,10 +19,12 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypeVar, cast, runtime_checkable
 
 MonotonicClock = Callable[[], float]
 """Zero-arg callable returning a monotonic timestamp in seconds."""
+
+T = TypeVar("T")
 
 
 @runtime_checkable
@@ -44,6 +46,21 @@ class Cache(Protocol):
     def clear(self) -> None:
         """Drop every entry (useful for tests and manual invalidation)."""
 
+    def get_or_compute(
+        self,
+        key: str,
+        *,
+        ttl_seconds: float,
+        loader: Callable[[], T],
+    ) -> T:
+        """Return the cached value or compute-and-store it single-flight.
+
+        Implementations must ensure that concurrent callers observing a cache
+        miss only invoke ``loader`` once per key; the remaining callers must
+        wait for that in-flight computation and return the freshly stored
+        value.
+        """
+
 
 @dataclass(frozen=True)
 class _Entry:
@@ -60,6 +77,10 @@ class TTLCache:
     monotonic deadline; ``get`` returns ``None`` once the deadline has passed
     and lazily evicts the expired entry so memory doesn't grow unbounded.
 
+    :meth:`get_or_compute` layers a per-key lock on top of the store so
+    concurrent cold-miss callers do not stampede an expensive loader (see
+    issue #15).
+
     Args:
         clock: Zero-arg callable returning a monotonic timestamp in seconds.
             Defaults to :func:`time.monotonic`; tests inject a fake clock to
@@ -70,6 +91,11 @@ class TTLCache:
         self._clock: MonotonicClock = clock
         self._entries: dict[str, _Entry] = {}
         self._lock = threading.Lock()
+        # Per-key coordinate locks used by ``get_or_compute`` to serialize
+        # concurrent cold misses. Guarded by ``self._lock`` on lookup so the
+        # mapping stays consistent; individual keys can then be locked without
+        # blocking unrelated ones.
+        self._key_locks: dict[str, threading.Lock] = {}
 
     def get(self, key: str) -> Any | None:
         """Return the cached value for ``key`` or ``None`` if absent/expired.
@@ -110,3 +136,59 @@ class TTLCache:
         """Drop every entry."""
         with self._lock:
             self._entries.clear()
+
+    def _get_key_lock(self, key: str) -> threading.Lock:
+        """Return the per-key lock for ``key``, creating it on first use.
+
+        The mapping itself is protected by ``self._lock`` so lookups stay
+        consistent under concurrent access; the returned lock can then be
+        acquired independently without blocking unrelated keys.
+        """
+        with self._lock:
+            existing = self._key_locks.get(key)
+            if existing is not None:
+                return existing
+            new_lock = threading.Lock()
+            self._key_locks[key] = new_lock
+            return new_lock
+
+    def get_or_compute(
+        self,
+        key: str,
+        *,
+        ttl_seconds: float,
+        loader: Callable[[], T],
+    ) -> T:
+        """Return the cached value or compute-and-store it single-flight.
+
+        A fast-path :meth:`get` avoids taking the per-key lock when the value
+        is already cached. On a miss the per-key lock is acquired and the
+        cache re-checked (double-checked locking) before ``loader`` runs, so
+        concurrent cold callers wait for the in-flight computation instead of
+        each recomputing the value.
+
+        A non-positive ``ttl_seconds`` disables caching entirely: ``loader``
+        is invoked directly and its result is returned without touching the
+        store, matching :meth:`set` semantics.
+
+        Args:
+            key: Cache key to read and (on miss) populate.
+            ttl_seconds: TTL applied when the loader result is stored.
+            loader: Zero-arg callable that computes the value on a miss.
+
+        Returns:
+            The cached value if present and unexpired, otherwise the freshly
+            computed value returned by ``loader``.
+        """
+        if ttl_seconds <= 0:
+            return loader()
+        cached = self.get(key)
+        if cached is not None:
+            return cast("T", cached)
+        with self._get_key_lock(key):
+            cached = self.get(key)
+            if cached is not None:
+                return cast("T", cached)
+            fresh = loader()
+            self.set(key, fresh, ttl_seconds=ttl_seconds)
+            return fresh

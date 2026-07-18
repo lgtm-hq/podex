@@ -1,5 +1,8 @@
 """Unit tests for the in-process TTL cache backend."""
 
+import threading
+import time
+
 from assertpy import assert_that
 
 from podex.services.cache import Cache, TTLCache
@@ -83,3 +86,88 @@ def test_clear_drops_every_entry() -> None:
 
     assert_that(cache.get("a")).is_none()
     assert_that(cache.get("b")).is_none()
+
+
+def test_get_or_compute_populates_and_reuses_entry() -> None:
+    """The loader runs on the first call and is skipped while cached."""
+    cache = TTLCache()
+    call_count = 0
+
+    def loader() -> str:
+        """Return a sentinel value and record how many times it ran."""
+        nonlocal call_count
+        call_count += 1
+        return "value"
+
+    first = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
+    second = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
+
+    assert_that(first).is_equal_to("value")
+    assert_that(second).is_equal_to("value")
+    assert_that(call_count).is_equal_to(1)
+
+
+def test_get_or_compute_skips_cache_when_ttl_is_zero() -> None:
+    """A non-positive TTL bypasses the store entirely."""
+    cache = TTLCache()
+    call_count = 0
+
+    def loader() -> str:
+        """Return a sentinel value and record how many times it ran."""
+        nonlocal call_count
+        call_count += 1
+        return "value"
+
+    result = cache.get_or_compute("k", ttl_seconds=0, loader=loader)
+    # A second call still recomputes because nothing was stored.
+    cache.get_or_compute("k", ttl_seconds=0, loader=loader)
+
+    assert_that(result).is_equal_to("value")
+    assert_that(cache.get("k")).is_none()
+    assert_that(call_count).is_equal_to(2)
+
+
+def test_get_or_compute_is_single_flight_under_concurrency() -> None:
+    """Concurrent cold-miss callers only invoke the loader once."""
+    cache = TTLCache()
+    call_count = 0
+    counter_lock = threading.Lock()
+    workers = 8
+    ready = threading.Barrier(workers + 1)
+    release = threading.Event()
+
+    def loader() -> str:
+        """Slow loader whose invocations we count.
+
+        The barrier and event let the test line every worker up on the cache
+        miss before releasing them together, so the per-key lock is the only
+        thing preventing duplicate loader runs.
+        """
+        with counter_lock:
+            nonlocal call_count
+            call_count += 1
+        # A short sleep widens the concurrent window if the lock is broken.
+        time.sleep(0.05)
+        return "value"
+
+    results: list[str] = []
+    results_lock = threading.Lock()
+
+    def worker() -> None:
+        """Wait for the release signal, then race against the other workers."""
+        ready.wait()
+        release.wait()
+        value = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
+        with results_lock:
+            results.append(value)
+
+    threads = [threading.Thread(target=worker) for _ in range(workers)]
+    for thread in threads:
+        thread.start()
+    ready.wait()
+    release.set()
+    for thread in threads:
+        thread.join()
+
+    assert_that(call_count).is_equal_to(1)
+    assert_that(results).is_equal_to(["value"] * workers)

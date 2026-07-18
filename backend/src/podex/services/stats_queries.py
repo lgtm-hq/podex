@@ -70,8 +70,10 @@ def get_catalog_stats(
     """Return the catalog stats, hitting the cache first.
 
     On a miss the value is computed from ``db`` and stored under
-    :data:`CATALOG_STATS_CACHE_KEY` for ``ttl_seconds`` seconds. A
-    non-positive TTL disables caching (the value is always recomputed).
+    :data:`CATALOG_STATS_CACHE_KEY` for ``ttl_seconds`` seconds. The read is
+    single-flight — concurrent cold-miss callers wait for the in-flight
+    computation instead of stampeding the aggregation queries. A non-positive
+    TTL disables caching (the value is always recomputed).
 
     Args:
         db: Active SQLAlchemy session bound to the request.
@@ -81,12 +83,8 @@ def get_catalog_stats(
     Returns:
         The (possibly cached) :class:`CatalogStats` payload.
     """
-    if ttl_seconds > 0:
-        cached = cache.get(CATALOG_STATS_CACHE_KEY)
-        if isinstance(cached, CatalogStats):
-            return cached
-
-    fresh = compute_catalog_stats(db)
-    if ttl_seconds > 0:
-        cache.set(CATALOG_STATS_CACHE_KEY, fresh, ttl_seconds=ttl_seconds)
-    return fresh
+    return cache.get_or_compute(
+        CATALOG_STATS_CACHE_KEY,
+        ttl_seconds=ttl_seconds,
+        loader=lambda: compute_catalog_stats(db),
+    )

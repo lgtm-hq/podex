@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_cache
+from podex.config import Settings
 from podex.database import get_db
 from podex.main import create_app
 from podex.models import Episode, Media, MediaType, Mention, Podcast
@@ -161,3 +162,38 @@ def test_stats_endpoint_serves_cache_on_repeat_call(
 
     assert_that(second).is_equal_to(first)
     assert_that(cache.get(CATALOG_STATS_CACHE_KEY)).is_not_none()
+
+
+def test_stats_endpoint_honors_settings_from_create_app(
+    db_session: Session,
+) -> None:
+    """``create_app(settings=...)`` reaches the ``/api/v2/stats`` handler.
+
+    Explicitly building the app with ``stats_cache_ttl_seconds=0`` and no
+    other override must produce a response that bypasses the cache — i.e.
+    each call recomputes and no entry lands in ``app.state.cache``. If the
+    dependency instead resolved to the cached global settings, the default
+    30-second TTL would apply and this test would fail.
+    """
+    settings = Settings(stats_cache_ttl_seconds=0)
+    app = create_app(settings=settings)
+
+    def override_get_db() -> Iterator[Session]:
+        """Return the in-memory session shared across the test module."""
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as client:
+        _seed_catalog(db_session)
+        response_before = client.get("/api/v2/stats")
+        db_session.add(Podcast(name="Another", slug="another"))
+        db_session.commit()
+        response_after = client.get("/api/v2/stats")
+
+    assert_that(response_before.status_code).is_equal_to(200)
+    assert_that(response_after.status_code).is_equal_to(200)
+    assert_that(response_before.json()["podcasts"]).is_equal_to(1)
+    assert_that(response_after.json()["podcasts"]).is_equal_to(2)
+    # ttl=0 means no caching → the process-wide cache stays empty even after
+    # a successful request.
+    assert_that(app.state.cache.get(CATALOG_STATS_CACHE_KEY)).is_none()
