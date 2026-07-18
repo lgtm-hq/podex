@@ -23,9 +23,9 @@ jobs:
   # Org ruleset (checks-podex): security-audit / 🔐 Security Audit
   security-audit:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-security-audit.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-security-audit.yml@443a687caa93b3afa306a066aae8d8a2b4e60c3c  # v0.59.0
     with:
-      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
       job-name: '🔐 Security Audit'
       # yamllint disable-line rule:line-length
       lintro-image: ghcr.io/lgtm-hq/py-lintro@sha256:95b9fd9d62c3ca1227447467767ec915e78a7eef62282dd18c0b1c02ee4d3887
@@ -50,9 +50,9 @@ jobs:
         || github.event.action == 'ready_for_review'
       )
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-publish-security-audit-comment.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-publish-security-audit-comment.yml@443a687caa93b3afa306a066aae8d8a2b4e60c3c  # v0.59.0
     with:
-      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
       egress-policy: block
       egress-preset: github-tooling
     permissions:
