@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.30.0] - 2026-07-18
+
+### Added
+
+- **accounts**: add account identity, sessions, saves, follows, and preferences (#277)
+  (5f17e7b)
+
 ## [0.29.0] - 2026-07-18
 
 ### Added
