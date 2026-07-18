@@ -13,7 +13,7 @@ export interface paths {
         };
         /**
          * List Episodes
-         * @description List episodes, optionally filtered by podcast.
+         * @description List episodes, optionally filtered by podcast, paginated.
          */
         get: operations["list_episodes_api_v2_episodes_get"];
         put?: never;
@@ -53,7 +53,7 @@ export interface paths {
         };
         /**
          * List Episode Mentions
-         * @description List media mentions within an episode, ordered by timestamp.
+         * @description List media mentions within an episode, ordered by timestamp, paginated.
          */
         get: operations["list_episode_mentions_api_v2_episodes__episode_id__mentions_get"];
         put?: never;
@@ -73,7 +73,7 @@ export interface paths {
         };
         /**
          * List Media
-         * @description List media items, optionally filtered by type, ordered by title.
+         * @description List media items, optionally filtered by type, paginated.
          */
         get: operations["list_media_api_v2_media_get"];
         put?: never;
@@ -113,7 +113,7 @@ export interface paths {
         };
         /**
          * List Media Mentions
-         * @description List episode mentions of a media item.
+         * @description List episode mentions of a media item, paginated.
          */
         get: operations["list_media_mentions_api_v2_media__media_id__mentions_get"];
         put?: never;
@@ -133,7 +133,7 @@ export interface paths {
         };
         /**
          * List Podcasts
-         * @description List podcast sources ordered by name.
+         * @description List podcast sources ordered by name, paginated by ``limit``/``offset``.
          */
         get: operations["list_podcasts_api_v2_podcasts_get"];
         put?: never;
@@ -280,6 +280,16 @@ export interface components {
             id: number;
             /** Podcast Id */
             podcast_id: number;
+            /**
+             * Podcast Public Id
+             * @description The opaque public identifier of the owning podcast.
+             */
+            readonly podcast_public_id: string;
+            /**
+             * Public Id
+             * @description The opaque, prefixed public identifier for this episode.
+             */
+            readonly public_id: string;
             /** Published At */
             published_at: string | null;
             /** Title */
@@ -308,6 +318,11 @@ export interface components {
             description: string | null;
             /** Id */
             id: number;
+            /**
+             * Public Id
+             * @description The opaque, prefixed public identifier for this media item.
+             */
+            readonly public_id: string;
             /** Title */
             title: string;
             type: components["schemas"]["MediaType"];
@@ -352,12 +367,71 @@ export interface components {
             created_at: string;
             /** Episode Id */
             episode_id: number;
+            /**
+             * Episode Public Id
+             * @description The opaque public identifier of the referenced episode.
+             */
+            readonly episode_public_id: string;
             /** Id */
             id: number;
             /** Media Id */
             media_id: number;
+            /**
+             * Media Public Id
+             * @description The opaque public identifier of the referenced media item.
+             */
+            readonly media_public_id: string;
+            /**
+             * Public Id
+             * @description The opaque, prefixed public identifier for this mention.
+             */
+            readonly public_id: string;
             /** Timestamp Seconds */
             timestamp_seconds: number | null;
+        };
+        /** Page[EpisodeRead] */
+        Page_EpisodeRead_: {
+            /** Items */
+            items: components["schemas"]["EpisodeRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[MediaRead] */
+        Page_MediaRead_: {
+            /** Items */
+            items: components["schemas"]["MediaRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[MentionRead] */
+        Page_MentionRead_: {
+            /** Items */
+            items: components["schemas"]["MentionRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
+        };
+        /** Page[PodcastRead] */
+        Page_PodcastRead_: {
+            /** Items */
+            items: components["schemas"]["PodcastRead"][];
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
+            /** Total */
+            total: number;
         };
         /**
          * PodcastRead
@@ -375,6 +449,11 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+            /**
+             * Public Id
+             * @description The opaque, prefixed public identifier for this podcast.
+             */
+            readonly public_id: string;
             /** Slug */
             slug: string;
         };
@@ -404,6 +483,10 @@ export interface operations {
         parameters: {
             query?: {
                 podcast_id?: number | null;
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -417,7 +500,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EpisodeRead"][];
+                    "application/json": components["schemas"]["Page_EpisodeRead_"];
                 };
             };
             /** @description Validation Error */
@@ -464,7 +547,12 @@ export interface operations {
     };
     list_episode_mentions_api_v2_episodes__episode_id__mentions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 episode_id: number;
@@ -479,7 +567,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MentionRead"][];
+                    "application/json": components["schemas"]["Page_MentionRead_"];
                 };
             };
             /** @description Validation Error */
@@ -497,6 +585,10 @@ export interface operations {
         parameters: {
             query?: {
                 media_type?: components["schemas"]["MediaType"] | null;
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -510,7 +602,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MediaRead"][];
+                    "application/json": components["schemas"]["Page_MediaRead_"];
                 };
             };
             /** @description Validation Error */
@@ -557,7 +649,12 @@ export interface operations {
     };
     list_media_mentions_api_v2_media__media_id__mentions_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. */
+                offset?: number;
+            };
             header?: never;
             path: {
                 media_id: number;
@@ -572,7 +669,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["MentionRead"][];
+                    "application/json": components["schemas"]["Page_MentionRead_"];
                 };
             };
             /** @description Validation Error */
@@ -588,7 +685,12 @@ export interface operations {
     };
     list_podcasts_api_v2_podcasts_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Maximum number of items to return. */
+                limit?: number;
+                /** @description Number of items to skip. */
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -601,7 +703,16 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["PodcastRead"][];
+                    "application/json": components["schemas"]["Page_PodcastRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

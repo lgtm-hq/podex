@@ -72,6 +72,18 @@
             "title": "Podcast Id",
             "type": "integer"
           },
+          "podcast_public_id": {
+            "description": "The opaque public identifier of the owning podcast.",
+            "readOnly": true,
+            "title": "Podcast Public Id",
+            "type": "string"
+          },
+          "public_id": {
+            "description": "The opaque, prefixed public identifier for this episode.",
+            "readOnly": true,
+            "title": "Public Id",
+            "type": "string"
+          },
           "published_at": {
             "anyOf": [
               {
@@ -95,7 +107,9 @@
           "title",
           "episode_number",
           "published_at",
-          "created_at"
+          "created_at",
+          "public_id",
+          "podcast_public_id"
         ],
         "title": "EpisodeRead",
         "type": "object"
@@ -158,6 +172,12 @@
             "title": "Id",
             "type": "integer"
           },
+          "public_id": {
+            "description": "The opaque, prefixed public identifier for this media item.",
+            "readOnly": true,
+            "title": "Public Id",
+            "type": "string"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -185,7 +205,8 @@
           "year",
           "description",
           "cover_url",
-          "created_at"
+          "created_at",
+          "public_id"
         ],
         "title": "MediaRead",
         "type": "object"
@@ -262,6 +283,12 @@
             "title": "Episode Id",
             "type": "integer"
           },
+          "episode_public_id": {
+            "description": "The opaque public identifier of the referenced episode.",
+            "readOnly": true,
+            "title": "Episode Public Id",
+            "type": "string"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
@@ -269,6 +296,18 @@
           "media_id": {
             "title": "Media Id",
             "type": "integer"
+          },
+          "media_public_id": {
+            "description": "The opaque public identifier of the referenced media item.",
+            "readOnly": true,
+            "title": "Media Public Id",
+            "type": "string"
+          },
+          "public_id": {
+            "description": "The opaque, prefixed public identifier for this mention.",
+            "readOnly": true,
+            "title": "Public Id",
+            "type": "string"
           },
           "timestamp_seconds": {
             "anyOf": [
@@ -289,9 +328,148 @@
           "timestamp_seconds",
           "context",
           "confidence",
-          "created_at"
+          "created_at",
+          "public_id",
+          "episode_public_id",
+          "media_public_id"
         ],
         "title": "MentionRead",
+        "type": "object"
+      },
+      "Page_EpisodeRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EpisodeRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[EpisodeRead]",
+        "type": "object"
+      },
+      "Page_MediaRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MediaRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[MediaRead]",
+        "type": "object"
+      },
+      "Page_MentionRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MentionRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[MentionRead]",
+        "type": "object"
+      },
+      "Page_PodcastRead_": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PodcastRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "limit": {
+            "minimum": 1.0,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "offset": {
+            "minimum": 0.0,
+            "title": "Offset",
+            "type": "integer"
+          },
+          "total": {
+            "minimum": 0.0,
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "limit",
+          "offset"
+        ],
+        "title": "Page[PodcastRead]",
         "type": "object"
       },
       "PodcastRead": {
@@ -321,6 +499,12 @@
             "title": "Name",
             "type": "string"
           },
+          "public_id": {
+            "description": "The opaque, prefixed public identifier for this podcast.",
+            "readOnly": true,
+            "title": "Public Id",
+            "type": "string"
+          },
           "slug": {
             "title": "Slug",
             "type": "string"
@@ -331,7 +515,8 @@
           "name",
           "slug",
           "description",
-          "created_at"
+          "created_at",
+          "public_id"
         ],
         "title": "PodcastRead",
         "type": "object"
@@ -386,7 +571,7 @@
   "paths": {
     "/api/v2/episodes": {
       "get": {
-        "description": "List episodes, optionally filtered by podcast.",
+        "description": "List episodes, optionally filtered by podcast, paginated.",
         "operationId": "list_episodes_api_v2_episodes_get",
         "parameters": [
           {
@@ -404,6 +589,33 @@
               ],
               "title": "Podcast Id"
             }
+          },
+          {
+            "description": "Maximum number of items to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum number of items to return.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of items to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of items to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -411,11 +623,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/EpisodeRead"
-                  },
-                  "title": "Response List Episodes Api V2 Episodes Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/Page_EpisodeRead_"
                 }
               }
             },
@@ -485,7 +693,7 @@
     },
     "/api/v2/episodes/{episode_id}/mentions": {
       "get": {
-        "description": "List media mentions within an episode, ordered by timestamp.",
+        "description": "List media mentions within an episode, ordered by timestamp, paginated.",
         "operationId": "list_episode_mentions_api_v2_episodes__episode_id__mentions_get",
         "parameters": [
           {
@@ -496,6 +704,33 @@
               "title": "Episode Id",
               "type": "integer"
             }
+          },
+          {
+            "description": "Maximum number of items to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum number of items to return.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of items to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of items to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -503,11 +738,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MentionRead"
-                  },
-                  "title": "Response List Episode Mentions Api V2 Episodes  Episode Id  Mentions Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/Page_MentionRead_"
                 }
               }
             },
@@ -533,7 +764,7 @@
     },
     "/api/v2/media": {
       "get": {
-        "description": "List media items, optionally filtered by type, ordered by title.",
+        "description": "List media items, optionally filtered by type, paginated.",
         "operationId": "list_media_api_v2_media_get",
         "parameters": [
           {
@@ -551,6 +782,33 @@
               ],
               "title": "Media Type"
             }
+          },
+          {
+            "description": "Maximum number of items to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum number of items to return.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of items to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of items to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -558,11 +816,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MediaRead"
-                  },
-                  "title": "Response List Media Api V2 Media Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/Page_MediaRead_"
                 }
               }
             },
@@ -632,7 +886,7 @@
     },
     "/api/v2/media/{media_id}/mentions": {
       "get": {
-        "description": "List episode mentions of a media item.",
+        "description": "List episode mentions of a media item, paginated.",
         "operationId": "list_media_mentions_api_v2_media__media_id__mentions_get",
         "parameters": [
           {
@@ -643,6 +897,33 @@
               "title": "Media Id",
               "type": "integer"
             }
+          },
+          {
+            "description": "Maximum number of items to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum number of items to return.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of items to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of items to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -650,11 +931,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/MentionRead"
-                  },
-                  "title": "Response List Media Mentions Api V2 Media  Media Id  Mentions Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/Page_MentionRead_"
                 }
               }
             },
@@ -680,22 +957,57 @@
     },
     "/api/v2/podcasts": {
       "get": {
-        "description": "List podcast sources ordered by name.",
+        "description": "List podcast sources ordered by name, paginated by ``limit``/``offset``.",
         "operationId": "list_podcasts_api_v2_podcasts_get",
+        "parameters": [
+          {
+            "description": "Maximum number of items to return.",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "description": "Maximum number of items to return.",
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Number of items to skip.",
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "description": "Number of items to skip.",
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          }
+        ],
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "items": {
-                    "$ref": "#/components/schemas/PodcastRead"
-                  },
-                  "title": "Response List Podcasts Api V2 Podcasts Get",
-                  "type": "array"
+                  "$ref": "#/components/schemas/Page_PodcastRead_"
                 }
               }
             },
             "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
           }
         },
         "summary": "List Podcasts",

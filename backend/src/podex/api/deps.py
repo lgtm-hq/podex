@@ -1,11 +1,21 @@
-"""Shared FastAPI dependencies for the API layer."""
+"""Shared FastAPI dependencies for the API layer.
 
-from typing import Annotated
+Route handlers pull their collaborators from this module rather than
+constructing them ad-hoc, so wiring choices (session lifetime, settings
+resolution, pagination parsing) stay in one place. Every declared alias
+returns a fully-typed :class:`typing.Annotated` value so route signatures
+remain concise while ``mypy --strict`` can still infer the injected type.
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, cast
 
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.api.v2.schemas import PaginationParams, pagination_params
+from podex.config import Settings, get_settings
 from podex.database import get_db
 from podex.services.cache import Cache
 
@@ -29,18 +39,32 @@ AppCache = Annotated[Cache, Depends(get_app_cache)]
 
 
 def get_app_settings(request: Request) -> Settings:
-    """Return the :class:`Settings` instance configured on this app.
+    """Return the :class:`Settings` stored on ``app.state`` by ``create_app``.
 
     :func:`podex.main.create_app` stores the ``settings=`` argument (or the
     cached global fallback) on ``app.state.settings`` so route dependencies
-    resolve to the same instance used to build the middleware stack. Reading
-    it through the request keeps overrides passed to
-    ``create_app(settings=...)`` — most commonly in tests — in effect for
-    handlers instead of silently falling back to the global settings.
+    resolve to the same instance used to build the middleware stack. Falling
+    back to :func:`podex.config.get_settings` keeps ad-hoc test apps working
+    when they construct a FastAPI instance without going through
+    ``create_app``.
+
+    Args:
+        request: The active request, used to reach ``request.app.state``.
+
+    Returns:
+        The application's resolved :class:`Settings` instance.
     """
-    settings: Settings = request.app.state.settings
-    return settings
+    state_settings = getattr(request.app.state, "settings", None)
+    if isinstance(state_settings, Settings):
+        return state_settings
+    return cast("Settings", get_settings())
 
 
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 """Resolved application settings injected into route handlers."""
+
+SettingsDep = AppSettings
+"""Backwards-compatible alias for :data:`AppSettings`."""
+
+Pagination = Annotated[PaginationParams, Depends(pagination_params)]
+"""Shared ``limit``/``offset`` query parameter parsing for list endpoints."""

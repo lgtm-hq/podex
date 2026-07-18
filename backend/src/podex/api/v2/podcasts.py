@@ -7,7 +7,8 @@ rows to HTTP 404 responses.
 
 from fastapi import APIRouter, HTTPException
 
-from podex.api.deps import DbSession
+from podex.api.deps import DbSession, Pagination
+from podex.api.v2.schemas import Page
 from podex.models import Podcast
 from podex.schemas.podcast import PodcastRead
 from podex.services import podcast_queries
@@ -15,13 +16,20 @@ from podex.services import podcast_queries
 router = APIRouter(prefix="/podcasts", tags=["podcasts"])
 
 
-def list_podcasts(db: DbSession) -> list[Podcast]:
-    """List podcast sources ordered by name."""
-    # Explicit annotation keeps the return well-typed even when the CI lint
-    # image type-checks without SQLAlchemy installed, where the service
-    # call would otherwise resolve to bare ``Any``.
-    podcasts: list[Podcast] = podcast_queries.list_podcasts(db)
-    return podcasts
+def list_podcasts(db: DbSession, pagination: Pagination) -> Page[PodcastRead]:
+    """List podcast sources ordered by name, paginated by ``limit``/``offset``."""
+    total = podcast_queries.count_podcasts(db)
+    rows = podcast_queries.list_podcasts(
+        db,
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )
+    return Page[PodcastRead](
+        items=[PodcastRead.model_validate(row) for row in rows],
+        total=total,
+        limit=pagination.limit,
+        offset=pagination.offset,
+    )
 
 
 def get_podcast(podcast_id: int, db: DbSession) -> Podcast:
@@ -36,7 +44,7 @@ router.add_api_route(
     "",
     list_podcasts,
     methods=["GET"],
-    response_model=list[PodcastRead],
+    response_model=Page[PodcastRead],
 )
 router.add_api_route(
     "/{podcast_id}",

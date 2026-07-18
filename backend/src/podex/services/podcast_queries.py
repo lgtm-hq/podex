@@ -8,23 +8,45 @@ response serialization.
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from podex.models import Podcast
 
 
-def list_podcasts(db: Session) -> list[Podcast]:
-    """Return every podcast source, ordered by display name.
+def list_podcasts(
+    db: Session,
+    *,
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[Podcast]:
+    """Return podcast sources ordered by display name.
+
+    Args:
+        db: Active SQLAlchemy session bound to the request.
+        limit: Maximum number of rows to return; ``None`` returns all rows.
+        offset: Number of leading rows to skip.
+
+    Returns:
+        Podcast rows sorted alphabetically by ``name``.
+    """
+    statement = select(Podcast).order_by(Podcast.name).offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+    result = db.execute(statement)
+    return list(result.scalars().all())
+
+
+def count_podcasts(db: Session) -> int:
+    """Return the total number of podcast sources.
 
     Args:
         db: Active SQLAlchemy session bound to the request.
 
     Returns:
-        Podcast rows sorted alphabetically by ``name``.
+        The row count across the whole ``podcasts`` table.
     """
-    result = db.execute(select(Podcast).order_by(Podcast.name))
-    return list(result.scalars().all())
+    return int(db.execute(select(func.count()).select_from(Podcast)).scalar_one())
 
 
 def get_podcast(db: Session, podcast_id: int) -> Podcast | None:

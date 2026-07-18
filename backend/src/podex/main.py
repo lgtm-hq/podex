@@ -3,6 +3,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from podex.api.v2.errors import install_exception_handlers
 from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
@@ -25,6 +26,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # across requests (and workers within this process) so the aggregation
     # queries only run once per TTL window.
     app.state.cache = TTLCache()
+
+    install_exception_handlers(app)
 
     # Middleware is applied in reverse registration order (last added runs
     # outermost). Register the rate limiter and request-context logger first so
