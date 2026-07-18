@@ -76,7 +76,6 @@ class PgVectorType(TypeDecorator[list[float] | None]):
         return None
 
 
-@compiles(PgVectorType, "postgresql")  # type: ignore[misc, unused-ignore]
 def _compile_pgvector_type(
     type_: PgVectorType,
     compiler: object,
@@ -86,7 +85,6 @@ def _compile_pgvector_type(
     return f"vector({type_.dimensions})"
 
 
-@compiles(PgVectorType)  # type: ignore[misc, unused-ignore]
 def _compile_default_vector_type(
     type_: PgVectorType,
     compiler: object,
@@ -94,6 +92,12 @@ def _compile_default_vector_type(
 ) -> str:
     """Compile semantic embeddings to text for local test databases."""
     return "TEXT"
+
+
+# Registered as plain calls: the @compiles decorator is untyped under the
+# dep-less CI mypy image and would mark these functions untyped.
+compiles(PgVectorType, "postgresql")(_compile_pgvector_type)
+compiles(PgVectorType)(_compile_default_vector_type)
 
 
 class SemanticChunkEmbeddingStatus(StrEnum):
