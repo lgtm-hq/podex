@@ -22,6 +22,15 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.29.0] - 2026-07-18
+
+### Added
+
+- **services**: add transcript retention, sampling, and encrypted artifact services
+  (#276) (6d36e00)
+- **models**: restore transcript retention columns and add digest, artifact, and policy
+  models (#274) (a5f4289)
+
 ## [0.28.0] - 2026-07-18
 
 ### Added
