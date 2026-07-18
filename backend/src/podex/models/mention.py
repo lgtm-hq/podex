@@ -1,11 +1,16 @@
 """Mention ORM model linking media to episodes."""
 
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
+
+if TYPE_CHECKING:
+    from podex.models.episode import Episode
+    from podex.models.media import Media
 
 
 class Mention(Base):
@@ -38,3 +43,6 @@ class Mention(Base):
         DateTime(timezone=True),
         server_default=func.now(),
     )
+
+    episode: Mapped["Episode"] = relationship()
+    media: Mapped["Media"] = relationship()
