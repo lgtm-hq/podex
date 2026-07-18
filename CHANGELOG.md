@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.23.0] - 2026-07-18
+
+### Added
+
+- **models**: add media alias and external-reference models (#257) (3aac66c)
+
 ## [0.22.0] - 2026-07-18
 
 ### Added
