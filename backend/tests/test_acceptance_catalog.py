@@ -21,6 +21,10 @@ from tests.conftest import SeededGraph, seed_catalog_graph
 READ_DTO_SCHEMAS = ("PodcastRead", "EpisodeRead", "MediaRead", "MentionRead")
 PAGE_SCHEMA_PREFIX = "Page_"
 
+# Aggregate endpoints that intentionally return a singleton DTO rather than a
+# paginated collection or a per-resource Read DTO.
+SINGLETON_SCHEMAS_BY_PATH = {"/api/v2/stats": "CatalogStats"}
+
 
 def _openapi_required_fields(schema_name: str) -> set[str]:
     """Return the required property names for an OpenAPI component schema."""
@@ -229,7 +233,9 @@ def test_openapi_response_schemas_reference_read_dtos() -> None:
         ref = success["$ref"]
         schema_name = ref.rsplit("/", 1)[-1]
 
-        if path in detail_paths:
+        if path in SINGLETON_SCHEMAS_BY_PATH:
+            assert_that(schema_name).is_equal_to(SINGLETON_SCHEMAS_BY_PATH[path])
+        elif path in detail_paths:
             assert_that(schema_name).is_in(*READ_DTO_SCHEMAS)
         else:
             assert_that(schema_name).starts_with(PAGE_SCHEMA_PREFIX)

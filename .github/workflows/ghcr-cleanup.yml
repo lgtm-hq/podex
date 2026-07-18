@@ -1,0 +1,55 @@
+---
+name: Maintenance - GHCR Registry Cleanup
+# Weekly untagged / build-cache image pruning for the two GHCR packages
+# published by docker-ci.yml (podex-backend, podex-frontend). Uses the
+# lgtm-ci reusable-ghcr-cleanup workflow; tagged retention is left to the
+# reusable's defaults (untagged only) — mirroring winnow, not Rustume, since
+# Podex does not (yet) publish a `main`/`sha-<commit>` fleet worth tag-aged
+# pruning.
+
+"on":
+  schedule:
+    # Mondays 03:00 UTC — same slot as Rustume to keep org-wide ops
+    # observability aligned.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Dry run (log only, no deletions)
+        required: false
+        default: false
+        type: boolean
+      min_age_days:
+        description: Minimum age in days before deleting untagged images
+        required: false
+        default: 7
+        type: number
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    name: 🧹 Prune ${{ matrix.package }}
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [podex-backend, podex-frontend]
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-ghcr-cleanup.yml@443a687caa93b3afa306a066aae8d8a2b4e60c3c  # v0.59.0
+    permissions:
+      contents: read
+      packages: write
+    with:
+      package-name: ${{ matrix.package }}
+      min-age-days: ${{ inputs.min_age_days || 7 }}
+      dry-run: ${{ inputs.dry_run == true }}
+      tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
+      egress-policy: block
+      egress-preset: github-tooling
+      runner-image: ubuntu-24.04
+    secrets:
+      token: ${{ secrets.GITHUB_TOKEN }}
