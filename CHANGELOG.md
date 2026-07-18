@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.16.0] - 2026-07-18
+
+### Added
+
+- **models**: add IngestionRun audit model and migration (#243) (965614b)
+
+### Changed
+
+- **api**: adopt RFC 9457 Problem Details for the v2 error envelope (#242) (0776560)
+- **api**: replace identifier prefix constants with an IdentifierKind StrEnum (#240)
+  (06d3712)
+
 ## [0.15.1] - 2026-07-18
 
 ### Changed
