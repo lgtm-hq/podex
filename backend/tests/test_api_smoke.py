@@ -43,13 +43,9 @@ def test_podcast_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -
     listed = client.get("/api/v2/podcasts")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
-<<<<<<< HEAD
-    assert_that([item["id"] for item in listed_items]).contains(graph.podcast_id)
-=======
     assert_that([item["id"] for item in listed_items]).contains(
         seeded_graph.podcast_id,
     )
->>>>>>> origin/main
 
     fetched = client.get(f"/api/v2/podcasts/{seeded_graph.podcast_id}")
     assert_that(fetched.status_code).is_equal_to(200)
@@ -67,18 +63,8 @@ def test_episode_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -
     listed = client.get("/api/v2/episodes")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
-<<<<<<< HEAD
-    assert_that([item["id"] for item in listed_items]).contains(graph.episode_id)
-
-    filtered = client.get("/api/v2/episodes", params={"podcast_id": graph.podcast_id})
-    assert_that(filtered.status_code).is_equal_to(200)
-    filtered_items = filtered.json()["items"]
-    assert_that([item["id"] for item in filtered_items]).is_equal_to(
-        [graph.episode_id],
-=======
     assert_that([item["id"] for item in listed_items]).contains(
         seeded_graph.episode_id,
->>>>>>> origin/main
     )
 
     filtered = client.get(
@@ -103,11 +89,7 @@ def test_episode_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -
     assert_that(mentions.status_code).is_equal_to(200)
     mention_items = mentions.json()["items"]
     assert_that([item["id"] for item in mention_items]).is_equal_to(
-<<<<<<< HEAD
-        [graph.mention_id],
-=======
         [seeded_graph.mention_id],
->>>>>>> origin/main
     )
 
     missing = client.get("/api/v2/episodes/999")
@@ -126,22 +108,14 @@ def test_media_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> 
     listed = client.get("/api/v2/media")
     assert_that(listed.status_code).is_equal_to(200)
     listed_items = listed.json()["items"]
-<<<<<<< HEAD
-    assert_that([item["id"] for item in listed_items]).contains(graph.media_id)
-=======
     assert_that([item["id"] for item in listed_items]).contains(seeded_graph.media_id)
->>>>>>> origin/main
 
     filtered = client.get("/api/v2/media", params={"media_type": "book"})
     assert_that(filtered.status_code).is_equal_to(200)
     filtered_items = filtered.json()["items"]
-<<<<<<< HEAD
-    assert_that([item["id"] for item in filtered_items]).is_equal_to([graph.media_id])
-=======
     assert_that([item["id"] for item in filtered_items]).is_equal_to(
         [seeded_graph.media_id],
     )
->>>>>>> origin/main
 
     empty = client.get("/api/v2/media", params={"media_type": "movie"})
     assert_that(empty.status_code).is_equal_to(200)
@@ -155,11 +129,7 @@ def test_media_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> 
     assert_that(mentions.status_code).is_equal_to(200)
     mention_items = mentions.json()["items"]
     assert_that([item["id"] for item in mention_items]).is_equal_to(
-<<<<<<< HEAD
-        [graph.mention_id],
-=======
         [seeded_graph.mention_id],
->>>>>>> origin/main
     )
 
     missing = client.get("/api/v2/media/999")
@@ -187,11 +157,7 @@ def test_full_graph_walk_via_http(
 
     episodes = client.get(
         "/api/v2/episodes",
-<<<<<<< HEAD
-        params={"podcast_id": graph.podcast_id},
-=======
         params={"podcast_id": seeded_graph.podcast_id},
->>>>>>> origin/main
     ).json()["items"]
     assert_that(episodes).is_length(1)
     episode = episodes[0]

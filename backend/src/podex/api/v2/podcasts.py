@@ -6,10 +6,6 @@ rows to HTTP 404 responses.
 """
 
 from fastapi import APIRouter, HTTPException
-<<<<<<< HEAD
-from sqlalchemy import func, select
-=======
->>>>>>> origin/main
 
 from podex.api.deps import DbSession, Pagination
 from podex.api.v2.schemas import Page
@@ -22,23 +18,12 @@ router = APIRouter(prefix="/podcasts", tags=["podcasts"])
 
 def list_podcasts(db: DbSession, pagination: Pagination) -> Page[PodcastRead]:
     """List podcast sources ordered by name, paginated by ``limit``/``offset``."""
-<<<<<<< HEAD
-    total = int(db.execute(select(func.count()).select_from(Podcast)).scalar_one())
-    statement = (
-        select(Podcast)
-        .order_by(Podcast.name)
-        .offset(pagination.offset)
-        .limit(pagination.limit)
-    )
-    rows = list(db.execute(statement).scalars().all())
-=======
     total = podcast_queries.count_podcasts(db)
     rows = podcast_queries.list_podcasts(
         db,
         limit=pagination.limit,
         offset=pagination.offset,
     )
->>>>>>> origin/main
     return Page[PodcastRead](
         items=[PodcastRead.model_validate(row) for row in rows],
         total=total,

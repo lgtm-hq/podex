@@ -17,9 +17,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     configure_logging()
     app = FastAPI(title=resolved.app_name, debug=resolved.debug)
-<<<<<<< HEAD
-    app.state.settings = resolved
-=======
     # Stash the resolved settings on ``app.state`` so route dependencies see
     # the same instance ``create_app`` used to configure middleware — tests
     # (and callers passing an explicit ``settings=``) rely on this to override
@@ -29,7 +26,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # across requests (and workers within this process) so the aggregation
     # queries only run once per TTL window.
     app.state.cache = TTLCache()
->>>>>>> origin/main
 
     install_exception_handlers(app)
 
