@@ -22,7 +22,11 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
-## [0.11.1] - 2026-07-18
+## [0.12.0] - 2026-07-18
+
+### Added
+
+- **docker**: build and publish backend and frontend images to GHCR (#208) (86acfd2)
 
 ### Changed
 
