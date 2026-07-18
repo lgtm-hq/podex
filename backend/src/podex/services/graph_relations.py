@@ -1,16 +1,19 @@
 """Media relation and external-reference persistence services.
 
-Graph-triple persistence lands with the derivatives theme; this module
-carries the merge-critical upserts only.
+Carries the idempotent upserts for external refs, typed media relations,
+and graph triples used by enrichment, merges, and the derivatives layer.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from hashlib import sha256
 
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    GraphTriple,
+    GraphTripleObjectKind,
     Media,
     MediaExternalRef,
     MediaExternalRefSource,
@@ -201,3 +204,126 @@ def _normalize_optional(
         return None
     normalized = value.strip()
     return normalized or None
+
+
+@dataclass(frozen=True, slots=True)
+class GraphTripleInputData:
+    """Input for an idempotent graph triple upsert."""
+
+    subject_media_id: int
+    predicate: str
+    source: str
+    object_media_id: int | None = None
+    object_value: str | None = None
+    provenance_episode_id: int | None = None
+    provenance_mention_id: int | None = None
+    confidence: float = 1.0
+    evidence_text: str | None = None
+    metadata_json: dict[str, object] | None = None
+
+
+def upsert_graph_triple(
+    *,
+    db: Session,
+    payload: GraphTripleInputData,
+) -> GraphTriple:
+    """Create or update a graph triple with source provenance.
+
+    Args:
+        db: Database session.
+        payload: Graph triple input.
+
+    Returns:
+        Existing or newly created graph triple.
+    """
+    _validate_graph_triple_payload(payload)
+    triple_key = stable_graph_triple_key(payload)
+    triple = db.query(GraphTriple).filter(GraphTriple.triple_key == triple_key).first()
+    if triple is None:
+        triple = GraphTriple(
+            triple_key=triple_key,
+            subject_media_id=payload.subject_media_id,
+            predicate=_normalize_required(
+                value=payload.predicate,
+                field_name="predicate",
+            ),
+            source=_normalize_required(value=payload.source, field_name="source"),
+        )
+        db.add(triple)
+
+    triple.object_media_id = payload.object_media_id
+    triple.object_value = _normalize_optional(payload.object_value)
+    triple.object_kind = _object_kind(payload).value
+    triple.provenance_episode_id = payload.provenance_episode_id
+    triple.provenance_mention_id = payload.provenance_mention_id
+    triple.confidence = payload.confidence
+    triple.evidence_text = _normalize_optional(payload.evidence_text)
+    triple.metadata_json = payload.metadata_json
+    if payload.object_media_id is not None:
+        relation = upsert_media_relation(
+            db=db,
+            subject_media_id=payload.subject_media_id,
+            object_media_id=payload.object_media_id,
+            relation_type=MediaRelationType(payload.predicate),
+            source=payload.source,
+            provenance_episode_id=payload.provenance_episode_id,
+            confidence=payload.confidence,
+            evidence_text=payload.evidence_text,
+            metadata_json=payload.metadata_json,
+        )
+        triple.media_relation_id = relation.id
+    else:
+        triple.media_relation_id = None
+    db.flush()
+    return triple
+
+
+def stable_graph_triple_key(
+    payload: GraphTripleInputData,
+) -> str:
+    """Build a stable idempotency key for a graph triple.
+
+    Args:
+        payload: Graph triple input.
+
+    Returns:
+        Stable graph triple key.
+    """
+    object_part = (
+        f"media:{payload.object_media_id}"
+        if payload.object_media_id is not None
+        else f"literal:{_normalize_optional(payload.object_value) or ''}"
+    )
+    return _stable_key(
+        prefix="graph-triple",
+        parts=(
+            str(payload.subject_media_id),
+            _normalize_required(value=payload.predicate, field_name="predicate"),
+            object_part,
+            _normalize_required(value=payload.source, field_name="source"),
+            str(payload.provenance_episode_id or ""),
+            str(payload.provenance_mention_id or ""),
+        ),
+    )
+
+
+def _validate_graph_triple_payload(
+    payload: GraphTripleInputData,
+) -> None:
+    """Validate graph triple object and confidence constraints."""
+    _validate_confidence(payload.confidence)
+    has_media_object = payload.object_media_id is not None
+    has_literal_object = bool(_normalize_optional(payload.object_value))
+    if has_media_object == has_literal_object:
+        raise ValueError("graph triple must have exactly one object")
+    if has_media_object:
+        MediaRelationType(payload.predicate)
+
+
+def _object_kind(
+    payload: GraphTripleInputData,
+) -> GraphTripleObjectKind:
+    """Determine graph triple object storage kind."""
+    if payload.object_media_id is not None:
+        return GraphTripleObjectKind.MEDIA
+    return GraphTripleObjectKind.LITERAL
