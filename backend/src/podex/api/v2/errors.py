@@ -173,9 +173,15 @@ def install_exception_handlers(app: FastAPI) -> None:
     Args:
         app: The FastAPI application to configure.
     """
-    app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore[arg-type]
+    # Starlette's add_exception_handler is typed for a narrower handler
+    # signature than FastAPI actually accepts (it forwards FastAPI-typed
+    # exceptions/requests through unchanged). Suppress the resulting arg-type
+    # noise locally while also silencing the unused-ignore warning that the
+    # CI mypy image (which resolves fastapi/starlette to Any without runtime
+    # deps installed) would otherwise emit for the same lines.
+    app.add_exception_handler(HTTPException, http_exception_handler)  # type: ignore[arg-type, unused-ignore]
     app.add_exception_handler(
         RequestValidationError,
-        validation_exception_handler,  # type: ignore[arg-type]
+        validation_exception_handler,  # type: ignore[arg-type, unused-ignore]
     )
     app.add_exception_handler(Exception, unhandled_exception_handler)
