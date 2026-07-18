@@ -344,3 +344,4 @@ coverage.json
 
 # act secrets file (DO NOT COMMIT)
 .secrets
+*.db
