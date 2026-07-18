@@ -40,6 +40,11 @@ from podex.models.semantic_chunk import (
     SemanticChunkEmbeddingStatus,
 )
 from podex.models.transcript import Transcript
+from podex.models.transcript_artifact import TranscriptArtifact
+from podex.models.transcript_digest import TranscriptDigest
+from podex.models.transcript_source_retention_policy import (
+    TranscriptSourceRetentionPolicy,
+)
 
 __all__ = [
     "Base",
@@ -78,5 +83,8 @@ __all__ = [
     "ReviewPriority",
     "ScheduledWorkItemModel",
     "Transcript",
+    "TranscriptArtifact",
+    "TranscriptDigest",
+    "TranscriptSourceRetentionPolicy",
     "ScheduledWorkStatus",
 ]
