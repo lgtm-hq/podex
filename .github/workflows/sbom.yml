@@ -29,8 +29,11 @@ jobs:
       egress-policy: block
       egress-preset: sbom
     permissions:
-      # read: checkout repository for Syft scan
-      contents: read
+      # write: reusable-sbom declares if-gated release-asset jobs with
+      # contents: write; GitHub validates every called job's permissions at
+      # startup regardless of if-conditions, so the caller must grant write
+      # even though report mode only reads (matches turbo-themes caller).
+      contents: write
       # write: upload Grype SARIF findings when upload-sarif is enabled
       security-events: write
       # write: OIDC token for SBOM attestation signing (create-attestation)
