@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.15.0] - 2026-07-18
+
+### Added
+
+- **frontend**: SEO baseline, sitemap, and public legal pages (#216) (f085945)
+
+### Changed
+
+- expand catalog acceptance coverage for current v2 API (#215) (ce638f9)
+
 ## [0.14.0] - 2026-07-18
 
 ### Added
