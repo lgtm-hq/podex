@@ -11,9 +11,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from podex.models.base import Base
 
 if TYPE_CHECKING:
+    from podex.models.graph_triple import GraphTriple
     from podex.models.media_alias import MediaAlias
     from podex.models.media_external_ref import MediaExternalRef
     from podex.models.media_relation import MediaRelation
+    from podex.models.media_summary import MediaSummary
 
 
 class MediaType(StrEnum):
@@ -98,4 +100,15 @@ class Media(Base):
     incoming_relations: Mapped[list["MediaRelation"]] = relationship(
         back_populates="object_media",
         foreign_keys="MediaRelation.object_media_id",
+    )
+    summaries: Mapped[list["MediaSummary"]] = relationship(
+        back_populates="media",
+    )
+    subject_graph_triples: Mapped[list["GraphTriple"]] = relationship(
+        back_populates="subject_media",
+        foreign_keys="GraphTriple.subject_media_id",
+    )
+    object_graph_triples: Mapped[list["GraphTriple"]] = relationship(
+        back_populates="object_media",
+        foreign_keys="GraphTriple.object_media_id",
     )

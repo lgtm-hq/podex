@@ -9,7 +9,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from podex.models.base import Base
 
 if TYPE_CHECKING:
+    from podex.models.derivative_generation_run import DerivativeGenerationRun
     from podex.models.episode import Episode
+    from podex.models.semantic_chunk import SemanticChunk
 
 
 class Transcript(Base):
@@ -32,3 +34,9 @@ class Transcript(Base):
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
 
     episode: Mapped["Episode"] = relationship(back_populates="transcripts")
+    semantic_chunks: Mapped[list["SemanticChunk"]] = relationship(
+        back_populates="transcript",
+    )
+    derivative_runs: Mapped[list["DerivativeGenerationRun"]] = relationship(
+        back_populates="transcript",
+    )
