@@ -9,7 +9,9 @@ from podex.models.account_alert_rule import AccountAlertRule
 from podex.models.account_digest import AccountDigest
 from podex.models.account_followed_podcast import AccountFollowedPodcast
 from podex.models.account_preference import AccountPreference
+from podex.models.account_quota_usage import AccountQuotaUsage
 from podex.models.account_saved_media import AccountSavedMedia
+from podex.models.account_subscription import AccountSubscription
 from podex.models.account_user import AccountUser
 from podex.models.base import Base
 from podex.models.derivative_generation_run import (
@@ -61,7 +63,9 @@ __all__ = [
     "AccountDigest",
     "AccountFollowedPodcast",
     "AccountPreference",
+    "AccountQuotaUsage",
     "AccountSavedMedia",
+    "AccountSubscription",
     "AccountUser",
     "Base",
     "DerivativeGenerationRun",
