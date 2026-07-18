@@ -2,12 +2,17 @@
 
 from datetime import datetime
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, Index, String, func
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
+
+if TYPE_CHECKING:
+    from podex.models.media_alias import MediaAlias
+    from podex.models.media_external_ref import MediaExternalRef
 
 
 class MediaType(StrEnum):
@@ -46,4 +51,9 @@ class Media(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+
+    aliases: Mapped[list["MediaAlias"]] = relationship(back_populates="media")
+    external_refs: Mapped[list["MediaExternalRef"]] = relationship(
+        back_populates="media",
     )
