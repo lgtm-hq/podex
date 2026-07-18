@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.25.0] - 2026-07-18
+
+### Added
+
+- **media**: complete enrichment provider registry and pipeline (#262) (b7532bf)
+
 ## [0.24.0] - 2026-07-18
 
 ### Added
