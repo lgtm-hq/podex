@@ -8,7 +8,7 @@ from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
 from podex.services.cache import TTLCache
-from podex.services.limiter import SlidingWindowRateLimiter
+from podex.services.limiter_factory import build_rate_limiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -30,10 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # outermost). Register the rate limiter and request-context logger first so
     # CORS ends up outermost and still annotates 429 responses.
     if resolved.rate_limit_enabled:
-        limiter = SlidingWindowRateLimiter(
-            max_requests=resolved.rate_limit_max_requests,
-            window_seconds=resolved.rate_limit_window_seconds,
-        )
+        limiter = build_rate_limiter(resolved)
         app.state.rate_limiter = limiter
         app.add_middleware(
             RateLimitMiddleware,

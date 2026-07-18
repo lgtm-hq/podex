@@ -53,3 +53,11 @@ def test_stats_cache_ttl_accepts_zero_and_positive() -> None:
 
     assert_that(zero).is_equal_to(0)
     assert_that(positive).is_equal_to(45.5)
+
+
+def test_rate_limit_redis_url_defaults_to_disabled() -> None:
+    """Default deployment stays on the in-memory backend (empty Redis URL)."""
+    settings = Settings()
+
+    assert_that(settings.rate_limit_redis_url).is_equal_to("")
+    assert_that(settings.rate_limit_redis_prefix).is_not_empty()

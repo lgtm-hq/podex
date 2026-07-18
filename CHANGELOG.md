@@ -22,7 +22,29 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
-## [0.11.1] - 2026-07-18
+## [0.12.3] - 2026-07-18
+
+### Fixed
+
+- **api**: back rate limiter with Redis shared store (#202) (5c1f06a)
+
+## [0.12.2] - 2026-07-18
+
+### Fixed
+
+- **ci**: make docker scan gate advisory until suppressions can load (#224) (a542aa2)
+
+## [0.12.1] - 2026-07-18
+
+### Fixed
+
+- **docker**: unblock tag-publish Trivy gate on unfixed base CVEs (#221) (98b50e6)
+
+## [0.12.0] - 2026-07-18
+
+### Added
+
+- **docker**: build and publish backend and frontend images to GHCR (#208) (86acfd2)
 
 ### Changed
 
