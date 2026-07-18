@@ -12,7 +12,15 @@ class Mention(Base):
     """An occurrence of a media item referenced within an episode."""
 
     __tablename__ = "mentions"
-    __table_args__ = (Index("ix_mentions_episode_media", "episode_id", "media_id"),)
+    __table_args__ = (
+        Index("ix_mentions_episode_media", "episode_id", "media_id"),
+        Index("ix_mentions_media_id_episode_id", "media_id", "episode_id"),
+        Index(
+            "ix_mentions_episode_id_timestamp_seconds",
+            "episode_id",
+            "timestamp_seconds",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     episode_id: Mapped[int] = mapped_column(

@@ -48,3 +48,21 @@ def test_no_schema_drift(tmp_path: Path) -> None:
         diffs = compare_metadata(migration_context, Base.metadata)
 
     assert_that(diffs).is_empty()
+
+
+def test_hot_query_indexes_exist(tmp_path: Path) -> None:
+    """Revision 0002 adds indexes aligned with common list endpoints."""
+    engine = _upgraded_engine(f"sqlite:///{tmp_path / 'indexes.db'}")
+    inspector = inspect(engine)
+
+    episode_indexes = {idx["name"] for idx in inspector.get_indexes("episodes")}
+    assert_that(episode_indexes).contains("ix_episodes_published_at")
+
+    media_indexes = {idx["name"] for idx in inspector.get_indexes("media")}
+    assert_that(media_indexes).contains("ix_media_type_title")
+
+    mention_indexes = {idx["name"] for idx in inspector.get_indexes("mentions")}
+    assert_that(mention_indexes).contains(
+        "ix_mentions_media_id_episode_id",
+        "ix_mentions_episode_id_timestamp_seconds",
+    )
