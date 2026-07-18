@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Added
 
+- **media**: re-point derivative data to the target during canonical merge (#271)
+  (7d788ad)
 - **derivatives**: add chunking, summaries, triples, and orchestration (#270) (875e945)
 
 ## [0.27.0] - 2026-07-18
