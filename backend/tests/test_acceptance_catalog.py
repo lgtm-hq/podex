@@ -196,10 +196,10 @@ def test_not_found_responses_use_error_envelope(client: TestClient) -> None:
         response = client.get(path)
         assert_that(response.status_code).is_equal_to(404)
         body = response.json()
-        assert_that(body).contains_key("error")
-        error = body["error"]
+        assert_that(body).contains_key("title")
+        error = body
         assert_that(error["code"]).is_equal_to("not_found")
-        assert_that(error["message"]).is_instance_of(str)
+        assert_that(error["detail"]).is_instance_of(str)
         assert_that(error["request_id"]).is_not_empty()
 
 

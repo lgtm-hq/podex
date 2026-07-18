@@ -1,24 +1,32 @@
 """Exception handlers that normalise ``/api/v2`` error bodies.
 
-The v2 surface returns a single error envelope shape (see
-:class:`podex.api.v2.schemas.ErrorResponse`) for every failure mode: 404 from
-missing resources, 422 from request validation, 429 from the rate limiter,
-and 500 from unhandled server errors. The handlers preserve the original
-status code and any response headers that FastAPI or middleware attached
+The v2 surface returns an RFC 9457 problem-details body (see
+:class:`podex.api.v2.schemas.ProblemDetails`, served as
+``application/problem+json``) for every failure mode: 404 from missing
+resources, 422 from request validation, 429 from the rate limiter, and 500
+from unhandled server errors. The handlers preserve the original status code
+and any response headers that FastAPI or middleware attached
 (``WWW-Authenticate``, ``Retry-After``, ``X-RateLimit-*``, ...) while
-replacing the body with the standardised envelope.
+replacing the body with the standardised shape.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from http import HTTPStatus
+from typing import Any, Final
 
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from podex.api.v2.schemas import ErrorBody, ErrorDetail, ErrorResponse
+from podex.api.v2.schemas import ErrorDetail, ProblemDetails
+
+PROBLEM_JSON_MEDIA_TYPE: Final = "application/problem+json"
+"""The RFC 9457 media type every v2 error response is served with."""
+
+PROBLEM_TYPE_BASE: Final = "https://podex.example/problems/"
+"""Base URI for problem ``type`` members; the code slug is appended."""
 
 STATUS_CODE_TO_ERROR_CODE: dict[int, str] = {
     status.HTTP_400_BAD_REQUEST: "bad_request",
@@ -49,6 +57,55 @@ def error_code_for_status(status_code: int) -> str:
     return STATUS_CODE_TO_ERROR_CODE.get(status_code, f"http_{status_code}")
 
 
+def _title_for_status(status_code: int) -> str:
+    """Return the HTTP reason phrase for ``status_code``.
+
+    Args:
+        status_code: The response status code being reported.
+
+    Returns:
+        The standard reason phrase, or ``"Error"`` for unregistered codes.
+    """
+    try:
+        return HTTPStatus(status_code).phrase
+    except ValueError:
+        return "Error"
+
+
+def build_problem(
+    *,
+    status_code: int,
+    detail: str | None,
+    code: str | None = None,
+    request_id: str | None = None,
+    errors: list[ErrorDetail] | None = None,
+) -> ProblemDetails:
+    """Construct the RFC 9457 body shared by handlers and middleware.
+
+    Args:
+        status_code: The HTTP status of this occurrence.
+        detail: Occurrence-specific human-readable explanation, or ``None``
+            when the ``title`` alone suffices.
+        code: An override for the machine-readable code; defaults to the
+            canonical code for ``status_code``.
+        request_id: The request id to echo for log correlation.
+        errors: Optional per-field validation breakdown.
+
+    Returns:
+        The populated :class:`ProblemDetails` model.
+    """
+    resolved_code = code or error_code_for_status(status_code)
+    return ProblemDetails(
+        type=f"{PROBLEM_TYPE_BASE}{resolved_code}",
+        title=_title_for_status(status_code),
+        status=status_code,
+        detail=detail or None,
+        code=resolved_code,
+        request_id=request_id,
+        errors=errors,
+    )
+
+
 def _request_id(request: Request) -> str | None:
     """Return the request id set by the request-context middleware, if any."""
     return getattr(request.state, "request_id", None)
@@ -57,38 +114,39 @@ def _request_id(request: Request) -> str | None:
 def build_error_response(
     *,
     status_code: int,
-    message: str,
+    detail: str | None,
     request: Request,
     code: str | None = None,
-    details: list[ErrorDetail] | None = None,
+    errors: list[ErrorDetail] | None = None,
     headers: dict[str, str] | None = None,
 ) -> JSONResponse:
-    """Construct a :class:`JSONResponse` wrapping an :class:`ErrorResponse`.
+    """Construct a problem-details :class:`JSONResponse`.
 
     Args:
         status_code: The HTTP status to return.
-        message: The human-readable summary.
+        detail: The occurrence-specific human-readable explanation.
         request: The active request (used to source the request id).
         code: An override for the machine-readable code; defaults to the
             canonical code for ``status_code``.
-        details: Optional per-field validation details.
+        errors: Optional per-field validation details.
         headers: Optional response headers to preserve on the reply.
 
     Returns:
-        A JSON response carrying the standard v2 error envelope.
+        A JSON response carrying the RFC 9457 body with the
+        ``application/problem+json`` media type.
     """
-    payload = ErrorResponse(
-        error=ErrorBody(
-            code=code or error_code_for_status(status_code),
-            message=message,
-            request_id=_request_id(request),
-            details=details,
-        ),
+    payload = build_problem(
+        status_code=status_code,
+        detail=detail,
+        code=code,
+        request_id=_request_id(request),
+        errors=errors,
     )
     return JSONResponse(
         status_code=status_code,
         content=payload.model_dump(exclude_none=True),
         headers=headers,
+        media_type=PROBLEM_JSON_MEDIA_TYPE,
     )
 
 
@@ -96,33 +154,31 @@ async def http_exception_handler(
     request: Request,
     exc: HTTPException,
 ) -> JSONResponse:
-    """Wrap ``HTTPException.detail`` into the v2 error envelope."""
-    detail: Any = exc.detail
-    message: str
-    details: list[ErrorDetail] | None = None
+    """Wrap ``HTTPException.detail`` into the problem-details body."""
+    raw: Any = exc.detail
+    detail: str | None
+    errors: list[ErrorDetail] | None = None
     code: str | None = None
-    if isinstance(detail, dict):
-        message = str(detail.get("message") or detail.get("detail") or "")
-        raw_code = detail.get("code")
+    if isinstance(raw, dict):
+        detail = str(raw.get("message") or raw.get("detail") or "") or None
+        raw_code = raw.get("code")
         if isinstance(raw_code, str):
             code = raw_code
-        raw_details = detail.get("details")
+        raw_details = raw.get("details")
         if isinstance(raw_details, list):
-            details = [
+            errors = [
                 ErrorDetail.model_validate(item)
                 for item in raw_details
                 if isinstance(item, dict)
             ]
     else:
-        message = str(detail) if detail is not None else ""
-    if not message:
-        message = error_code_for_status(exc.status_code).replace("_", " ")
+        detail = str(raw) if raw is not None else None
     return build_error_response(
         status_code=exc.status_code,
-        message=message,
+        detail=detail,
         request=request,
         code=code,
-        details=details,
+        errors=errors,
         headers=dict(exc.headers) if exc.headers else None,
     )
 
@@ -131,15 +187,15 @@ async def validation_exception_handler(
     request: Request,
     exc: RequestValidationError,
 ) -> JSONResponse:
-    """Wrap ``RequestValidationError`` into the v2 error envelope."""
+    """Wrap ``RequestValidationError`` into the problem-details body."""
     raw_errors = jsonable_encoder(exc.errors())
-    details: list[ErrorDetail] = []
+    errors: list[ErrorDetail] = []
     for item in raw_errors:
         if not isinstance(item, dict):
             continue
         loc_value = item.get("loc") or []
         loc = [part for part in loc_value if isinstance(part, str | int)]
-        details.append(
+        errors.append(
             ErrorDetail(
                 loc=loc,
                 msg=str(item.get("msg", "")),
@@ -148,9 +204,9 @@ async def validation_exception_handler(
         )
     return build_error_response(
         status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-        message="Request validation failed.",
+        detail="Request validation failed.",
         request=request,
-        details=details,
+        errors=errors,
     )
 
 
@@ -158,11 +214,11 @@ async def unhandled_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """Return an opaque 500 envelope for otherwise unhandled exceptions."""
+    """Return an opaque 500 problem body for otherwise unhandled exceptions."""
     del exc
     return build_error_response(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        message="Internal server error.",
+        detail="Internal server error.",
         request=request,
     )
 

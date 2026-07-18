@@ -53,9 +53,9 @@ def test_podcast_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -
 
     missing = client.get("/api/v2/podcasts/999")
     assert_that(missing.status_code).is_equal_to(404)
-    error = missing.json()["error"]
+    error = missing.json()
     assert_that(error["code"]).is_equal_to("not_found")
-    assert_that(error["message"]).is_equal_to("Podcast not found")
+    assert_that(error["detail"]).is_equal_to("Podcast not found")
 
 
 def test_episode_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> None:
@@ -94,13 +94,13 @@ def test_episode_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -
 
     missing = client.get("/api/v2/episodes/999")
     assert_that(missing.status_code).is_equal_to(404)
-    error = missing.json()["error"]
+    error = missing.json()
     assert_that(error["code"]).is_equal_to("not_found")
-    assert_that(error["message"]).is_equal_to("Episode not found")
+    assert_that(error["detail"]).is_equal_to("Episode not found")
 
     missing_mentions = client.get("/api/v2/episodes/999/mentions")
     assert_that(missing_mentions.status_code).is_equal_to(404)
-    assert_that(missing_mentions.json()["error"]["code"]).is_equal_to("not_found")
+    assert_that(missing_mentions.json()["code"]).is_equal_to("not_found")
 
 
 def test_media_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> None:
@@ -134,13 +134,13 @@ def test_media_resource_smoke(client: TestClient, seeded_graph: SeededGraph) -> 
 
     missing = client.get("/api/v2/media/999")
     assert_that(missing.status_code).is_equal_to(404)
-    error = missing.json()["error"]
+    error = missing.json()
     assert_that(error["code"]).is_equal_to("not_found")
-    assert_that(error["message"]).is_equal_to("Media not found")
+    assert_that(error["detail"]).is_equal_to("Media not found")
 
     missing_mentions = client.get("/api/v2/media/999/mentions")
     assert_that(missing_mentions.status_code).is_equal_to(404)
-    assert_that(missing_mentions.json()["error"]["code"]).is_equal_to("not_found")
+    assert_that(missing_mentions.json()["code"]).is_equal_to("not_found")
 
 
 def test_full_graph_walk_via_http(

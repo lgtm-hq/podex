@@ -6,17 +6,21 @@ export type Podcast = components["schemas"]["PodcastRead"];
 /** A single page of podcasts returned by the v2 list endpoint. */
 export type PodcastPage = components["schemas"]["Page_PodcastRead_"];
 
-/** The uniform error envelope returned by ``/api/v2`` failures. */
-export type ApiError = {
+/**
+ * The RFC 9457 problem-details body returned by `/api/v2` failures, served
+ * as `application/problem+json`. `type`, `title`, `status`, and `detail` are
+ * standard members; `code`, `request_id`, and `errors` are podex extensions.
+ */
+export type ApiProblem = {
+  type: string;
+  title: string;
+  status: number;
+  detail?: string | null;
   code: string;
-  message: string;
   request_id?: string | null;
-  details?: {
+  errors?: {
     loc: (string | number)[];
     msg: string;
     type: string;
   }[];
 };
-
-/** The wrapper carrying an :class:`ApiError` body from ``/api/v2``. */
-export type ApiErrorResponse = { error: ApiError };

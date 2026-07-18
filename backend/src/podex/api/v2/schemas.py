@@ -4,8 +4,9 @@ Every list endpoint under ``/api/v2`` accepts the same ``limit``/``offset``
 query parameters (see :class:`PaginationParams`) and returns a
 :class:`Page` envelope so that clients can page uniformly and know the total
 count without an extra round-trip. Errors returned by the v2 surface are
-wrapped in :class:`ErrorResponse` with a machine-readable ``code`` and the
-request id, so callers can correlate failures with server logs.
+RFC 9457 problem-details bodies (see :class:`ProblemDetails`) carrying a
+machine-readable ``code`` and the request id, so callers can correlate
+failures with server logs.
 """
 
 from __future__ import annotations
@@ -106,29 +107,31 @@ class ErrorDetail(BaseModel):
     type: str
 
 
-class ErrorBody(BaseModel):
-    """The ``error`` object embedded in an :class:`ErrorResponse`.
+class ProblemDetails(BaseModel):
+    """RFC 9457 problem-details body returned by ``/api/v2`` failures.
+
+    Serialized with ``Content-Type: application/problem+json``. The first
+    four attributes are the standard RFC 9457 members; ``code``,
+    ``request_id`` and ``errors`` are podex extension members.
 
     Attributes:
+        type: A URI reference identifying the problem type.
+        title: Short human-readable summary of the problem type (the HTTP
+            reason phrase).
+        status: The HTTP status code of this occurrence.
+        detail: Human-readable explanation specific to this occurrence,
+            safe to surface to end users.
         code: A stable, machine-readable error code (e.g. ``"not_found"``).
-        message: Human-readable summary safe to surface to end users.
         request_id: The request id assigned by the request-context middleware,
             for cross-referencing with server logs.
-        details: Optional field-level breakdown, populated for validation
+        errors: Optional field-level breakdown, populated for validation
             failures.
     """
 
+    type: str
+    title: str
+    status: int
+    detail: str | None = None
     code: str
-    message: str
     request_id: str | None = None
-    details: list[ErrorDetail] | None = None
-
-
-class ErrorResponse(BaseModel):
-    """The uniform error envelope returned by ``/api/v2`` failures.
-
-    Attributes:
-        error: The :class:`ErrorBody` describing the failure.
-    """
-
-    error: ErrorBody
+    errors: list[ErrorDetail] | None = None
