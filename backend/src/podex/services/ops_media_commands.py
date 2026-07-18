@@ -818,6 +818,11 @@ def merge_ops_media(
         source_media=source_media,
         target_media=target_media,
     )
+    _repoint_derivatives_to_target(
+        db=db,
+        source_media=source_media,
+        target_media=target_media,
+    )
     db.delete(source_media)
     db.flush()
 
@@ -829,3 +834,160 @@ def merge_ops_media(
         source_id=source_media_id,
         target=merged_target,
     )
+
+
+def _repoint_derivatives_to_target(
+    *,
+    db: Session,
+    source_media: Media,
+    target_media: Media,
+) -> None:
+    """Re-point derivative data from a merged source onto the target.
+
+    External references move (deduplicated against the target), relations
+    and graph triples are re-keyed onto the target (self-references and key
+    collisions are dropped), and source media summaries are deleted so the
+    derivative pipeline regenerates them for the canonical record (#98).
+
+    Args:
+        db: Database session.
+        source_media: Media record being merged away.
+        target_media: Surviving canonical media record.
+    """
+    from podex.models import (
+        GraphTriple,
+        MediaRelation,
+        MediaRelationType,
+        MediaSummary,
+    )
+    from podex.services.graph_relations import (
+        GraphTripleInputData,
+        stable_graph_triple_key,
+        stable_media_relation_key,
+    )
+
+    for ref in list(source_media.external_refs):
+        duplicate = (
+            db.query(MediaExternalRef)
+            .filter(
+                MediaExternalRef.media_id == target_media.id,
+                MediaExternalRef.source == ref.source,
+                MediaExternalRef.external_id == ref.external_id,
+            )
+            .first()
+        )
+        if duplicate is not None:
+            db.delete(ref)
+        else:
+            # Reassign via the relationship so deleting the source does not
+            # null the FK through the collection cascade.
+            ref.media = target_media
+
+    relations = (
+        db.query(MediaRelation)
+        .filter(
+            (MediaRelation.subject_media_id == source_media.id)
+            | (MediaRelation.object_media_id == source_media.id),
+        )
+        .all()
+    )
+    for relation in relations:
+        subject_id = (
+            target_media.id
+            if relation.subject_media_id == source_media.id
+            else relation.subject_media_id
+        )
+        object_id = (
+            target_media.id
+            if relation.object_media_id == source_media.id
+            else relation.object_media_id
+        )
+        if subject_id == object_id:
+            db.delete(relation)
+            continue
+        new_key = stable_media_relation_key(
+            subject_media_id=subject_id,
+            object_media_id=object_id,
+            relation_type=MediaRelationType(relation.relation_type),
+            source=relation.source,
+            provenance_episode_id=relation.provenance_episode_id,
+        )
+        collision = (
+            db.query(MediaRelation)
+            .filter(
+                MediaRelation.relation_key == new_key,
+                MediaRelation.id != relation.id,
+            )
+            .first()
+        )
+        if collision is not None:
+            db.delete(relation)
+            continue
+        relation.subject_media = (
+            target_media
+            if relation.subject_media_id == source_media.id
+            else relation.subject_media
+        )
+        relation.object_media = (
+            target_media
+            if relation.object_media_id == source_media.id
+            else relation.object_media
+        )
+        relation.relation_key = new_key
+
+    triples = (
+        db.query(GraphTriple)
+        .filter(
+            (GraphTriple.subject_media_id == source_media.id)
+            | (GraphTriple.object_media_id == source_media.id),
+        )
+        .all()
+    )
+    for triple in triples:
+        subject_id = (
+            target_media.id
+            if triple.subject_media_id == source_media.id
+            else triple.subject_media_id
+        )
+        object_id = (
+            target_media.id
+            if triple.object_media_id == source_media.id
+            else triple.object_media_id
+        )
+        if object_id is not None and subject_id == object_id:
+            db.delete(triple)
+            continue
+        new_key = stable_graph_triple_key(
+            GraphTripleInputData(
+                subject_media_id=subject_id,
+                predicate=triple.predicate,
+                source=triple.source,
+                object_media_id=object_id,
+                object_value=triple.object_value,
+                provenance_episode_id=triple.provenance_episode_id,
+                provenance_mention_id=triple.provenance_mention_id,
+            ),
+        )
+        collision = (
+            db.query(GraphTriple)
+            .filter(
+                GraphTriple.triple_key == new_key,
+                GraphTriple.id != triple.id,
+            )
+            .first()
+        )
+        if collision is not None:
+            db.delete(triple)
+            continue
+        if triple.subject_media_id == source_media.id:
+            triple.subject_media = target_media
+        if triple.object_media_id == source_media.id:
+            triple.object_media = target_media
+        triple.triple_key = new_key
+
+    for summary in (
+        db.query(MediaSummary).filter(MediaSummary.media_id == source_media.id).all()
+    ):
+        db.delete(summary)
+
+    db.flush()

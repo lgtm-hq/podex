@@ -287,3 +287,97 @@ def test_query_helper_subqueries_and_edit_edge_cases(
         ),
     )
     assert_that(typed).is_not_none()
+
+
+def test_merge_repoints_derivative_data_to_target(db_session: Session) -> None:
+    """Merging re-points refs, relations, and triples; drops source summaries."""
+    from datetime import UTC, datetime
+
+    from podex.models import (
+        GraphTriple,
+        GraphTripleObjectKind,
+        MediaExternalRef,
+        MediaRelation,
+        MediaSummary,
+        MediaType,
+    )
+    from podex.services.graph_relations import (
+        GraphTripleInputData,
+        stable_media_relation_key,
+        upsert_graph_triple,
+        upsert_media_relation,
+    )
+
+    source = Media(type=MediaType.BOOK, title="Dune (dupe)")
+    target = Media(type=MediaType.BOOK, title="Dune")
+    other = Media(type=MediaType.MOVIE, title="Dune (1984)")
+    db_session.add_all([source, target, other])
+    db_session.commit()
+
+    db_session.add(
+        MediaExternalRef(
+            media_id=source.id,
+            source="wikipedia",
+            external_id="Dune_(novel)",
+        ),
+    )
+    upsert_media_relation(
+        db=db_session,
+        subject_media_id=other.id,
+        object_media_id=source.id,
+        relation_type=MediaRelationType.ADAPTED_FROM,
+        source="review",
+    )
+    upsert_graph_triple(
+        db=db_session,
+        payload=GraphTripleInputData(
+            subject_media_id=source.id,
+            predicate="published_year",
+            source="test",
+            object_value="1965",
+        ),
+    )
+    db_session.add(
+        MediaSummary(
+            media_id=source.id,
+            summary_key="dupe:overview:v1",
+            summary_kind="overview",
+            pipeline_version="v1",
+            prompt_version="p1",
+            source_text_hash="e" * 64,
+            source_model="claude-opus-4-8",
+            summary_text="Summary of the duplicate record.",
+            generated_at=datetime(2026, 7, 18, tzinfo=UTC),
+        ),
+    )
+    db_session.commit()
+
+    result = merge_ops_media(
+        db=db_session,
+        source_media_id=source.id,
+        target_media_id=target.id,
+    )
+    db_session.commit()
+
+    assert_that(result).is_not_none()
+    refs = db_session.query(MediaExternalRef).all()
+    assert_that(refs).is_length(1)
+    assert_that(refs[0].media_id).is_equal_to(target.id)
+    relations = db_session.query(MediaRelation).all()
+    assert_that(relations).is_length(1)
+    assert_that(relations[0].object_media_id).is_equal_to(target.id)
+    assert_that(relations[0].relation_key).is_equal_to(
+        stable_media_relation_key(
+            subject_media_id=other.id,
+            object_media_id=target.id,
+            relation_type=MediaRelationType.ADAPTED_FROM,
+            source="review",
+        ),
+    )
+    triples = db_session.query(GraphTriple).all()
+    assert_that(triples).is_length(1)
+    assert_that(triples[0].subject_media_id).is_equal_to(target.id)
+    assert_that(triples[0].object_kind).is_equal_to(
+        GraphTripleObjectKind.LITERAL.value,
+    )
+    assert_that(db_session.query(MediaSummary).count()).is_equal_to(0)
