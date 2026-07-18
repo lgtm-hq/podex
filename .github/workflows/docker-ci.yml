@@ -36,7 +36,7 @@ jobs:
   backend:
     name: 🐳 Backend Image
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@443a687caa93b3afa306a066aae8d8a2b4e60c3c  # v0.59.0
     permissions:
       contents: read
       packages: write
@@ -44,7 +44,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
       context: backend
       file: backend/Dockerfile
       image-name: lgtm-hq/podex-backend
@@ -123,7 +123,7 @@ jobs:
   frontend:
     name: 🎨 Frontend Image
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@443a687caa93b3afa306a066aae8d8a2b4e60c3c  # v0.59.0
     permissions:
       contents: read
       packages: write
@@ -131,7 +131,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      tooling-ref: '443a687caa93b3afa306a066aae8d8a2b4e60c3c'  # v0.59.0
       context: frontend
       file: frontend/Dockerfile
       image-name: lgtm-hq/podex-frontend
