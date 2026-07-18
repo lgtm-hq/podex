@@ -5,12 +5,23 @@ metadata-based table creation and Alembic autogenerate see every table.
 """
 
 from podex.models.base import Base
+from podex.models.derivative_generation_run import (
+    DerivativeGenerationRun,
+    DerivativeGenerationRunStatus,
+)
+from podex.models.derivative_summary import (
+    DerivativeSummaryKind,
+    DerivativeSummaryStatus,
+)
 from podex.models.episode import DiscoverySource, Episode
+from podex.models.episode_summary import EpisodeSummary
+from podex.models.graph_triple import GraphTriple, GraphTripleObjectKind
 from podex.models.ingestion_run import IngestionRun, IngestionRunStatus
 from podex.models.media import Media, MediaType
 from podex.models.media_alias import MediaAlias, MediaAliasSourceType
 from podex.models.media_external_ref import MediaExternalRef, MediaExternalRefSource
 from podex.models.media_relation import MediaRelation, MediaRelationType
+from podex.models.media_summary import MediaSummary
 from podex.models.mention import Mention
 from podex.models.mention_candidate import MentionCandidate, MentionCandidateState
 from podex.models.mention_candidate_provenance import (
@@ -24,10 +35,24 @@ from podex.models.scheduled_work import (
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
 )
+from podex.models.semantic_chunk import (
+    SemanticChunk,
+    SemanticChunkEmbeddingStatus,
+)
 from podex.models.transcript import Transcript
 
 __all__ = [
     "Base",
+    "DerivativeGenerationRun",
+    "DerivativeGenerationRunStatus",
+    "DerivativeSummaryKind",
+    "DerivativeSummaryStatus",
+    "EpisodeSummary",
+    "GraphTriple",
+    "GraphTripleObjectKind",
+    "MediaSummary",
+    "SemanticChunk",
+    "SemanticChunkEmbeddingStatus",
     "DiscoverySource",
     "Episode",
     "IngestionRun",
