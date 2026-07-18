@@ -22,6 +22,7 @@ dependencies = [
   "uvicorn[standard]>=0.32",
   "pydantic>=2.10",
   "pydantic-settings>=2.6",
+  "psycopg[binary]>=3.2",
   "sqlalchemy>=2.0",
   "alembic>=1.13",
 ]
@@ -35,7 +36,7 @@ Issues = "https://github.com/lgtm-hq/podex/issues"
 dev = [
   "assertpy>=1.1",
   "httpx>=0.28",
-  "lintro==0.80.9",
+  "lintro==0.80.8",
   "mypy>=1.14",
   "pytest>=8.0",
   "pytest-cov>=6.0",
