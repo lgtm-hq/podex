@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.12.2] - 2026-07-18
+
+### Fixed
+
+- **ci**: make docker scan gate advisory until suppressions can load (#224) (a542aa2)
+
 ## [0.12.1] - 2026-07-18
 
 ### Fixed
