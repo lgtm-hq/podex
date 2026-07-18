@@ -22,6 +22,14 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.24.0] - 2026-07-18
+
+### Added
+
+- **media**: add enrichment provider framework with OpenLibrary and Wikipedia (#261)
+  (e9cad08)
+- **media**: add alias normalization and canonical matching services (#259) (c69a02c)
+
 ## [0.23.0] - 2026-07-18
 
 ### Added
