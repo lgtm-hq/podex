@@ -17,6 +17,14 @@ from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
 if TYPE_CHECKING:
     from podex.config import Settings
 
+# Finite Redis timeouts so a wedged or slow shared store does not stall the
+# request path. Rate limiting is a soft guarantee: values are intentionally
+# tight (sub-second) because the limiter runs inline in every request, and the
+# limiter itself fails open on ``redis.RedisError`` so a bounded timeout is
+# always preferable to hanging.
+_REDIS_CONNECT_TIMEOUT_SECONDS = 0.5
+_REDIS_SOCKET_TIMEOUT_SECONDS = 0.25
+
 
 def build_rate_limiter(settings: Settings) -> RateLimiter:
     """Return the limiter backend selected by ``settings``.
@@ -32,7 +40,12 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
 
     ``redis`` is imported lazily so environments that never opt into the
     shared store don't pay the import cost and don't require the extra to be
-    resolvable at boot for image builds that strip it.
+    resolvable at boot for image builds that strip it. When the Redis backend
+    is selected the client is built with finite connect and socket timeouts
+    so an unhealthy Redis instance surfaces quickly and the limiter's
+    fail-open path (see
+    :class:`~podex.services.redis_limiter.RedisSlidingWindowRateLimiter`)
+    can admit requests instead of stalling them.
 
     Args:
         settings: The active application settings.
@@ -50,7 +63,11 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
 
     from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
-    client = redis.Redis.from_url(settings.rate_limit_redis_url)
+    client = redis.Redis.from_url(
+        settings.rate_limit_redis_url,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
     return RedisSlidingWindowRateLimiter(
         client,
         max_requests=settings.rate_limit_max_requests,

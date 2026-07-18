@@ -1,7 +1,11 @@
 """Unit tests for the sliding-window rate limiter (in-memory + Redis backends)."""
 
+import logging
+from typing import Any
+
 import fakeredis
 import pytest
+import redis
 from assertpy import assert_that
 
 from podex.config import Settings
@@ -320,6 +324,127 @@ def test_build_rate_limiter_returns_redis_backend_when_url_set(
     assert_that(limiter.max_requests).is_equal_to(2)
     decision = limiter.check("factory-client", now=0.0)
     assert_that(decision.allowed).is_true()
+
+
+def test_redis_limiter_uses_redis_clock_when_now_not_provided() -> None:
+    """Without a ``now`` override the limiter uses Redis' own ``TIME`` command.
+
+    Workers writing scores based on their local clocks would produce skew:
+    one worker's slightly-future clock could evict another worker's fresh
+    hits or extend penalty windows. The Lua script derives ``now`` from
+    ``redis.call('TIME')`` so every worker agrees on the timeline.
+    """
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    first = limiter.check("client")
+    denied = limiter.check("client")
+
+    assert_that(first.allowed).is_true()
+    assert_that(denied.allowed).is_false()
+    assert_that(denied.retry_after).is_greater_than(0.0)
+    assert_that(denied.retry_after).is_less_than_or_equal_to(60.0)
+
+
+def test_redis_limiter_fails_open_on_redis_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broken Redis must not take user traffic down.
+
+    Rate limiting is a soft guarantee; failing closed on every request during
+    a Redis outage would be worse than briefly admitting slightly more
+    traffic. The limiter logs a warning and returns an allow decision.
+    """
+
+    class _BrokenClient:
+        """Redis stand-in whose commands always raise ``ConnectionError``."""
+
+        def eval(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis on the hot path."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def scan_iter(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis on the cleanup path."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def delete(self, *_: object, **__: object) -> int:
+            """Never reached because ``scan_iter`` fails first."""
+            return 0
+
+    limiter = RedisSlidingWindowRateLimiter(
+        _BrokenClient(),
+        max_requests=2,
+        window_seconds=60.0,
+        key_prefix="fail-open-test",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="podex.services.redis_limiter"):
+        decision = limiter.check("client")
+
+    assert_that(decision.allowed).is_true()
+    assert_that(decision.limit).is_equal_to(2)
+    assert_that(decision.remaining).is_equal_to(2)
+    assert_that(decision.retry_after).is_equal_to(0.0)
+    messages = [r.getMessage() for r in caplog.records]
+    assert_that(any("failing open" in m for m in messages)).is_true()
+
+
+def test_redis_limiter_reset_swallows_redis_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``reset`` must never surface Redis errors to fixture cleanup callers."""
+
+    class _BrokenClient:
+        """Redis stand-in whose ``scan_iter`` blows up."""
+
+        def scan_iter(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis during teardown."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def delete(self, *_: object, **__: object) -> int:
+            """Never reached because ``scan_iter`` fails first."""
+            return 0
+
+    limiter = RedisSlidingWindowRateLimiter(
+        _BrokenClient(),
+        max_requests=1,
+        window_seconds=60.0,
+        key_prefix="fail-open-test",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="podex.services.redis_limiter"):
+        limiter.reset()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert_that(any("reset failed" in m for m in messages)).is_true()
+
+
+def test_build_rate_limiter_configures_finite_redis_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The factory must give the Redis client finite connect/socket timeouts.
+
+    Without bounded timeouts a slow or unavailable Redis stalls every request
+    (the limiter runs inline in middleware). The factory owns client
+    construction, so the timeouts must be applied there.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_from_url(url: str, **kwargs: Any) -> fakeredis.FakeStrictRedis:
+        """Capture kwargs so the test can assert on the wiring."""
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return fakeredis.FakeStrictRedis()
+
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
+
+    settings = Settings(rate_limit_redis_url="redis://localhost:6379/0")
+
+    build_rate_limiter(settings)
+
+    assert_that(captured["kwargs"]).contains_key("socket_connect_timeout")
+    assert_that(captured["kwargs"]).contains_key("socket_timeout")
+    assert_that(captured["kwargs"]["socket_connect_timeout"]).is_greater_than(0.0)
+    assert_that(captured["kwargs"]["socket_timeout"]).is_greater_than(0.0)
 
 
 def test_both_backends_satisfy_the_rate_limiter_protocol() -> None:
