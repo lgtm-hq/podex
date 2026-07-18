@@ -21,7 +21,9 @@ rules:
           regex: '.*_PROMPT$'
     paths:
       exclude:
-        - '**/services/prompts_default.py'
+        - 'prompts_default.py'
+        - '**/prompts_default.py'
+        - 'src/podex/services/prompts_default.py'
 
   - id: podex-prompt-marker-text-outside-designated-module
     languages: [generic]
@@ -39,4 +41,6 @@ rules:
       include:
         - '*.py'
       exclude:
-        - '**/services/prompts_default.py'
+        - 'prompts_default.py'
+        - '**/prompts_default.py'
+        - 'src/podex/services/prompts_default.py'
