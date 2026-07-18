@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.11.1] - 2026-07-18
+
+### Changed
+
+- **ci**: adopt remaining lgtm-ci security workflows (#206) (a8fcbb1)
+- **ci**: finish lint config scaffolding for lgtm-ci adoption (#207) (638266f)
+- **deps-dev**: update dependency lintro to 0.80.10 (patch) (#205) (fbdcf24)
+- **deps-dev**: update dependency lintro to 0.80.9 (patch) (#197) (54ad33e)
+- **deps**: pin dependency openapi-typescript to 7.13.0 (#195) (2666342)
+
+### Fixed
+
+- **ci**: grant contents: write to sbom caller job (#210) (c1ced59)
+
 ## [0.11.0] - 2026-07-17
 
 ### Added

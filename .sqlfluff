@@ -1,0 +1,6 @@
+[sqlfluff]
+# Alembic migrations are dialect-agnostic DDL; SQLite is the local default.
+dialect = ansi
+
+[sqlfluff:rules:references.keywords]
+ignore_words = name, data, version
