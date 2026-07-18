@@ -19,12 +19,15 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, Final, Protocol, TypeVar, cast, runtime_checkable
 
 MonotonicClock = Callable[[], float]
 """Zero-arg callable returning a monotonic timestamp in seconds."""
 
 T = TypeVar("T")
+
+_MISSING: Final = object()
+"""Internal sentinel distinguishing "no entry" from a cached ``None``."""
 
 
 @runtime_checkable
@@ -58,7 +61,8 @@ class Cache(Protocol):
         Implementations must ensure that concurrent callers observing a cache
         miss only invoke ``loader`` once per key; the remaining callers must
         wait for that in-flight computation and return the freshly stored
-        value.
+        value. A ``loader`` returning ``None`` is a valid cached result and
+        must be served from the store for the full TTL, not recomputed.
         """
 
 
@@ -100,16 +104,26 @@ class TTLCache:
     def get(self, key: str) -> Any | None:
         """Return the cached value for ``key`` or ``None`` if absent/expired.
 
+        ``None`` is ambiguous here by design (a cached ``None`` and a miss
+        look identical); :meth:`get_or_compute` uses the sentinel-based
+        :meth:`_lookup` internally so it never confuses the two.
+        """
+        value = self._lookup(key)
+        return None if value is _MISSING else value
+
+    def _lookup(self, key: str) -> Any:
+        """Return the live value for ``key`` or ``_MISSING`` if absent/expired.
+
         Expired entries are removed opportunistically on read so a rarely-hit
         key does not linger in memory once its TTL elapses.
         """
         with self._lock:
             entry = self._entries.get(key)
             if entry is None:
-                return None
+                return _MISSING
             if entry.expires_at <= self._clock():
                 del self._entries[key]
-                return None
+                return _MISSING
             return entry.value
 
     def set(self, key: str, value: Any, *, ttl_seconds: float) -> None:
@@ -161,11 +175,13 @@ class TTLCache:
     ) -> T:
         """Return the cached value or compute-and-store it single-flight.
 
-        A fast-path :meth:`get` avoids taking the per-key lock when the value
-        is already cached. On a miss the per-key lock is acquired and the
-        cache re-checked (double-checked locking) before ``loader`` runs, so
-        concurrent cold callers wait for the in-flight computation instead of
-        each recomputing the value.
+        A fast-path :meth:`_lookup` avoids taking the per-key lock when the
+        value is already cached. On a miss the per-key lock is acquired and
+        the cache re-checked (double-checked locking) before ``loader`` runs,
+        so concurrent cold callers wait for the in-flight computation instead
+        of each recomputing the value. Hits are detected with an internal
+        sentinel rather than ``None``, so a loader that legitimately returns
+        ``None`` has that result cached and served for the full TTL.
 
         A non-positive ``ttl_seconds`` disables caching entirely: ``loader``
         is invoked directly and its result is returned without touching the
@@ -182,12 +198,12 @@ class TTLCache:
         """
         if ttl_seconds <= 0:
             return loader()
-        cached = self.get(key)
-        if cached is not None:
+        cached = self._lookup(key)
+        if cached is not _MISSING:
             return cast("T", cached)
         with self._get_key_lock(key):
-            cached = self.get(key)
-            if cached is not None:
+            cached = self._lookup(key)
+            if cached is not _MISSING:
                 return cast("T", cached)
             fresh = loader()
             self.set(key, fresh, ttl_seconds=ttl_seconds)
