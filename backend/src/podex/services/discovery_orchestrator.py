@@ -194,7 +194,7 @@ class DiscoveryOrchestrator:
                 return True
 
         # High title similarity alone (>95) = probably match
-        return title_ratio >= 95
+        return bool(title_ratio >= 95)
 
     def _merge_episodes(
         self,

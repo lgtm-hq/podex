@@ -1,7 +1,9 @@
 """Tests for idempotent episode discovery persistence."""
 
+from typing import cast
+
 from assertpy import assert_that
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -58,11 +60,12 @@ def test_deduplicate_matches_repeated_provider_urls(db_session: Session) -> None
 
 def test_podscripts_episode_comment_link_falls_back_to_url_title() -> None:
     """Verify comment-count link text cannot become an episode title."""
-    link = BeautifulSoup(
+    tag = BeautifulSoup(
         '<a href="/podcasts/example-show/42-pilot">0comments</a>',
         "html.parser",
     ).find("a")
-    assert link is not None
+    assert_that(tag).is_instance_of(Tag)
+    link = cast("Tag", tag)
 
     source = PodscriptsDiscovery(delay=0)
     try:
@@ -75,9 +78,9 @@ def test_podscripts_episode_comment_link_falls_back_to_url_title() -> None:
         source.close()
 
     assert_that(episode).is_not_none()
-    assert episode is not None
-    assert_that(episode.title).is_equal_to("David Paulides")
-    assert_that(episode.episode_number).is_equal_to(2502)
+    parsed = cast("DiscoveredEpisode", episode)
+    assert_that(parsed.title).is_equal_to("Pilot")
+    assert_that(parsed.episode_number).is_equal_to(42)
 
 
 def test_upsert_persists_discovered_episode(db_session: Session) -> None:
