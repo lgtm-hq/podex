@@ -41,6 +41,12 @@ jobs:
       contents: read
       pull-requests: write
 
+  # Coverage publishing (#200 / epic #114): no separate coverage.yml calling
+  # reusable-coverage.yml. test-coverage already collects coverage, enforces the
+  # 85% threshold, uploads artifacts, and publishes the PR summary via
+  # reusable-test-python. reusable-coverage would only add multi-artifact merge,
+  # badge generation, and optional GitHub Pages — not needed for this repo.
+  #
   # Coverage mode (lgtm-ci contract #340): single runtime with coverage
   # reporting and the PR test summary comment.
   test-coverage:

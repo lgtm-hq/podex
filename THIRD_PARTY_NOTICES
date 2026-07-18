@@ -1,0 +1,31 @@
+Third-Party Notices
+===================
+
+Podex
+-----
+
+Copyright (C) 2026 lgtm-hq
+
+Podex is licensed under the GNU Affero General Public License v3.0 only
+(AGPL-3.0-only). See the LICENSE and NOTICE files in this repository for the
+full license text and copyright statement.
+
+Dependency declarations
+-----------------------
+
+Runtime and development dependencies are declared in the project manifests and
+lockfiles:
+
+- Backend (Python): `backend/pyproject.toml`, `backend/uv.lock`
+- Frontend (JavaScript/TypeScript): `frontend/package.json`, `frontend/bun.lock`
+
+Each dependency is subject to its own license. Refer to the upstream package
+metadata or source for license terms. This file does not reproduce every
+transitive dependency license.
+
+Adapted or vendored code
+------------------------
+
+As of this writing, Podex does not ship adapted third-party source that requires
+separate attribution beyond the dependency declarations above. If that changes,
+add a section here describing the origin and license of the adapted material.

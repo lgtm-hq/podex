@@ -1,0 +1,8 @@
+# Generated and local environments
+node_modules/
+.venv/
+venv/
+backend/.venv/
+
+# Alembic revision modules embed SQL via Python; not .sql sources for sqlfluff.
+backend/alembic/versions/
