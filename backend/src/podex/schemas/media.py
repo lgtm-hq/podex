@@ -5,7 +5,7 @@ from typing import cast
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
-from podex.api.v2.identifiers import MEDIA_PREFIX, encode
+from podex.api.v2.identifiers import IdentifierKind, encode
 from podex.models.media import MediaType
 
 
@@ -27,4 +27,4 @@ class MediaRead(BaseModel):
     @property
     def public_id(self) -> str:
         """The opaque, prefixed public identifier for this media item."""
-        return cast("str", encode(MEDIA_PREFIX, self.id))
+        return cast("str", encode(IdentifierKind.MEDIA, self.id))

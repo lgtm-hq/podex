@@ -12,9 +12,9 @@ scheme — callers that need unpredictability should compose an HMAC on top.
 
 Example:
 
-    >>> encode("pod", 1)
+    >>> encode(IdentifierKind.PODCAST, 1)
     'pod_ae'
-    >>> decode("pod", "pod_ae")
+    >>> decode(IdentifierKind.PODCAST, "pod_ae")
     1
 """
 
@@ -22,12 +22,23 @@ from __future__ import annotations
 
 import base64
 import re
-from typing import Final
+from enum import StrEnum, unique
 
-PODCAST_PREFIX: Final = "pod"
-EPISODE_PREFIX: Final = "epi"
-MEDIA_PREFIX: Final = "med"
-MENTION_PREFIX: Final = "men"
+
+@unique
+class IdentifierKind(StrEnum):
+    """Public identifier prefix for each exposed resource kind.
+
+    The enum is the single closed vocabulary of identifier kinds: adding a
+    new public resource means adding a member here, and ``@unique`` rejects
+    duplicate prefixes at import time.
+    """
+
+    PODCAST = "pod"
+    EPISODE = "epi"
+    MEDIA = "med"
+    MENTION = "men"
+
 
 _ALLOWED_PREFIX = re.compile(r"^[a-z][a-z0-9]{1,7}$")
 _ALLOWED_BODY = re.compile(r"^[a-z2-7]+$")
@@ -42,11 +53,11 @@ def _validate_prefix(prefix: str) -> None:
         )
 
 
-def encode(prefix: str, value: int) -> str:
+def encode(kind: IdentifierKind, value: int) -> str:
     """Encode a non-negative integer id into a prefixed opaque token.
 
     Args:
-        prefix: The short kind prefix (e.g. ``"pod"``).
+        kind: The identifier kind whose prefix the token carries.
         value: The non-negative integer identifier to encode.
 
     Returns:
@@ -54,34 +65,34 @@ def encode(prefix: str, value: int) -> str:
         unpadded base32 representation of ``value``'s big-endian bytes.
 
     Raises:
-        ValueError: If ``prefix`` is not a short lowercase token or ``value``
-            is negative.
+        ValueError: If ``kind``'s prefix is not a short lowercase token or
+            ``value`` is negative.
     """
-    _validate_prefix(prefix)
+    _validate_prefix(kind)
     if value < 0:
         raise ValueError(f"value must be non-negative: {value!r}")
     length = max(1, (value.bit_length() + 7) // 8)
     body = base64.b32encode(value.to_bytes(length, "big")).decode("ascii")
-    return f"{prefix}_{body.rstrip('=').lower()}"
+    return f"{kind}_{body.rstrip('=').lower()}"
 
 
-def decode(prefix: str, token: str) -> int:
+def decode(kind: IdentifierKind, token: str) -> int:
     """Decode a prefixed opaque token back into its integer id.
 
     Args:
-        prefix: The expected kind prefix; the token must start with
-            ``f"{prefix}_"``.
+        kind: The expected identifier kind; the token must start with
+            ``f"{kind}_"``.
         token: The opaque token to decode.
 
     Returns:
         The non-negative integer identifier originally passed to :func:`encode`.
 
     Raises:
-        ValueError: If ``token`` is malformed, uses a different prefix, or
-            contains characters outside the base32 alphabet.
+        ValueError: If ``token`` is malformed, uses a different kind's prefix,
+            or contains characters outside the base32 alphabet.
     """
-    _validate_prefix(prefix)
-    expected_start = f"{prefix}_"
+    _validate_prefix(kind)
+    expected_start = f"{kind}_"
     if not token.startswith(expected_start):
         raise ValueError(
             f"identifier does not start with {expected_start!r}: {token!r}",
