@@ -44,7 +44,7 @@ RUN bun run build
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Node LTS, non-root
 # -----------------------------------------------------------------------------
-FROM node:22.20.0-bookworm-slim@sha256:b21fe589dfbe5cc39365d0544b9be3f1f33f55f3c86c87a76ff65a02f8f5848e AS runtime
+FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS runtime
 
 WORKDIR /app
 
