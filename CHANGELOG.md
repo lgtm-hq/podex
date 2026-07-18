@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.12.1] - 2026-07-18
+
+### Fixed
+
+- **docker**: unblock tag-publish Trivy gate on unfixed base CVEs (#221) (98b50e6)
+
 ## [0.12.0] - 2026-07-18
 
 ### Added
