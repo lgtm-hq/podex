@@ -3,9 +3,11 @@
 from datetime import datetime
 
 from sqlalchemy import DateTime, String, func
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
 from podex.models.base import Base
+from podex.models.episode import DiscoverySource
 
 
 class Podcast(Base):
@@ -17,6 +19,28 @@ class Podcast(Base):
     name: Mapped[str] = mapped_column(String(255), index=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(String(2000), default=None)
+    # Provider handles used by discovery to locate this podcast's feeds.
+    rss_url: Mapped[str | None] = mapped_column(
+        String(500),
+        index=True,
+        default=None,
+    )
+    spotify_id: Mapped[str | None] = mapped_column(
+        String(50),
+        index=True,
+        default=None,
+    )
+    apple_id: Mapped[str | None] = mapped_column(String(50), default=None)
+    youtube_channel_id: Mapped[str | None] = mapped_column(String(30), default=None)
+    podscripts_slug: Mapped[str | None] = mapped_column(
+        String(100),
+        index=True,
+        default=None,
+    )
+    discovery_source: Mapped[DiscoverySource | None] = mapped_column(
+        SAEnum(DiscoverySource, native_enum=False, length=50),
+        default=None,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
