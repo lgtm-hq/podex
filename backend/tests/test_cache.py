@@ -107,6 +107,45 @@ def test_get_or_compute_populates_and_reuses_entry() -> None:
     assert_that(call_count).is_equal_to(1)
 
 
+def test_get_or_compute_caches_none_results() -> None:
+    """A loader returning ``None`` is cached and not recomputed within TTL."""
+    cache = TTLCache()
+    call_count = 0
+
+    def loader() -> None:
+        """Return ``None`` and record how many times it ran."""
+        nonlocal call_count
+        call_count += 1
+        return None
+
+    first = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
+    second = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
+
+    assert_that(first).is_none()
+    assert_that(second).is_none()
+    assert_that(call_count).is_equal_to(1)
+
+
+def test_get_or_compute_recomputes_none_after_expiry() -> None:
+    """A cached ``None`` still honours the TTL and is recomputed once stale."""
+    clock = _Clock()
+    cache = TTLCache(clock=clock)
+    call_count = 0
+
+    def loader() -> None:
+        """Return ``None`` and record how many times it ran."""
+        nonlocal call_count
+        call_count += 1
+        return None
+
+    cache.get_or_compute("k", ttl_seconds=10, loader=loader)
+    clock.now += 11
+    result = cache.get_or_compute("k", ttl_seconds=10, loader=loader)
+
+    assert_that(result).is_none()
+    assert_that(call_count).is_equal_to(2)
+
+
 def test_get_or_compute_skips_cache_when_ttl_is_zero() -> None:
     """A non-positive TTL bypasses the store entirely."""
     cache = TTLCache()
@@ -167,7 +206,10 @@ def test_get_or_compute_is_single_flight_under_concurrency() -> None:
     ready.wait()
     release.set()
     for thread in threads:
-        thread.join()
+        # A bounded join keeps a future locking regression from hanging the
+        # suite; a still-alive worker means get_or_compute deadlocked.
+        thread.join(timeout=2)
+        assert_that(thread.is_alive()).is_false()
 
     assert_that(call_count).is_equal_to(1)
     assert_that(results).is_equal_to(["value"] * workers)
