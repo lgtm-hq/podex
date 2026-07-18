@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.31.0] - 2026-07-18
+
+### Added
+
+- **api**: add account auth, personalization, and billing endpoints (#281) (982eed1)
+- **accounts**: add alert rules, evaluation, and digest delivery (#279) (6152419)
+
 ## [0.30.0] - 2026-07-18
 
 ### Added
