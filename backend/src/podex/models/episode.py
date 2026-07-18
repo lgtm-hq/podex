@@ -13,6 +13,7 @@ from podex.models.base import Base
 if TYPE_CHECKING:
     from podex.models.derivative_generation_run import DerivativeGenerationRun
     from podex.models.episode_summary import EpisodeSummary
+    from podex.models.podcast import Podcast
     from podex.models.semantic_chunk import SemanticChunk
     from podex.models.transcript import Transcript
 
@@ -78,6 +79,7 @@ class Episode(Base):
         server_default=func.now(),
     )
 
+    podcast: Mapped["Podcast"] = relationship(back_populates="episodes")
     transcripts: Mapped[list["Transcript"]] = relationship(
         back_populates="episode",
     )

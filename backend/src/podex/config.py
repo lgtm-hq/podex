@@ -1,6 +1,7 @@
 """Application configuration loaded from the environment."""
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -42,6 +43,19 @@ class Settings(BaseSettings):
     # ``ge=0`` bound catches negative overrides at startup instead of allowing
     # a misconfigured value to disable caching in a surprising way.
     stats_cache_ttl_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
+
+    # Encrypted raw transcript artifact storage. Raw transcripts are stored
+    # only as encrypted objects; without an encryption key no artifact store
+    # is built and raw storage is unavailable. Placeholder-free by default —
+    # keys and buckets come from the deployment environment.
+    transcript_artifact_storage_backend: str = "encrypted_filesystem"
+    transcript_artifact_storage_path: Path = Path("./data/transcript-artifacts")
+    transcript_artifact_encryption_key: str = ""
+    transcript_artifact_s3_bucket: str = ""
+    transcript_artifact_s3_endpoint_url: str = ""
+    transcript_artifact_s3_region_name: str = ""
+    transcript_artifact_s3_access_key_id: str = ""
+    transcript_artifact_s3_secret_access_key: str = ""
 
 
 @lru_cache

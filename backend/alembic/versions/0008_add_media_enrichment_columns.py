@@ -6,6 +6,7 @@ Create Date: 2026-07-18 00:00:00.000000
 """
 
 from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 
@@ -16,7 +17,7 @@ down_revision: str | None = "0007"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-_COLUMNS: list[sa.Column] = [
+_COLUMNS: list["sa.Column[Any]"] = [
     sa.Column("google_books_id", sa.String(length=50), nullable=True),
     sa.Column("open_library_id", sa.String(length=50), nullable=True),
     sa.Column("imdb_id", sa.String(length=20), nullable=True),
