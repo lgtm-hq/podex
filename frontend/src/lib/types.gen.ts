@@ -4,6 +4,66 @@
  */
 
 export interface paths {
+    "/api/v2/auth/logout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Logout Account Session
+         * @description Revoke the current account session and expire its browser cookie.
+         */
+        post: operations["logout_account_session_api_v2_auth_logout_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/auth/magic-link/request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Request Auth Magic Link
+         * @description Request delivery of a short-lived, single-use email sign-in link.
+         */
+        post: operations["request_auth_magic_link_api_v2_auth_magic_link_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/auth/magic-link/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Auth Magic Link
+         * @description Verify a one-time link token and begin an authenticated session.
+         */
+        post: operations["verify_auth_magic_link_api_v2_auth_magic_link_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/episodes": {
         parameters: {
             query?: never;
@@ -58,6 +118,286 @@ export interface paths {
         get: operations["list_episode_mentions_api_v2_episodes__episode_id__mentions_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Account
+         * @description Return the account represented by the current browser session.
+         */
+        get: operations["get_current_account_api_v2_me_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Account Alert Rules
+         * @description List alert rules belonging to the authenticated account.
+         */
+        get: operations["list_account_alert_rules_api_v2_me_alerts_get"];
+        put?: never;
+        /**
+         * Create Account Alert Rule
+         * @description Create an alert rule for a saved media or followed podcast resource.
+         */
+        post: operations["create_account_alert_rule_api_v2_me_alerts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/alerts/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Evaluate Account Alert Rules
+         * @description Evaluate alert rules and generate events for new published activity.
+         */
+        post: operations["evaluate_account_alert_rules_api_v2_me_alerts_evaluate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/alerts/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Account Alert Rule
+         * @description Remove an alert rule belonging to the authenticated account.
+         */
+        delete: operations["delete_account_alert_rule_api_v2_me_alerts__rule_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Update Account Alert Rule
+         * @description Pause or resume an account alert rule.
+         */
+        patch: operations["update_account_alert_rule_api_v2_me_alerts__rule_id__patch"];
+        trace?: never;
+    };
+    "/api/v2/me/digests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Current Account Digests
+         * @description List delivered notification digests for the current account.
+         */
+        get: operations["list_current_account_digests_api_v2_me_digests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/digests/send": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send Current Account Digest
+         * @description Evaluate alert rules and deliver pending activity by email.
+         */
+        post: operations["send_current_account_digest_api_v2_me_digests_send_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/follows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Account Followed Podcasts
+         * @description List followed public podcast sources for the current account.
+         */
+        get: operations["list_account_followed_podcasts_api_v2_me_follows_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/follows/{podcast_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Account Followed Podcast
+         * @description Idempotently follow a public podcast source.
+         */
+        put: operations["put_account_followed_podcast_api_v2_me_follows__podcast_id__put"];
+        post?: never;
+        /**
+         * Delete Account Followed Podcast
+         * @description Remove a public podcast source from the current account's follows.
+         */
+        delete: operations["delete_account_followed_podcast_api_v2_me_follows__podcast_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Account Preferences
+         * @description Return persisted notification preferences for the signed-in account.
+         */
+        get: operations["get_current_account_preferences_api_v2_me_preferences_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Current Account Preferences
+         * @description Update notification preferences for the signed-in account.
+         */
+        patch: operations["update_current_account_preferences_api_v2_me_preferences_patch"];
+        trace?: never;
+    };
+    "/api/v2/me/saves": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Account Saved Media
+         * @description List saved public catalog media for the current account.
+         */
+        get: operations["list_account_saved_media_api_v2_me_saves_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/saves/{media_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Put Account Saved Media
+         * @description Idempotently save a public catalog media record.
+         */
+        put: operations["put_account_saved_media_api_v2_me_saves__media_id__put"];
+        post?: never;
+        /**
+         * Delete Account Saved Media
+         * @description Remove a public catalog media record from the current account's saves.
+         */
+        delete: operations["delete_account_saved_media_api_v2_me_saves__media_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/subscription": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Account Subscription
+         * @description Return hosted plan entitlement and current monthly usage.
+         */
+        get: operations["get_current_account_subscription_api_v2_me_subscription_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/me/subscription/checkout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Begin Current Account Checkout
+         * @description Start provider-hosted paid-tier checkout once launch gates are enabled.
+         */
+        post: operations["begin_current_account_checkout_api_v2_me_subscription_checkout_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -234,6 +574,165 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * AccountUserRead
+         * @description Public representation of the signed-in account.
+         */
+        AccountUserRead: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Email */
+            email: string;
+            /** Id */
+            id: number;
+            /** Last Signed In At */
+            last_signed_in_at: string | null;
+        };
+        /**
+         * AlertEvaluationRead
+         * @description Result of evaluating the account's alert rules.
+         */
+        AlertEvaluationRead: {
+            /** Generated */
+            generated: number;
+            /** Items */
+            items: components["schemas"]["AlertEventRead"][];
+        };
+        /**
+         * AlertEventRead
+         * @description A generated alert event and its owning rule.
+         */
+        AlertEventRead: {
+            /** Observed Count */
+            observed_count: number;
+            /** Previous Count */
+            previous_count: number;
+            rule: components["schemas"]["AlertRuleRead"];
+        };
+        /**
+         * AlertRuleCreateRequest
+         * @description Create an alert rule over a linked public resource.
+         */
+        AlertRuleCreateRequest: {
+            /**
+             * Event Type
+             * @enum {string}
+             */
+            event_type: "new_mention" | "new_episode";
+            /** Target Id */
+            target_id: number;
+            /**
+             * Target Type
+             * @enum {string}
+             */
+            target_type: "media" | "podcast";
+        };
+        /**
+         * AlertRuleDeleteResponse
+         * @description Result of removing an alert rule.
+         */
+        AlertRuleDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+        };
+        /**
+         * AlertRuleListRead
+         * @description Alert rule collection for the current account.
+         */
+        AlertRuleListRead: {
+            /** Items */
+            items: components["schemas"]["AlertRuleRead"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * AlertRuleRead
+         * @description Public representation of one account alert rule.
+         */
+        AlertRuleRead: {
+            /** Baseline Count */
+            baseline_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Event Type */
+            event_type: string;
+            /** Id */
+            id: number;
+            /** Last Evaluated At */
+            last_evaluated_at: string | null;
+            /** Target Id */
+            target_id: number;
+            /** Target Type */
+            target_type: string;
+        };
+        /**
+         * AlertRuleUpdateRequest
+         * @description Pause or resume an alert rule.
+         */
+        AlertRuleUpdateRequest: {
+            /** Enabled */
+            enabled: boolean;
+        };
+        /**
+         * AuthLogoutResponse
+         * @description Result of revoking the current browser session.
+         */
+        AuthLogoutResponse: {
+            /** Signed Out */
+            signed_out: boolean;
+        };
+        /**
+         * AuthMagicLinkRequest
+         * @description Request delivery of a one-time email sign-in link.
+         */
+        AuthMagicLinkRequest: {
+            /**
+             * Email
+             * Format: email
+             */
+            email: string;
+            /** Redirect Path */
+            redirect_path?: string | null;
+        };
+        /**
+         * AuthMagicLinkRequestResponse
+         * @description Acknowledgement that a sign-in link was accepted for delivery.
+         */
+        AuthMagicLinkRequestResponse: {
+            /**
+             * Accepted
+             * @default true
+             */
+            accepted: boolean;
+        };
+        /**
+         * AuthMagicLinkVerifyRequest
+         * @description Redeem a one-time sign-in token.
+         */
+        AuthMagicLinkVerifyRequest: {
+            /** Token */
+            token: string;
+        };
+        /**
+         * AuthSessionRead
+         * @description Authenticated session summary returned after verification.
+         */
+        AuthSessionRead: {
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            user: components["schemas"]["AccountUserRead"];
+        };
+        /**
          * CatalogStats
          * @description Top-level catalog counters plus a small top-list breakdown.
          *
@@ -265,6 +764,48 @@ export interface components {
             top_media_types: components["schemas"]["MediaTypeCount"][];
         };
         /**
+         * DigestListRead
+         * @description Delivered digest collection for the current account.
+         */
+        DigestListRead: {
+            /** Items */
+            items: components["schemas"]["DigestRead"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * DigestRead
+         * @description Public representation of a delivered notification digest.
+         */
+        DigestRead: {
+            /** Body Text */
+            body_text: string;
+            /** Channel */
+            channel: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Delivered At */
+            delivered_at: string | null;
+            /** Event Count */
+            event_count: number;
+            /** Id */
+            id: number;
+            /** Subject */
+            subject: string;
+        };
+        /**
+         * DigestSendResponse
+         * @description Result of an on-demand digest delivery attempt.
+         */
+        DigestSendResponse: {
+            /** Delivered */
+            delivered: boolean;
+            digest?: components["schemas"]["DigestRead"] | null;
+        };
+        /**
          * EpisodeRead
          * @description Public representation of a podcast episode.
          */
@@ -294,6 +835,36 @@ export interface components {
             published_at: string | null;
             /** Title */
             title: string;
+        };
+        /**
+         * FollowedPodcastDeleteResponse
+         * @description Result of removing a followed podcast.
+         */
+        FollowedPodcastDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+        };
+        /**
+         * FollowedPodcastListRead
+         * @description Followed podcast collection for the current account.
+         */
+        FollowedPodcastListRead: {
+            /** Items */
+            items: components["schemas"]["FollowedPodcastRead"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * FollowedPodcastRead
+         * @description A followed public podcast source and when it was followed.
+         */
+        FollowedPodcastRead: {
+            /**
+             * Followed At
+             * Format: date-time
+             */
+            followed_at: string;
+            podcast: components["schemas"]["PodcastRead"];
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -457,6 +1028,106 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * PreferenceRead
+         * @description Notification preferences for the current account.
+         */
+        PreferenceRead: {
+            /** Digest Enabled */
+            digest_enabled: boolean;
+            /** Digest Frequency */
+            digest_frequency: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * PreferenceUpdateRequest
+         * @description Update notification preferences.
+         */
+        PreferenceUpdateRequest: {
+            /** Digest Enabled */
+            digest_enabled: boolean;
+            /**
+             * Digest Frequency
+             * @enum {string}
+             */
+            digest_frequency: "immediate" | "daily" | "weekly";
+        };
+        /**
+         * QuotaRead
+         * @description One monthly feature quota and its current consumption.
+         */
+        QuotaRead: {
+            /** Feature */
+            feature: string;
+            /** Limit */
+            limit: number;
+            /** Period */
+            period: string;
+            /** Remaining */
+            remaining: number;
+            /** Used */
+            used: number;
+        };
+        /**
+         * SavedMediaDeleteResponse
+         * @description Result of removing a saved media record.
+         */
+        SavedMediaDeleteResponse: {
+            /** Deleted */
+            deleted: boolean;
+        };
+        /**
+         * SavedMediaListRead
+         * @description Saved media collection for the current account.
+         */
+        SavedMediaListRead: {
+            /** Items */
+            items: components["schemas"]["SavedMediaRead"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * SavedMediaRead
+         * @description A saved public media record and when it was saved.
+         */
+        SavedMediaRead: {
+            media: components["schemas"]["MediaRead"];
+            /**
+             * Saved At
+             * Format: date-time
+             */
+            saved_at: string;
+        };
+        /**
+         * SubscriptionCheckoutRead
+         * @description External provider-hosted checkout destination.
+         */
+        SubscriptionCheckoutRead: {
+            /** Checkout Url */
+            checkout_url: string;
+            /** Provider */
+            provider: string;
+        };
+        /**
+         * SubscriptionRead
+         * @description Hosted plan entitlement and current monthly usage.
+         */
+        SubscriptionRead: {
+            /** Current Period Ends At */
+            current_period_ends_at: string | null;
+            /** Paid Features Enforced */
+            paid_features_enforced: boolean;
+            /** Quotas */
+            quotas: components["schemas"]["QuotaRead"][];
+            /** Status */
+            status: string;
+            /** Tier */
+            tier: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -479,6 +1150,92 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    logout_account_session_api_v2_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthLogoutResponse"];
+                };
+            };
+        };
+    };
+    request_auth_magic_link_api_v2_auth_magic_link_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthMagicLinkRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthMagicLinkRequestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_auth_magic_link_api_v2_auth_magic_link_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AuthMagicLinkVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthSessionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_episodes_api_v2_episodes_get: {
         parameters: {
             query?: {
@@ -577,6 +1334,462 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_current_account_api_v2_me_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AccountUserRead"];
+                };
+            };
+        };
+    };
+    list_account_alert_rules_api_v2_me_alerts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRuleListRead"];
+                };
+            };
+        };
+    };
+    create_account_alert_rule_api_v2_me_alerts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertRuleCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRuleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    evaluate_account_alert_rules_api_v2_me_alerts_evaluate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertEvaluationRead"];
+                };
+            };
+        };
+    };
+    delete_account_alert_rule_api_v2_me_alerts__rule_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRuleDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_account_alert_rule_api_v2_me_alerts__rule_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                rule_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AlertRuleUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AlertRuleRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_current_account_digests_api_v2_me_digests_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DigestListRead"];
+                };
+            };
+        };
+    };
+    send_current_account_digest_api_v2_me_digests_send_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DigestSendResponse"];
+                };
+            };
+        };
+    };
+    list_account_followed_podcasts_api_v2_me_follows_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowedPodcastListRead"];
+                };
+            };
+        };
+    };
+    put_account_followed_podcast_api_v2_me_follows__podcast_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowedPodcastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_account_followed_podcast_api_v2_me_follows__podcast_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FollowedPodcastDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_current_account_preferences_api_v2_me_preferences_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferenceRead"];
+                };
+            };
+        };
+    };
+    update_current_account_preferences_api_v2_me_preferences_patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PreferenceUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PreferenceRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_account_saved_media_api_v2_me_saves_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedMediaListRead"];
+                };
+            };
+        };
+    };
+    put_account_saved_media_api_v2_me_saves__media_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedMediaRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_account_saved_media_api_v2_me_saves__media_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                media_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedMediaDeleteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_current_account_subscription_api_v2_me_subscription_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionRead"];
+                };
+            };
+        };
+    };
+    begin_current_account_checkout_api_v2_me_subscription_checkout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubscriptionCheckoutRead"];
                 };
             };
         };
