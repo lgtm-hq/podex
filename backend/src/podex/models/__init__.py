@@ -9,12 +9,19 @@ from podex.models.episode import DiscoverySource, Episode
 from podex.models.ingestion_run import IngestionRun, IngestionRunStatus
 from podex.models.media import Media, MediaType
 from podex.models.mention import Mention
+from podex.models.mention_candidate import MentionCandidate, MentionCandidateState
+from podex.models.mention_candidate_provenance import (
+    MentionCandidateProvenance,
+    MentionCandidateProvenanceEventType,
+)
 from podex.models.podcast import Podcast, PodcastStatus
+from podex.models.review_item import ReviewItem, ReviewItemStatus, ReviewPriority
 from podex.models.scheduled_work import (
     PipelineSchedule,
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
 )
+from podex.models.transcript import Transcript
 
 __all__ = [
     "Base",
@@ -25,9 +32,17 @@ __all__ = [
     "Media",
     "MediaType",
     "Mention",
+    "MentionCandidate",
+    "MentionCandidateProvenance",
+    "MentionCandidateProvenanceEventType",
+    "MentionCandidateState",
     "PipelineSchedule",
     "Podcast",
     "PodcastStatus",
+    "ReviewItem",
+    "ReviewItemStatus",
+    "ReviewPriority",
     "ScheduledWorkItemModel",
+    "Transcript",
     "ScheduledWorkStatus",
 ]
