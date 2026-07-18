@@ -13,6 +13,7 @@ from podex.models.base import Base
 if TYPE_CHECKING:
     from podex.models.media_alias import MediaAlias
     from podex.models.media_external_ref import MediaExternalRef
+    from podex.models.media_relation import MediaRelation
 
 
 class MediaType(StrEnum):
@@ -89,4 +90,12 @@ class Media(Base):
     aliases: Mapped[list["MediaAlias"]] = relationship(back_populates="media")
     external_refs: Mapped[list["MediaExternalRef"]] = relationship(
         back_populates="media",
+    )
+    outgoing_relations: Mapped[list["MediaRelation"]] = relationship(
+        back_populates="subject_media",
+        foreign_keys="MediaRelation.subject_media_id",
+    )
+    incoming_relations: Mapped[list["MediaRelation"]] = relationship(
+        back_populates="object_media",
+        foreign_keys="MediaRelation.object_media_id",
     )

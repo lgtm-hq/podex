@@ -10,6 +10,7 @@ from podex.models.ingestion_run import IngestionRun, IngestionRunStatus
 from podex.models.media import Media, MediaType
 from podex.models.media_alias import MediaAlias, MediaAliasSourceType
 from podex.models.media_external_ref import MediaExternalRef, MediaExternalRefSource
+from podex.models.media_relation import MediaRelation, MediaRelationType
 from podex.models.mention import Mention
 from podex.models.mention_candidate import MentionCandidate, MentionCandidateState
 from podex.models.mention_candidate_provenance import (
@@ -36,6 +37,8 @@ __all__ = [
     "MediaAliasSourceType",
     "MediaExternalRef",
     "MediaExternalRefSource",
+    "MediaRelation",
+    "MediaRelationType",
     "MediaType",
     "Mention",
     "MentionCandidate",
