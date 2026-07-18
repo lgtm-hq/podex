@@ -2,12 +2,16 @@
 
 from datetime import datetime
 from enum import StrEnum, auto
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, func
 from sqlalchemy import Enum as SAEnum
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
+
+if TYPE_CHECKING:
+    from podex.models.transcript import Transcript
 
 
 class DiscoverySource(StrEnum):
@@ -69,4 +73,8 @@ class Episode(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
+    )
+
+    transcripts: Mapped[list["Transcript"]] = relationship(
+        back_populates="episode",
     )
