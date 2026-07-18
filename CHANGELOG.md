@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.12.3] - 2026-07-18
+
+### Fixed
+
+- **api**: back rate limiter with Redis shared store (#202) (5c1f06a)
+
 ## [0.12.2] - 2026-07-18
 
 ### Fixed
