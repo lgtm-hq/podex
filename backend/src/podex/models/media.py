@@ -3,7 +3,7 @@
 from datetime import datetime
 from enum import StrEnum, auto
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, Index, String, func
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,10 @@ class Media(Base):
     """A canonical media item referenced across episodes."""
 
     __tablename__ = "media"
+    __table_args__ = (
+        # Supports type-filtered media listings ordered by title.
+        Index("ix_media_type_title", "type", "title"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     type: Mapped[MediaType] = mapped_column(

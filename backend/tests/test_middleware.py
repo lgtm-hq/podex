@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Iterator
 
+import fakeredis
 import pytest
 from assertpy import assert_that
 from fastapi.testclient import TestClient
@@ -12,6 +13,7 @@ from podex.config import Settings
 from podex.main import create_app
 from podex.middleware import REQUEST_ID_HEADER, RateLimitMiddleware
 from podex.services.limiter import SlidingWindowRateLimiter
+from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
 
 def _make_client(settings: Settings) -> TestClient:
@@ -160,6 +162,44 @@ def test_cors_exposes_rate_limit_headers_to_browsers() -> None:
     assert_that(exposed).contains("X-Request-ID")
     assert_that(exposed).contains("X-RateLimit-Limit")
     assert_that(exposed).contains("Retry-After")
+
+
+def test_middleware_works_with_redis_backed_limiter(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The middleware treats a Redis-backed limiter identically to the in-memory one.
+
+    Exercises the shared-store path end-to-end (allow/deny, rate-limit headers,
+    429 payload) by monkeypatching the factory to return a fakeredis-backed
+    limiter. Guards against regressions in the ``RateLimiter`` protocol.
+    """
+    shared_limiter = RedisSlidingWindowRateLimiter(
+        fakeredis.FakeStrictRedis(),
+        max_requests=2,
+        window_seconds=60.0,
+        key_prefix="mw-test:ratelimit",
+    )
+
+    monkeypatch.setattr(
+        "podex.main.build_rate_limiter", lambda _settings: shared_limiter
+    )
+
+    settings = Settings(
+        rate_limit_enabled=True,
+        rate_limit_max_requests=2,
+        rate_limit_window_seconds=60.0,
+    )
+    with TestClient(create_app(settings)) as client:
+        first = client.get("/api/v2/status")
+        second = client.get("/api/v2/status")
+        third = client.get("/api/v2/status")
+
+    assert_that(first.status_code).is_equal_to(200)
+    assert_that(first.headers["X-RateLimit-Limit"]).is_equal_to("2")
+    assert_that(second.status_code).is_equal_to(200)
+    assert_that(third.status_code).is_equal_to(429)
+    assert_that(third.headers).contains_key("Retry-After")
+    assert_that(third.json()["error"]["code"]).is_equal_to("rate_limited")
 
 
 def test_access_log_records_request_details(

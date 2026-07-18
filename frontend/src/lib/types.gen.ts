@@ -164,6 +164,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalog Stats
+         * @description Return catalog-wide counts and a small top-media-types breakdown.
+         *
+         *     Responses are cached in-process for
+         *     ``PODEX_STATS_CACHE_TTL_SECONDS`` seconds (configurable via
+         *     :class:`~podex.config.Settings`); set the TTL to ``0`` to bypass the
+         *     cache entirely.
+         */
+        get: operations["get_catalog_stats_api_v2_stats_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/status": {
         parameters: {
             query?: never;
@@ -208,6 +233,37 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * CatalogStats
+         * @description Top-level catalog counters plus a small top-list breakdown.
+         *
+         *     Attributes:
+         *         podcasts: Total podcast sources in the catalog.
+         *         episodes: Total episodes across all sources.
+         *         media: Total canonical media items in the catalog. Counts every
+         *             ``Media`` row, not just those referenced by a mention.
+         *         mentions: Total episode<->media mention links.
+         *         top_media_types: Up to five media types ordered by descending count,
+         *             with ties broken alphabetically by type name for stability.
+         */
+        CatalogStats: {
+            /** Episodes */
+            episodes: number;
+            /**
+             * Media
+             * @description Total canonical media items in the catalog (every Media row).
+             */
+            media: number;
+            /** Mentions */
+            mentions: number;
+            /** Podcasts */
+            podcasts: number;
+            /**
+             * Top Media Types
+             * @description Up to five media types ordered by descending count; ties broken alphabetically by type name.
+             */
+            top_media_types: components["schemas"]["MediaTypeCount"][];
+        };
         /**
          * EpisodeRead
          * @description Public representation of a podcast episode.
@@ -279,6 +335,22 @@ export interface components {
          * @enum {string}
          */
         MediaType: "book" | "movie" | "documentary" | "tv_show" | "study" | "podcast" | "article" | "person" | "place";
+        /**
+         * MediaTypeCount
+         * @description One row of the ``top_media_types`` breakdown.
+         */
+        MediaTypeCount: {
+            /**
+             * Count
+             * @description Number of media rows of this type.
+             */
+            count: number;
+            /**
+             * Media Type
+             * @description MediaType value (e.g. ``book``, ``movie``).
+             */
+            media_type: string;
+        };
         /**
          * MentionRead
          * @description Public representation of a media mention within an episode.
@@ -672,6 +744,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalog_stats_api_v2_stats_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CatalogStats"];
                 };
             };
         };

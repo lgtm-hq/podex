@@ -8,7 +8,8 @@ from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
-from podex.services.limiter import SlidingWindowRateLimiter
+from podex.services.cache import TTLCache
+from podex.services.limiter_factory import build_rate_limiter
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -16,7 +17,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or get_settings()
     configure_logging()
     app = FastAPI(title=resolved.app_name, debug=resolved.debug)
+    # Stash the resolved settings on ``app.state`` so route dependencies see
+    # the same instance ``create_app`` used to configure middleware — tests
+    # (and callers passing an explicit ``settings=``) rely on this to override
+    # e.g. ``stats_cache_ttl_seconds`` without touching global state.
     app.state.settings = resolved
+    # Process-wide read-through cache for aggregate/stats endpoints. Shared
+    # across requests (and workers within this process) so the aggregation
+    # queries only run once per TTL window.
+    app.state.cache = TTLCache()
 
     install_exception_handlers(app)
 
@@ -24,10 +33,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # outermost). Register the rate limiter and request-context logger first so
     # CORS ends up outermost and still annotates 429 responses.
     if resolved.rate_limit_enabled:
-        limiter = SlidingWindowRateLimiter(
-            max_requests=resolved.rate_limit_max_requests,
-            window_seconds=resolved.rate_limit_window_seconds,
-        )
+        limiter = build_rate_limiter(resolved)
         app.state.rate_limiter = limiter
         app.add_middleware(
             RateLimitMiddleware,

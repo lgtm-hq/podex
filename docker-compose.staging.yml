@@ -1,0 +1,89 @@
+# Staging stack for the current Podex product (read API + discovery frontend).
+# Pipeline workers, Meilisearch, magic-link auth, and billing are not on main yet;
+# see docs/staging-deployment.md and the commented stubs below.
+#
+# Quick start:
+#   cp .env.staging.example .env.staging   # edit secrets
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging up --build -d
+#   docker compose -f docker-compose.staging.yml --env-file .env.staging \
+#     run --rm api alembic upgrade head
+
+name: podex-staging
+
+services:
+  db:
+    image: postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    restart: unless-stopped
+    env_file:
+      - path: .env.staging
+        required: true
+    environment:
+      POSTGRES_USER: podex
+      POSTGRES_DB: podex
+    volumes:
+      - podex_staging_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U podex -d podex"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - path: .env.staging
+        required: true
+    environment:
+      PODEX_ENVIRONMENT: ${PODEX_ENVIRONMENT:-staging}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python -c "import urllib.request; urllib.request.urlopen(''http://localhost:8000/health'')"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        PUBLIC_API_URL: ${PUBLIC_API_URL:-http://api:8000/api/v2}
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-4321}:4321"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # Future services (not wired on main yet):
+  #
+  # redis:
+  #   image: redis:7-alpine
+  #   restart: unless-stopped
+  #
+  # meilisearch:
+  #   image: getmeili/meilisearch:v1.12
+  #   env_file:
+  #     - path: .env.staging
+  #       required: true
+  #   ...
+  #
+  # worker / scheduler:
+  #   build: ./backend
+  #   command: ["python", "-m", "podex.worker"]
+  #   ...
+
+volumes:
+  podex_staging_pgdata:
