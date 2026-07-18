@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.22.0] - 2026-07-18
+
+### Added
+
+- **extraction**: persist extraction results as replay-safe review candidates (#255)
+  (3839355)
+
 ## [0.21.0] - 2026-07-18
 
 ### Added
