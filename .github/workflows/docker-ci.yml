@@ -1,0 +1,194 @@
+---
+name: CI - Docker Build & Publish
+# Builds and publishes the backend + frontend container images to GHCR via
+# the lgtm-ci reusable-docker workflow.
+#   - pull_request / push to main / merge_group: build only (push=false)
+#     using validate-on-pr for native per-arch validation.
+#   - push to tag v*.*.*:            publish semver + latest tags to
+#     ghcr.io/lgtm-hq/podex-backend and podex-frontend, cosign-signed,
+#     with SBOM + provenance attestations.
+#
+# There is no release: trigger — release-auto-tag.yml already creates the
+# GitHub Release from the tag, so a release trigger would rebuild the same
+# image a second time.
+
+"on":
+  push:
+    branches: [main]
+    tags: ['v*.*.*']
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+# Cancel superseded PR validate runs; never cancel main/tag publishes (a
+# cancelled publish leaves GHCR tags / signatures in a partial state).
+concurrency:
+  group: docker-ci-${{ github.ref }}
+  cancel-in-progress: >-
+    ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Org ruleset (checks-podex): suggested add — docker-backend / 🐳 Backend Image
+  backend:
+    name: 🐳 Backend Image
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+    with:
+      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      context: backend
+      file: backend/Dockerfile
+      image-name: lgtm-hq/podex-backend
+      # docker/metadata-action's `type=semver,pattern={{version}}` accepts the
+      # `v`-prefixed tag verbatim and emits bare-semver tags (e.g. 1.2.3,
+      # 1.2, 1) — no client-side strip needed. GitHub Actions expressions
+      # have no substring() function.
+      version: >-
+        ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      push: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group'
+        && startsWith(github.ref, 'refs/tags/v') }}
+      validate-on-pr: >-
+        ${{ github.event_name == 'pull_request'
+        || github.event_name == 'merge_group' }}
+      # amd64 only for PR speed; publish multi-arch on tags.
+      platforms: >-
+        ${{ startsWith(github.ref, 'refs/tags/v')
+        && 'linux/amd64,linux/arm64'
+        || 'linux/amd64' }}
+      runner-map: '{"linux/arm64":"ubuntu-24.04-arm"}'
+      tag-latest: true
+      scan: true
+      # Advisory-only on non-tag; fail the tag publish on CRITICAL/HIGH.
+      scan-exit-code: >-
+        ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+      cosign-sign: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      cache-registry-ref: ghcr.io/lgtm-hq/podex-backend:cache
+      no-cache: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      # provenance/sbom generate manifest lists incompatible with the --load
+      # used during validate-on-pr; only emit on publish.
+      provenance: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group' }}
+      sbom: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group' }}
+      # harden-runner reads the raw workflow inputs (not resolved presets)
+      # BEFORE the allowlist resolver applies the docker preset, and since
+      # lgtm-ci v0.50.0 a caller-provided allowed-endpoints REPLACES the
+      # preset baseline. Full expanded list = docker preset defaults + trivy
+      # (get.trivy.dev; DB pulled from ghcr with mirror.gcr.io / ecr fallbacks)
+      # + sigstore hosts (cosign keyless signing on tag publish) + pypi hosts
+      # (uv sync in the builder stage resolves from pypi.org via the runner
+      # egress proxy under harden-runner).
+      allowed-endpoints-mode: replace
+      allowed-endpoints: >
+        github.com:443
+        api.github.com:443
+        codeload.github.com:443
+        objects.githubusercontent.com:443
+        raw.githubusercontent.com:443
+        release-assets.githubusercontent.com:443
+        github-releases.githubusercontent.com:443
+        pipelines.actions.githubusercontent.com:443
+        ghcr.io:443
+        pkg-containers.githubusercontent.com:443
+        docker.io:443
+        registry-1.docker.io:443
+        auth.docker.io:443
+        production.cloudflare.docker.com:443
+        production.cloudfront.docker.com:443
+        gcr.io:443
+        mirror.gcr.io:443
+        public.ecr.aws:443
+        get.trivy.dev:443
+        fulcio.sigstore.dev:443
+        rekor.sigstore.dev:443
+        tuf-repo-cdn.sigstore.dev:443
+        timestamp.sigstore.dev:443
+        pypi.org:443
+        files.pythonhosted.org:443
+
+  # Org ruleset (checks-podex): suggested add — docker-frontend / 🎨 Frontend
+  frontend:
+    name: 🎨 Frontend Image
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@0b8069a00cbda26514e00b8a551bad8e754d38d7  # v0.58.0
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      security-events: write
+    with:
+      tooling-ref: '0b8069a00cbda26514e00b8a551bad8e754d38d7'  # v0.58.0
+      context: frontend
+      file: frontend/Dockerfile
+      image-name: lgtm-hq/podex-frontend
+      # See backend job comment — metadata-action strips the leading `v`.
+      version: >-
+        ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '' }}
+      push: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group'
+        && startsWith(github.ref, 'refs/tags/v') }}
+      validate-on-pr: >-
+        ${{ github.event_name == 'pull_request'
+        || github.event_name == 'merge_group' }}
+      platforms: >-
+        ${{ startsWith(github.ref, 'refs/tags/v')
+        && 'linux/amd64,linux/arm64'
+        || 'linux/amd64' }}
+      runner-map: '{"linux/arm64":"ubuntu-24.04-arm"}'
+      tag-latest: true
+      scan: true
+      scan-exit-code: >-
+        ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '0' }}
+      cosign-sign: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      cache-registry-ref: ghcr.io/lgtm-hq/podex-frontend:cache
+      no-cache: ${{ startsWith(github.ref, 'refs/tags/v') }}
+      provenance: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group' }}
+      sbom: >-
+        ${{ github.event_name != 'pull_request'
+        && github.event_name != 'merge_group' }}
+      # Same rationale as `backend.allowed-endpoints`. Frontend adds
+      # registry.npmjs.org (transitive npm packages resolved by
+      # `bun install`, which reaches out to the npm registry on cold cache).
+      allowed-endpoints-mode: replace
+      allowed-endpoints: >
+        github.com:443
+        api.github.com:443
+        codeload.github.com:443
+        objects.githubusercontent.com:443
+        raw.githubusercontent.com:443
+        release-assets.githubusercontent.com:443
+        github-releases.githubusercontent.com:443
+        pipelines.actions.githubusercontent.com:443
+        ghcr.io:443
+        pkg-containers.githubusercontent.com:443
+        docker.io:443
+        registry-1.docker.io:443
+        auth.docker.io:443
+        production.cloudflare.docker.com:443
+        production.cloudfront.docker.com:443
+        gcr.io:443
+        mirror.gcr.io:443
+        public.ecr.aws:443
+        get.trivy.dev:443
+        fulcio.sigstore.dev:443
+        rekor.sigstore.dev:443
+        tuf-repo-cdn.sigstore.dev:443
+        timestamp.sigstore.dev:443
+        registry.npmjs.org:443
