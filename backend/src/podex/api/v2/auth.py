@@ -192,11 +192,6 @@ def _to_saved_media_read(*, saved: SavedMediaData) -> SavedMediaRead:
     )
 
 
-@router.post(
-    "/auth/magic-link/request",
-    response_model=AuthMagicLinkRequestResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
 def request_auth_magic_link(
     payload: AuthMagicLinkRequest,
     db: DbSession,
@@ -234,7 +229,6 @@ def request_auth_magic_link(
     return AuthMagicLinkRequestResponse()
 
 
-@router.post("/auth/magic-link/verify", response_model=AuthSessionRead)
 def verify_auth_magic_link(
     payload: AuthMagicLinkVerifyRequest,
     response: Response,
@@ -264,7 +258,6 @@ def verify_auth_magic_link(
     )
 
 
-@router.post("/auth/logout", response_model=AuthLogoutResponse)
 def logout_account_session(
     request: Request,
     response: Response,
@@ -281,7 +274,6 @@ def logout_account_session(
     return AuthLogoutResponse(signed_out=signed_out)
 
 
-@router.get("/me", response_model=AccountUserRead)
 def get_current_account(
     request: Request,
     db: DbSession,
@@ -293,7 +285,6 @@ def get_current_account(
     return AccountUserRead.model_validate(user)
 
 
-@router.get("/me/saves", response_model=SavedMediaListRead)
 def list_account_saved_media(
     request: Request,
     db: DbSession,
@@ -309,7 +300,6 @@ def list_account_saved_media(
     )
 
 
-@router.put("/me/saves/{media_id}", response_model=SavedMediaRead)
 def put_account_saved_media(
     media_id: int,
     request: Request,
@@ -326,7 +316,6 @@ def put_account_saved_media(
     return _to_saved_media_read(saved=saved)
 
 
-@router.delete("/me/saves/{media_id}", response_model=SavedMediaDeleteResponse)
 def delete_account_saved_media(
     media_id: int,
     request: Request,
@@ -340,7 +329,6 @@ def delete_account_saved_media(
     return SavedMediaDeleteResponse(deleted=deleted)
 
 
-@router.get("/me/follows", response_model=FollowedPodcastListRead)
 def list_account_followed_podcasts(
     request: Request,
     db: DbSession,
@@ -362,7 +350,6 @@ def list_account_followed_podcasts(
     )
 
 
-@router.put("/me/follows/{podcast_id}", response_model=FollowedPodcastRead)
 def put_account_followed_podcast(
     podcast_id: int,
     request: Request,
@@ -382,10 +369,6 @@ def put_account_followed_podcast(
     )
 
 
-@router.delete(
-    "/me/follows/{podcast_id}",
-    response_model=FollowedPodcastDeleteResponse,
-)
 def delete_account_followed_podcast(
     podcast_id: int,
     request: Request,
@@ -399,7 +382,6 @@ def delete_account_followed_podcast(
     return FollowedPodcastDeleteResponse(deleted=deleted)
 
 
-@router.get("/me/alerts", response_model=AlertRuleListRead)
 def list_account_alert_rules(
     request: Request,
     db: DbSession,
@@ -415,7 +397,6 @@ def list_account_alert_rules(
     )
 
 
-@router.post("/me/alerts", response_model=AlertRuleRead)
 def create_account_alert_rule(
     payload: AlertRuleCreateRequest,
     request: Request,
@@ -441,7 +422,6 @@ def create_account_alert_rule(
     return AlertRuleRead.model_validate(rule)
 
 
-@router.patch("/me/alerts/{rule_id}", response_model=AlertRuleRead)
 def update_account_alert_rule(
     rule_id: int,
     payload: AlertRuleUpdateRequest,
@@ -463,7 +443,6 @@ def update_account_alert_rule(
     return AlertRuleRead.model_validate(rule)
 
 
-@router.delete("/me/alerts/{rule_id}", response_model=AlertRuleDeleteResponse)
 def delete_account_alert_rule(
     rule_id: int,
     request: Request,
@@ -477,7 +456,6 @@ def delete_account_alert_rule(
     return AlertRuleDeleteResponse(deleted=deleted)
 
 
-@router.post("/me/alerts/evaluate", response_model=AlertEvaluationRead)
 def evaluate_account_alert_rules(
     request: Request,
     db: DbSession,
@@ -500,7 +478,6 @@ def evaluate_account_alert_rules(
     )
 
 
-@router.get("/me/digests", response_model=DigestListRead)
 def list_current_account_digests(
     request: Request,
     db: DbSession,
@@ -516,7 +493,6 @@ def list_current_account_digests(
     )
 
 
-@router.post("/me/digests/send", response_model=DigestSendResponse)
 def send_current_account_digest(
     request: Request,
     db: DbSession,
@@ -552,7 +528,6 @@ def send_current_account_digest(
     )
 
 
-@router.get("/me/preferences", response_model=PreferenceRead)
 def get_current_account_preferences(
     request: Request,
     db: DbSession,
@@ -565,7 +540,6 @@ def get_current_account_preferences(
     return PreferenceRead.model_validate(preferences)
 
 
-@router.patch("/me/preferences", response_model=PreferenceRead)
 def update_current_account_preferences(
     payload: PreferenceUpdateRequest,
     request: Request,
@@ -584,7 +558,6 @@ def update_current_account_preferences(
     return PreferenceRead.model_validate(preferences)
 
 
-@router.get("/me/subscription", response_model=SubscriptionRead)
 def get_current_account_subscription(
     request: Request,
     db: DbSession,
@@ -616,7 +589,6 @@ def get_current_account_subscription(
     )
 
 
-@router.post("/me/subscription/checkout", response_model=SubscriptionCheckoutRead)
 def begin_current_account_checkout(
     request: Request,
     db: DbSession,
@@ -645,3 +617,152 @@ def begin_current_account_checkout(
         provider=checkout.provider,
         checkout_url=checkout.checkout_url,
     )
+
+
+router.add_api_route(
+    "/auth/magic-link/request",
+    request_auth_magic_link,
+    methods=["POST"],
+    response_model=AuthMagicLinkRequestResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+
+router.add_api_route(
+    "/auth/magic-link/verify",
+    verify_auth_magic_link,
+    methods=["POST"],
+    response_model=AuthSessionRead,
+)
+
+router.add_api_route(
+    "/auth/logout",
+    logout_account_session,
+    methods=["POST"],
+    response_model=AuthLogoutResponse,
+)
+
+router.add_api_route(
+    "/me",
+    get_current_account,
+    methods=["GET"],
+    response_model=AccountUserRead,
+)
+
+router.add_api_route(
+    "/me/saves",
+    list_account_saved_media,
+    methods=["GET"],
+    response_model=SavedMediaListRead,
+)
+
+router.add_api_route(
+    "/me/saves/{media_id}",
+    put_account_saved_media,
+    methods=["PUT"],
+    response_model=SavedMediaRead,
+)
+
+router.add_api_route(
+    "/me/saves/{media_id}",
+    delete_account_saved_media,
+    methods=["DELETE"],
+    response_model=SavedMediaDeleteResponse,
+)
+
+router.add_api_route(
+    "/me/follows",
+    list_account_followed_podcasts,
+    methods=["GET"],
+    response_model=FollowedPodcastListRead,
+)
+
+router.add_api_route(
+    "/me/follows/{podcast_id}",
+    put_account_followed_podcast,
+    methods=["PUT"],
+    response_model=FollowedPodcastRead,
+)
+
+router.add_api_route(
+    "/me/follows/{podcast_id}",
+    delete_account_followed_podcast,
+    methods=["DELETE"],
+    response_model=FollowedPodcastDeleteResponse,
+)
+
+router.add_api_route(
+    "/me/alerts",
+    list_account_alert_rules,
+    methods=["GET"],
+    response_model=AlertRuleListRead,
+)
+
+router.add_api_route(
+    "/me/alerts",
+    create_account_alert_rule,
+    methods=["POST"],
+    response_model=AlertRuleRead,
+)
+
+router.add_api_route(
+    "/me/alerts/{rule_id}",
+    update_account_alert_rule,
+    methods=["PATCH"],
+    response_model=AlertRuleRead,
+)
+
+router.add_api_route(
+    "/me/alerts/{rule_id}",
+    delete_account_alert_rule,
+    methods=["DELETE"],
+    response_model=AlertRuleDeleteResponse,
+)
+
+router.add_api_route(
+    "/me/alerts/evaluate",
+    evaluate_account_alert_rules,
+    methods=["POST"],
+    response_model=AlertEvaluationRead,
+)
+
+router.add_api_route(
+    "/me/digests",
+    list_current_account_digests,
+    methods=["GET"],
+    response_model=DigestListRead,
+)
+
+router.add_api_route(
+    "/me/digests/send",
+    send_current_account_digest,
+    methods=["POST"],
+    response_model=DigestSendResponse,
+)
+
+router.add_api_route(
+    "/me/preferences",
+    get_current_account_preferences,
+    methods=["GET"],
+    response_model=PreferenceRead,
+)
+
+router.add_api_route(
+    "/me/preferences",
+    update_current_account_preferences,
+    methods=["PATCH"],
+    response_model=PreferenceRead,
+)
+
+router.add_api_route(
+    "/me/subscription",
+    get_current_account_subscription,
+    methods=["GET"],
+    response_model=SubscriptionRead,
+)
+
+router.add_api_route(
+    "/me/subscription/checkout",
+    begin_current_account_checkout,
+    methods=["POST"],
+    response_model=SubscriptionCheckoutRead,
+)
