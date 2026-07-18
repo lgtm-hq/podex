@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.18.0] - 2026-07-18
+
+### Added
+
+- **ingest**: add discovery providers and cross-source dedup orchestrator (#247)
+  (f61c574)
+
 ## [0.17.0] - 2026-07-18
 
 ### Added
