@@ -103,6 +103,9 @@ def delete_alert_rule(*, db: Session, user_id: int, rule_id: int) -> bool:
     rule = _get_rule(db=db, user_id=user_id, rule_id=rule_id)
     if rule is None:
         return False
+    db.query(AccountAlertEvent).filter(
+        AccountAlertEvent.rule_id == rule.id,
+    ).delete(synchronize_session=False)
     db.delete(rule)
     db.flush()
     return True
