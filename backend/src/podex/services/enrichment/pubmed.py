@@ -254,9 +254,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             Parsed article data or None.
         """
         try:
-            root = ET.fromstring(  # nosec B314 - trusted NCBI endpoint
-                xml_text
-            )
+            root = ET.fromstring(xml_text)  # noqa: S314 # nosec B314
             article = root.find(".//PubmedArticle")
             if article is None:
                 return None
