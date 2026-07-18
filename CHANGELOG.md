@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.26.0] - 2026-07-18
+
+### Added
+
+- **media**: add canonical merge, split, and ops media commands (#264) (04fb105)
+
 ## [0.25.0] - 2026-07-18
 
 ### Added
