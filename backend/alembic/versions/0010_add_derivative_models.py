@@ -9,7 +9,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import op  # type: ignore[attr-defined]
 from podex.models.semantic_chunk import PgVectorType
 
 revision: str = "0010"

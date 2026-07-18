@@ -76,7 +76,7 @@ class PgVectorType(TypeDecorator[list[float] | None]):
         return None
 
 
-@compiles(PgVectorType, "postgresql")
+@compiles(PgVectorType, "postgresql")  # type: ignore[misc, unused-ignore]
 def _compile_pgvector_type(
     type_: PgVectorType,
     compiler: object,
@@ -86,7 +86,7 @@ def _compile_pgvector_type(
     return f"vector({type_.dimensions})"
 
 
-@compiles(PgVectorType)
+@compiles(PgVectorType)  # type: ignore[misc, unused-ignore]
 def _compile_default_vector_type(
     type_: PgVectorType,
     compiler: object,
