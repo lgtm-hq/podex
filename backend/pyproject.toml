@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "podex"
-version = "0.11.0"
+version = "0.13.0"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
 requires-python = ">=3.11"
 license = "AGPL-3.0-only"
@@ -25,6 +25,7 @@ dependencies = [
   "psycopg[binary]>=3.2",
   "sqlalchemy>=2.0",
   "alembic>=1.13",
+  "redis>=5.0",
 ]
 
 [project.urls]
@@ -35,8 +36,9 @@ Issues = "https://github.com/lgtm-hq/podex/issues"
 [dependency-groups]
 dev = [
   "assertpy>=1.1",
+  "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.80.8",
+  "lintro==0.80.10",
   "mypy>=1.14",
   "pytest>=8.0",
   "pytest-cov>=6.0",

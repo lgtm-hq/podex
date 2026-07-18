@@ -1,0 +1,4 @@
+# actionlint configuration
+# See https://github.com/rhysd/actionlint/blob/main/docs/config.md
+---
+# Podex uses GitHub-hosted runners only; no self-hosted runner labels to declare.

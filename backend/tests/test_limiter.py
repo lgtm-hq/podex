@@ -1,9 +1,17 @@
-"""Unit tests for the sliding-window rate limiter."""
+"""Unit tests for the sliding-window rate limiter (in-memory + Redis backends)."""
 
+import logging
+from typing import Any
+
+import fakeredis
 import pytest
+import redis
 from assertpy import assert_that
 
-from podex.services.limiter import SlidingWindowRateLimiter
+from podex.config import Settings
+from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
+from podex.services.limiter_factory import build_rate_limiter
+from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
 
 def test_allows_requests_under_the_limit() -> None:
@@ -123,3 +131,326 @@ def test_window_must_be_positive(bad_window: float) -> None:
     assert_that(SlidingWindowRateLimiter).raises(ValueError).when_called_with(
         max_requests=1, window_seconds=bad_window
     )
+
+
+def _make_redis_limiter(
+    *, max_requests: int = 2, window_seconds: float = 60.0
+) -> RedisSlidingWindowRateLimiter:
+    """Return a Redis-backed limiter wired to a fresh in-memory fake."""
+    client = fakeredis.FakeStrictRedis()
+    return RedisSlidingWindowRateLimiter(
+        client,
+        max_requests=max_requests,
+        window_seconds=window_seconds,
+        key_prefix="test:ratelimit",
+    )
+
+
+def test_redis_limiter_allows_requests_under_the_limit() -> None:
+    """Redis-backed limiter admits requests below the ceiling."""
+    limiter = _make_redis_limiter(max_requests=3, window_seconds=60.0)
+
+    first = limiter.check("client", now=0.0)
+    second = limiter.check("client", now=1.0)
+
+    assert_that(first.allowed).is_true()
+    assert_that(first.remaining).is_equal_to(2)
+    assert_that(second.allowed).is_true()
+    assert_that(second.remaining).is_equal_to(1)
+
+
+def test_redis_limiter_blocks_requests_over_the_limit() -> None:
+    """Redis-backed limiter returns the same denial hints as the in-memory one."""
+    limiter = _make_redis_limiter(max_requests=2, window_seconds=60.0)
+
+    limiter.check("client", now=0.0)
+    limiter.check("client", now=1.0)
+    denied = limiter.check("client", now=2.0)
+
+    assert_that(denied.allowed).is_false()
+    assert_that(denied.remaining).is_equal_to(0)
+    assert_that(denied.limit).is_equal_to(2)
+    assert_that(denied.retry_after).is_equal_to(58.0)
+
+
+def test_redis_limiter_window_slides_to_free_capacity() -> None:
+    """Aged-out timestamps free capacity in the Redis-backed limiter too."""
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=10.0)
+
+    assert_that(limiter.check("client", now=0.0).allowed).is_true()
+    assert_that(limiter.check("client", now=5.0).allowed).is_false()
+    assert_that(limiter.check("client", now=11.0).allowed).is_true()
+
+
+def test_redis_limiter_keys_are_tracked_independently() -> None:
+    """Distinct client keys have independent budgets in Redis."""
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    assert_that(limiter.check("a", now=0.0).allowed).is_true()
+    assert_that(limiter.check("b", now=0.0).allowed).is_true()
+    assert_that(limiter.check("a", now=1.0).allowed).is_false()
+
+
+def test_redis_limiter_denied_request_does_not_extend_penalty() -> None:
+    """Rejected requests are not recorded, matching the in-memory contract."""
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=10.0)
+
+    limiter.check("client", now=0.0)
+    limiter.check("client", now=8.0)
+    allowed_again = limiter.check("client", now=10.5)
+
+    assert_that(allowed_again.allowed).is_true()
+
+
+def test_redis_limiter_two_instances_share_state() -> None:
+    """Two limiter instances wired to the same Redis enforce a shared budget.
+
+    This is the whole point of the shared store: additional workers must not
+    multiply the effective limit.
+    """
+    client = fakeredis.FakeStrictRedis()
+    worker_a = RedisSlidingWindowRateLimiter(
+        client, max_requests=2, window_seconds=60.0, key_prefix="shared"
+    )
+    worker_b = RedisSlidingWindowRateLimiter(
+        client, max_requests=2, window_seconds=60.0, key_prefix="shared"
+    )
+
+    assert_that(worker_a.check("client", now=0.0).allowed).is_true()
+    assert_that(worker_b.check("client", now=1.0).allowed).is_true()
+    assert_that(worker_a.check("client", now=2.0).allowed).is_false()
+    assert_that(worker_b.check("client", now=3.0).allowed).is_false()
+
+
+def test_redis_limiter_reset_clears_recorded_hits() -> None:
+    """``reset`` wipes every key under the limiter's prefix."""
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    limiter.check("client", now=0.0)
+    limiter.reset()
+
+    assert_that(limiter.check("client", now=1.0).allowed).is_true()
+
+
+def test_redis_limiter_uses_wall_clock_by_default() -> None:
+    """Omitting ``now`` falls back to ``time.time`` without error."""
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    decision = limiter.check("client")
+
+    assert_that(decision.allowed).is_true()
+
+
+def test_redis_limiter_exposes_configuration_via_properties() -> None:
+    """The Redis limiter reports its configured ceiling and window."""
+    limiter = _make_redis_limiter(max_requests=5, window_seconds=30.0)
+
+    assert_that(limiter.max_requests).is_equal_to(5)
+    assert_that(limiter.window_seconds).is_equal_to(30.0)
+
+
+def test_redis_limiter_rejects_non_positive_configuration() -> None:
+    """Invalid configuration is rejected the same way as the in-memory backend."""
+    client = fakeredis.FakeStrictRedis()
+
+    assert_that(RedisSlidingWindowRateLimiter).raises(ValueError).when_called_with(
+        client, max_requests=0, window_seconds=60.0
+    )
+    assert_that(RedisSlidingWindowRateLimiter).raises(ValueError).when_called_with(
+        client, max_requests=1, window_seconds=0.0
+    )
+
+
+def test_redis_limiter_matches_in_memory_decisions_over_a_sequence() -> None:
+    """Both backends must reach the same allow/deny verdict at each step.
+
+    Documents the equivalence the middleware relies on: swapping the backend
+    must not change externally observable behaviour.
+    """
+    memory = SlidingWindowRateLimiter(max_requests=3, window_seconds=10.0)
+    shared = _make_redis_limiter(max_requests=3, window_seconds=10.0)
+
+    times = [0.0, 1.0, 2.0, 3.0, 4.0, 9.5, 10.5, 11.5, 12.5]
+    for now in times:
+        memory_decision = memory.check("client", now=now)
+        redis_decision = shared.check("client", now=now)
+        assert_that(redis_decision.allowed).is_equal_to(memory_decision.allowed)
+
+
+def test_build_rate_limiter_returns_in_memory_when_redis_url_unset() -> None:
+    """An empty ``rate_limit_redis_url`` selects the in-memory backend."""
+    settings = Settings(
+        rate_limit_max_requests=4,
+        rate_limit_window_seconds=15.0,
+        rate_limit_redis_url="",
+    )
+
+    limiter = build_rate_limiter(settings)
+
+    assert_that(limiter).is_instance_of(SlidingWindowRateLimiter)
+    assert_that(limiter.max_requests).is_equal_to(4)
+    assert_that(limiter.window_seconds).is_equal_to(15.0)
+
+
+def test_build_rate_limiter_returns_redis_backend_when_url_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A non-empty ``rate_limit_redis_url`` selects the shared backend.
+
+    The factory imports ``redis`` lazily; we swap in a fakeredis-backed
+    ``from_url`` so no real network connection is attempted.
+    """
+    import redis
+
+    client = fakeredis.FakeStrictRedis()
+
+    def fake_from_url(url: str, **_: object) -> fakeredis.FakeStrictRedis:
+        """Return a shared fakeredis client regardless of URL."""
+        assert_that(url).is_equal_to("redis://localhost:6379/0")
+        return client
+
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
+
+    settings = Settings(
+        rate_limit_max_requests=2,
+        rate_limit_window_seconds=60.0,
+        rate_limit_redis_url="redis://localhost:6379/0",
+        rate_limit_redis_prefix="podex-test:ratelimit",
+    )
+
+    limiter = build_rate_limiter(settings)
+
+    assert_that(limiter).is_instance_of(RedisSlidingWindowRateLimiter)
+    assert_that(limiter.max_requests).is_equal_to(2)
+    decision = limiter.check("factory-client", now=0.0)
+    assert_that(decision.allowed).is_true()
+
+
+def test_redis_limiter_uses_redis_clock_when_now_not_provided() -> None:
+    """Without a ``now`` override the limiter uses Redis' own ``TIME`` command.
+
+    Workers writing scores based on their local clocks would produce skew:
+    one worker's slightly-future clock could evict another worker's fresh
+    hits or extend penalty windows. The Lua script derives ``now`` from
+    ``redis.call('TIME')`` so every worker agrees on the timeline.
+    """
+    limiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    first = limiter.check("client")
+    denied = limiter.check("client")
+
+    assert_that(first.allowed).is_true()
+    assert_that(denied.allowed).is_false()
+    assert_that(denied.retry_after).is_greater_than(0.0)
+    assert_that(denied.retry_after).is_less_than_or_equal_to(60.0)
+
+
+def test_redis_limiter_fails_open_on_redis_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A broken Redis must not take user traffic down.
+
+    Rate limiting is a soft guarantee; failing closed on every request during
+    a Redis outage would be worse than briefly admitting slightly more
+    traffic. The limiter logs a warning and returns an allow decision.
+    """
+
+    class _BrokenClient:
+        """Redis stand-in whose commands always raise ``ConnectionError``."""
+
+        def eval(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis on the hot path."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def scan_iter(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis on the cleanup path."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def delete(self, *_: object, **__: object) -> int:
+            """Never reached because ``scan_iter`` fails first."""
+            return 0
+
+    limiter = RedisSlidingWindowRateLimiter(
+        _BrokenClient(),
+        max_requests=2,
+        window_seconds=60.0,
+        key_prefix="fail-open-test",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="podex.services.redis_limiter"):
+        decision = limiter.check("client")
+
+    assert_that(decision.allowed).is_true()
+    assert_that(decision.limit).is_equal_to(2)
+    assert_that(decision.remaining).is_equal_to(2)
+    assert_that(decision.retry_after).is_equal_to(0.0)
+    messages = [r.getMessage() for r in caplog.records]
+    assert_that(any("failing open" in m for m in messages)).is_true()
+
+
+def test_redis_limiter_reset_swallows_redis_errors(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``reset`` must never surface Redis errors to fixture cleanup callers."""
+
+    class _BrokenClient:
+        """Redis stand-in whose ``scan_iter`` blows up."""
+
+        def scan_iter(self, *_: object, **__: object) -> object:
+            """Simulate an unreachable Redis during teardown."""
+            raise redis.ConnectionError("simulated redis outage")
+
+        def delete(self, *_: object, **__: object) -> int:
+            """Never reached because ``scan_iter`` fails first."""
+            return 0
+
+    limiter = RedisSlidingWindowRateLimiter(
+        _BrokenClient(),
+        max_requests=1,
+        window_seconds=60.0,
+        key_prefix="fail-open-test",
+    )
+
+    with caplog.at_level(logging.WARNING, logger="podex.services.redis_limiter"):
+        limiter.reset()
+
+    messages = [r.getMessage() for r in caplog.records]
+    assert_that(any("reset failed" in m for m in messages)).is_true()
+
+
+def test_build_rate_limiter_configures_finite_redis_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The factory must give the Redis client finite connect/socket timeouts.
+
+    Without bounded timeouts a slow or unavailable Redis stalls every request
+    (the limiter runs inline in middleware). The factory owns client
+    construction, so the timeouts must be applied there.
+    """
+    captured: dict[str, Any] = {}
+
+    def fake_from_url(url: str, **kwargs: Any) -> fakeredis.FakeStrictRedis:
+        """Capture kwargs so the test can assert on the wiring."""
+        captured["url"] = url
+        captured["kwargs"] = kwargs
+        return fakeredis.FakeStrictRedis()
+
+    monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
+
+    settings = Settings(rate_limit_redis_url="redis://localhost:6379/0")
+
+    build_rate_limiter(settings)
+
+    assert_that(captured["kwargs"]).contains_key("socket_connect_timeout")
+    assert_that(captured["kwargs"]).contains_key("socket_timeout")
+    assert_that(captured["kwargs"]["socket_connect_timeout"]).is_greater_than(0.0)
+    assert_that(captured["kwargs"]["socket_timeout"]).is_greater_than(0.0)
+
+
+def test_both_backends_satisfy_the_rate_limiter_protocol() -> None:
+    """Both backends structurally implement the ``RateLimiter`` protocol."""
+    memory: RateLimiter = SlidingWindowRateLimiter(max_requests=1, window_seconds=60.0)
+    shared: RateLimiter = _make_redis_limiter(max_requests=1, window_seconds=60.0)
+
+    assert_that(isinstance(memory, RateLimiter)).is_true()
+    assert_that(isinstance(shared, RateLimiter)).is_true()

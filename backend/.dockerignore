@@ -1,10 +1,30 @@
-.venv
-__pycache__
-*.py[cod]
-.pytest_cache
+# Never send the pre-built venv, caches, or local DBs to the daemon.
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 .coverage
-htmlcov
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local SQLite artefacts (alembic + app run in this dir by default; see
+# AGENTS.md — `podex.db` lives here at `sqlite:///./podex.db`).
 podex.db
+podex.db-*
+*.sqlite
+*.sqlite3
+
+# Editor / OS noise.
 .env
 .env.*
-!.env.staging.example
+.DS_Store
+
+# Tests + tooling don't belong in the production image.
+tests/
+.lintro-config.yaml

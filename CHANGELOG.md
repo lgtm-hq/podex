@@ -22,6 +22,48 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.13.0] - 2026-07-18
+
+### Added
+
+- **api**: extract query services and add cached stats (#204) (c440338)
+
+## [0.12.3] - 2026-07-18
+
+### Fixed
+
+- **api**: back rate limiter with Redis shared store (#202) (5c1f06a)
+
+## [0.12.2] - 2026-07-18
+
+### Fixed
+
+- **ci**: make docker scan gate advisory until suppressions can load (#224) (a542aa2)
+
+## [0.12.1] - 2026-07-18
+
+### Fixed
+
+- **docker**: unblock tag-publish Trivy gate on unfixed base CVEs (#221) (98b50e6)
+
+## [0.12.0] - 2026-07-18
+
+### Added
+
+- **docker**: build and publish backend and frontend images to GHCR (#208) (86acfd2)
+
+### Changed
+
+- **ci**: adopt remaining lgtm-ci security workflows (#206) (a8fcbb1)
+- **ci**: finish lint config scaffolding for lgtm-ci adoption (#207) (638266f)
+- **deps-dev**: update dependency lintro to 0.80.10 (patch) (#205) (fbdcf24)
+- **deps-dev**: update dependency lintro to 0.80.9 (patch) (#197) (54ad33e)
+- **deps**: pin dependency openapi-typescript to 7.13.0 (#195) (2666342)
+
+### Fixed
+
+- **ci**: grant contents: write to sbom caller job (#210) (c1ced59)
+
 ## [0.11.0] - 2026-07-17
 
 ### Added

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter
 
-from podex.api.v2 import episodes, media, podcasts
+from podex.api.v2 import episodes, media, podcasts, stats
 
 api_v2_router = APIRouter(tags=["v2"])
 
@@ -16,3 +16,4 @@ api_v2_router.add_api_route("/status", read_status, methods=["GET"])
 api_v2_router.include_router(podcasts.router)
 api_v2_router.include_router(episodes.router)
 api_v2_router.include_router(media.router)
+api_v2_router.include_router(stats.router)
