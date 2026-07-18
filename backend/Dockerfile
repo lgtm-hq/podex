@@ -66,6 +66,11 @@ RUN groupadd --system --gid 1001 podex \
     && useradd --system --uid 1001 --gid podex --home-dir /app --no-log-init --shell /usr/sbin/nologin podex \
     && install -d -o podex -g podex /app
 
+# Drop the base image's system pip: the app runs from the uv-built venv and
+# never installs packages at runtime, and the bundled pip trips the tag-publish
+# Trivy gate whenever it lags a fixable CVE (#220).
+RUN python -m pip uninstall --yes pip
+
 WORKDIR /app
 
 # Copy the resolved venv and runtime code from the builder. Ownership is set
