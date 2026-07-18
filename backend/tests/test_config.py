@@ -27,3 +27,11 @@ def test_rate_limit_defaults_are_generous() -> None:
 def test_get_settings_is_cached() -> None:
     """``get_settings`` returns a cached singleton."""
     assert_that(get_settings()).is_same_as(get_settings())
+
+
+def test_rate_limit_redis_url_defaults_to_disabled() -> None:
+    """Default deployment stays on the in-memory backend (empty Redis URL)."""
+    settings = Settings()
+
+    assert_that(settings.rate_limit_redis_url).is_equal_to("")
+    assert_that(settings.rate_limit_redis_prefix).is_not_empty()
