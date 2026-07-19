@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.35.0] - 2026-07-19
+
+### Added
+
+- **accounts**: add self-serve data export and account deletion (#293) (ae3391e)
+
 ## [0.34.1] - 2026-07-19
 
 ### Fixed
