@@ -1,0 +1,14 @@
+---
+import AccountSettings from "../../components/AccountSettings";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Settings" description="Notification preferences for your account.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Account
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Settings</h1>
+  </section>
+  <AccountSettings client:load />
+</Layout>

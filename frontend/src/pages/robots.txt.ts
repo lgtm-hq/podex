@@ -14,6 +14,8 @@ export function buildRobotsTxt(siteUrl: string = SITE_URL): string {
     "Allow: /",
     "Disallow: /api/",
     "Disallow: /ops/",
+    "Disallow: /account/",
+    "Disallow: /auth/",
     "",
     `Sitemap: ${siteUrl.replace(/\/+$/, "")}/sitemap.xml`,
     "",
