@@ -1642,6 +1642,225 @@
         "title": "OpsReviewThroughputRead",
         "type": "object"
       },
+      "OpsTakedownDecisionRead": {
+        "description": "Decision outcome plus execution summary for approvals.",
+        "properties": {
+          "execution": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpsTakedownExecutionRead"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "request": {
+            "$ref": "#/components/schemas/OpsTakedownRequestRead"
+          }
+        },
+        "required": [
+          "request",
+          "execution"
+        ],
+        "title": "OpsTakedownDecisionRead",
+        "type": "object"
+      },
+      "OpsTakedownDecisionRequest": {
+        "description": "Operator decision for one pending takedown request.",
+        "properties": {
+          "actor_name": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "note": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Note",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "approved",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "note"
+        ],
+        "title": "OpsTakedownDecisionRequest",
+        "type": "object"
+      },
+      "OpsTakedownExecutionRead": {
+        "description": "Suppression counts recorded when an approval executes.",
+        "properties": {
+          "derivatives_suppressed": {
+            "title": "Derivatives Suppressed",
+            "type": "integer"
+          },
+          "episode_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Episode Ids",
+            "type": "array"
+          },
+          "media_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Media Ids",
+            "type": "array"
+          },
+          "mentions_unpublished": {
+            "title": "Mentions Unpublished",
+            "type": "integer"
+          },
+          "source_opt_outs_registered": {
+            "title": "Source Opt Outs Registered",
+            "type": "integer"
+          },
+          "transcripts_suppressed": {
+            "title": "Transcripts Suppressed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "episode_ids",
+          "media_ids",
+          "transcripts_suppressed",
+          "derivatives_suppressed",
+          "mentions_unpublished",
+          "source_opt_outs_registered"
+        ],
+        "title": "OpsTakedownExecutionRead",
+        "type": "object"
+      },
+      "OpsTakedownRequestRead": {
+        "description": "Privileged view of one takedown case.",
+        "properties": {
+          "basis": {
+            "title": "Basis",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "decided_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided At"
+          },
+          "decided_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decided By"
+          },
+          "decision_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Decision Note"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "metadata_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Json"
+          },
+          "requested_actions_json": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Requested Actions Json",
+            "type": "array"
+          },
+          "requester_email": {
+            "title": "Requester Email",
+            "type": "string"
+          },
+          "requester_name": {
+            "title": "Requester Name",
+            "type": "string"
+          },
+          "requester_type": {
+            "title": "Requester Type",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "integer"
+          },
+          "subject_type": {
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "subject_type",
+          "subject_id",
+          "requester_type",
+          "requester_name",
+          "requester_email",
+          "basis",
+          "requested_actions_json",
+          "status",
+          "decision_note",
+          "decided_by",
+          "decided_at",
+          "metadata_json",
+          "created_at"
+        ],
+        "title": "OpsTakedownRequestRead",
+        "type": "object"
+      },
       "OpsTranscriptPurgeRead": {
         "description": "Result of an operator-approved transcript purge.",
         "properties": {
@@ -2190,6 +2409,105 @@
         ],
         "title": "SubscriptionRead",
         "type": "object"
+      },
+      "TakedownRequestCreate": {
+        "description": "Public takedown intake submission.",
+        "properties": {
+          "basis": {
+            "maxLength": 5000,
+            "minLength": 1,
+            "title": "Basis",
+            "type": "string"
+          },
+          "requested_actions": {
+            "items": {
+              "enum": [
+                "suppress_raw_transcript",
+                "suppress_derivatives",
+                "unpublish_mentions",
+                "register_source_opt_out"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Requested Actions",
+            "type": "array"
+          },
+          "requester_email": {
+            "maxLength": 320,
+            "minLength": 3,
+            "title": "Requester Email",
+            "type": "string"
+          },
+          "requester_name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Requester Name",
+            "type": "string"
+          },
+          "requester_type": {
+            "enum": [
+              "creator",
+              "rights_holder",
+              "operator"
+            ],
+            "title": "Requester Type",
+            "type": "string"
+          },
+          "subject_id": {
+            "title": "Subject Id",
+            "type": "integer"
+          },
+          "subject_type": {
+            "enum": [
+              "podcast",
+              "episode",
+              "mention"
+            ],
+            "title": "Subject Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subject_type",
+          "subject_id",
+          "requester_type",
+          "requester_name",
+          "requester_email",
+          "basis",
+          "requested_actions"
+        ],
+        "title": "TakedownRequestCreate",
+        "type": "object"
+      },
+      "TakedownRequestCreatedRead": {
+        "description": "Acknowledgement returned to a takedown submitter.",
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status"
+        ],
+        "title": "TakedownRequestCreatedRead",
+        "type": "object"
+      },
+      "TakedownRequestStatus": {
+        "description": "Review states for takedown requests.",
+        "enum": [
+          "pending",
+          "approved",
+          "rejected"
+        ],
+        "title": "TakedownRequestStatus",
+        "type": "string"
       },
       "ValidationError": {
         "properties": {
@@ -3965,6 +4283,127 @@
         ]
       }
     },
+    "/api/v2/ops/takedown-requests": {
+      "get": {
+        "description": "List submitted takedown cases for privileged review.",
+        "operationId": "list_ops_takedown_requests_api_v2_ops_takedown_requests_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/TakedownRequestStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OpsTakedownRequestRead"
+                  },
+                  "title": "Response List Ops Takedown Requests Api V2 Ops Takedown Requests Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ops Takedown Requests",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/takedown-requests/{request_id}/decide": {
+      "post": {
+        "description": "Decide a pending takedown; approvals execute suppression immediately.",
+        "operationId": "decide_ops_takedown_request_api_v2_ops_takedown_requests__request_id__decide_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "request_id",
+            "required": true,
+            "schema": {
+              "title": "Request Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpsTakedownDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsTakedownDecisionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Decide Ops Takedown Request",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
     "/api/v2/podcasts": {
       "get": {
         "description": "List podcast sources ordered by name, paginated by ``limit``/``offset``.",
@@ -4117,6 +4556,49 @@
         "summary": "Read Status",
         "tags": [
           "v2"
+        ]
+      }
+    },
+    "/api/v2/takedowns": {
+      "post": {
+        "description": "Accept a takedown submission for privileged review.",
+        "operationId": "submit_takedown_request_api_v2_takedowns_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TakedownRequestCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TakedownRequestCreatedRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Takedown Request",
+        "tags": [
+          "v2",
+          "takedowns"
         ]
       }
     },
