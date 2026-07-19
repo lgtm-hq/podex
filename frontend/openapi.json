@@ -801,6 +801,920 @@
         "title": "MentionRead",
         "type": "object"
       },
+      "OpsAlertDeliveryRead": {
+        "description": "Generated and delivered account notification health.",
+        "properties": {
+          "delivered_digests_last_24h": {
+            "title": "Delivered Digests Last 24H",
+            "type": "integer"
+          },
+          "delivered_events_last_24h": {
+            "title": "Delivered Events Last 24H",
+            "type": "integer"
+          },
+          "generated_events_last_24h": {
+            "title": "Generated Events Last 24H",
+            "type": "integer"
+          },
+          "pending_events": {
+            "title": "Pending Events",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generated_events_last_24h",
+          "delivered_digests_last_24h",
+          "delivered_events_last_24h",
+          "pending_events"
+        ],
+        "title": "OpsAlertDeliveryRead",
+        "type": "object"
+      },
+      "OpsAuditLogEntryRead": {
+        "description": "One immutable audit record.",
+        "properties": {
+          "action": {
+            "title": "Action",
+            "type": "string"
+          },
+          "actor_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Actor Name"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "metadata_json": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metadata Json"
+          },
+          "resource_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Id"
+          },
+          "resource_identifier": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resource Identifier"
+          },
+          "resource_type": {
+            "title": "Resource Type",
+            "type": "string"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "action",
+          "resource_type",
+          "resource_id",
+          "resource_identifier",
+          "actor_name",
+          "summary",
+          "metadata_json",
+          "created_at"
+        ],
+        "title": "OpsAuditLogEntryRead",
+        "type": "object"
+      },
+      "OpsAuditLogListRead": {
+        "description": "Paginated audit log payload.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpsAuditLogEntryRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "title": "OpsAuditLogListRead",
+        "type": "object"
+      },
+      "OpsIngestionRunRead": {
+        "description": "Ingestion run summary for pipeline views.",
+        "properties": {
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "duration_seconds": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Duration Seconds"
+          },
+          "error_summary": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Summary"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "error_summary",
+          "started_at",
+          "completed_at",
+          "created_at",
+          "duration_seconds"
+        ],
+        "title": "OpsIngestionRunRead",
+        "type": "object"
+      },
+      "OpsMetricsRead": {
+        "description": "Combined operational metrics for the ops dashboard.",
+        "properties": {
+          "alerts": {
+            "$ref": "#/components/schemas/OpsAlertDeliveryRead"
+          },
+          "measured_at": {
+            "format": "date-time",
+            "title": "Measured At",
+            "type": "string"
+          },
+          "review": {
+            "$ref": "#/components/schemas/OpsReviewThroughputRead"
+          }
+        },
+        "required": [
+          "measured_at",
+          "review",
+          "alerts"
+        ],
+        "title": "OpsMetricsRead",
+        "type": "object"
+      },
+      "OpsPipelineActivityRead": {
+        "description": "Recent pipeline activity.",
+        "properties": {
+          "runs": {
+            "items": {
+              "$ref": "#/components/schemas/OpsIngestionRunRead"
+            },
+            "title": "Runs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "runs"
+        ],
+        "title": "OpsPipelineActivityRead",
+        "type": "object"
+      },
+      "OpsPodcastCreateRequest": {
+        "description": "Create a managed podcast.",
+        "properties": {
+          "cover_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 2000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discovery_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Source"
+          },
+          "name": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "maxLength": 255,
+            "minLength": 1,
+            "title": "Slug",
+            "type": "string"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/OpsPodcastSourcesInput",
+            "default": {}
+          },
+          "status": {
+            "$ref": "#/components/schemas/PodcastStatus",
+            "default": "watchlist"
+          }
+        },
+        "required": [
+          "name",
+          "slug"
+        ],
+        "title": "OpsPodcastCreateRequest",
+        "type": "object"
+      },
+      "OpsPodcastListRead": {
+        "description": "Paginated podcast management payload.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/OpsPodcastRead"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "per_page": {
+            "title": "Per Page",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "page",
+          "per_page"
+        ],
+        "title": "OpsPodcastListRead",
+        "type": "object"
+      },
+      "OpsPodcastRead": {
+        "description": "Podcast summary for ops catalog management views.",
+        "properties": {
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discovery_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Source"
+          },
+          "episode_count": {
+            "title": "Episode Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mention_count": {
+            "title": "Mention Count",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "slug": {
+            "title": "Slug",
+            "type": "string"
+          },
+          "sources": {
+            "$ref": "#/components/schemas/OpsPodcastSourcesRead"
+          },
+          "status": {
+            "$ref": "#/components/schemas/PodcastStatus"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "slug",
+          "status",
+          "description",
+          "cover_url",
+          "created_at",
+          "discovery_source",
+          "episode_count",
+          "mention_count",
+          "sources"
+        ],
+        "title": "OpsPodcastRead",
+        "type": "object"
+      },
+      "OpsPodcastSourcesInput": {
+        "description": "Source identifiers accepted on podcast mutations.",
+        "properties": {
+          "apple_id": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apple Id"
+          },
+          "podscripts_slug": {
+            "anyOf": [
+              {
+                "maxLength": 100,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Podscripts Slug"
+          },
+          "rss_url": {
+            "anyOf": [
+              {
+                "maxLength": 500,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Url"
+          },
+          "spotify_id": {
+            "anyOf": [
+              {
+                "maxLength": 50,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spotify Id"
+          },
+          "youtube_channel_id": {
+            "anyOf": [
+              {
+                "maxLength": 30,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Channel Id"
+          }
+        },
+        "title": "OpsPodcastSourcesInput",
+        "type": "object"
+      },
+      "OpsPodcastSourcesRead": {
+        "description": "Source identifiers associated with a managed podcast.",
+        "properties": {
+          "apple_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Apple Id"
+          },
+          "podscripts_slug": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Podscripts Slug"
+          },
+          "rss_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rss Url"
+          },
+          "spotify_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Spotify Id"
+          },
+          "youtube_channel_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Youtube Channel Id"
+          }
+        },
+        "required": [
+          "rss_url",
+          "spotify_id",
+          "apple_id",
+          "youtube_channel_id",
+          "podscripts_slug"
+        ],
+        "title": "OpsPodcastSourcesRead",
+        "type": "object"
+      },
+      "OpsPodcastUpdateRequest": {
+        "description": "Partially update a managed podcast; only provided fields change.",
+        "properties": {
+          "cover_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cover Url"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "discovery_source": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Discovery Source"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "slug": {
+            "anyOf": [
+              {
+                "maxLength": 255,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Slug"
+          },
+          "sources": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/OpsPodcastSourcesInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PodcastStatus"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "title": "OpsPodcastUpdateRequest",
+        "type": "object"
+      },
+      "OpsRetentionDecisionRead": {
+        "description": "Lifecycle decision produced by a retention evaluation.",
+        "properties": {
+          "age_days": {
+            "title": "Age Days",
+            "type": "integer"
+          },
+          "purge_blockers": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Purge Blockers",
+            "type": "array"
+          },
+          "purge_eligible": {
+            "title": "Purge Eligible",
+            "type": "boolean"
+          },
+          "retention_suppressed": {
+            "title": "Retention Suppressed",
+            "type": "boolean"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tier",
+          "purge_eligible",
+          "purge_blockers",
+          "retention_suppressed",
+          "age_days"
+        ],
+        "title": "OpsRetentionDecisionRead",
+        "type": "object"
+      },
+      "OpsRetentionPreviewRead": {
+        "description": "Dry-run lifecycle result plus derivative safety gate.",
+        "properties": {
+          "decision": {
+            "$ref": "#/components/schemas/OpsRetentionDecisionRead"
+          },
+          "derivative_coverage_ready": {
+            "title": "Derivative Coverage Ready",
+            "type": "boolean"
+          },
+          "extraction_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Extraction Confidence"
+          },
+          "missing_query_classes": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Missing Query Classes",
+            "type": "array"
+          },
+          "transcript": {
+            "$ref": "#/components/schemas/OpsTranscriptRetentionRead"
+          }
+        },
+        "required": [
+          "transcript",
+          "decision",
+          "extraction_confidence",
+          "derivative_coverage_ready",
+          "missing_query_classes"
+        ],
+        "title": "OpsRetentionPreviewRead",
+        "type": "object"
+      },
+      "OpsReviewThroughputRead": {
+        "description": "Review decision activity and outstanding pressure.",
+        "properties": {
+          "decisions_last_24h": {
+            "title": "Decisions Last 24H",
+            "type": "integer"
+          },
+          "median_decision_minutes_last_24h": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Median Decision Minutes Last 24H"
+          },
+          "pending_items": {
+            "title": "Pending Items",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "pending_items",
+          "decisions_last_24h",
+          "median_decision_minutes_last_24h"
+        ],
+        "title": "OpsReviewThroughputRead",
+        "type": "object"
+      },
+      "OpsTranscriptPurgeRead": {
+        "description": "Result of an operator-approved transcript purge.",
+        "properties": {
+          "digest_id": {
+            "title": "Digest Id",
+            "type": "integer"
+          },
+          "transcript": {
+            "$ref": "#/components/schemas/OpsTranscriptRetentionRead"
+          }
+        },
+        "required": [
+          "transcript",
+          "digest_id"
+        ],
+        "title": "OpsTranscriptPurgeRead",
+        "type": "object"
+      },
+      "OpsTranscriptRetentionRead": {
+        "description": "Operator-facing state for one raw transcript asset.",
+        "properties": {
+          "digest_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Digest Id"
+          },
+          "episode_id": {
+            "title": "Episode Id",
+            "type": "integer"
+          },
+          "episode_title": {
+            "title": "Episode Title",
+            "type": "string"
+          },
+          "fetched_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fetched At"
+          },
+          "has_raw_payload": {
+            "title": "Has Raw Payload",
+            "type": "boolean"
+          },
+          "has_stored_artifact": {
+            "title": "Has Stored Artifact",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "podcast_name": {
+            "title": "Podcast Name",
+            "type": "string"
+          },
+          "policy_version": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Policy Version"
+          },
+          "provider": {
+            "title": "Provider",
+            "type": "string"
+          },
+          "purge_eligible_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purge Eligible At"
+          },
+          "purged_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Purged At"
+          },
+          "retention_exempt_sample": {
+            "title": "Retention Exempt Sample",
+            "type": "boolean"
+          },
+          "source_retention_opt_out": {
+            "title": "Source Retention Opt Out",
+            "type": "boolean"
+          },
+          "tier": {
+            "title": "Tier",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "episode_id",
+          "episode_title",
+          "podcast_name",
+          "provider",
+          "fetched_at",
+          "tier",
+          "policy_version",
+          "retention_exempt_sample",
+          "source_retention_opt_out",
+          "purge_eligible_at",
+          "purged_at",
+          "has_raw_payload",
+          "has_stored_artifact",
+          "digest_id"
+        ],
+        "title": "OpsTranscriptRetentionRead",
+        "type": "object"
+      },
       "Page_EpisodeRead_": {
         "properties": {
           "items": {
@@ -985,6 +1899,28 @@
         ],
         "title": "PodcastRead",
         "type": "object"
+      },
+      "PodcastSourceType": {
+        "description": "Supported source filters for ops podcast management views.",
+        "enum": [
+          "rss",
+          "spotify",
+          "apple",
+          "youtube",
+          "podscripts"
+        ],
+        "title": "PodcastSourceType",
+        "type": "string"
+      },
+      "PodcastStatus": {
+        "description": "Status of a podcast in the processing workflow.",
+        "enum": [
+          "watchlist",
+          "active",
+          "paused"
+        ],
+        "title": "PodcastStatus",
+        "type": "string"
       },
       "PreferenceRead": {
         "description": "Notification preferences for the current account.",
@@ -2308,6 +3244,634 @@
         "tags": [
           "v2",
           "media"
+        ]
+      }
+    },
+    "/api/v2/ops/audit-log": {
+      "get": {
+        "description": "List immutable audit records, newest first.",
+        "operationId": "get_ops_audit_log_api_v2_ops_audit_log_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "resource_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Resource Type"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsAuditLogListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ops Audit Log",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/metrics": {
+      "get": {
+        "description": "Return operational dashboard metrics.",
+        "operationId": "get_ops_metrics_api_v2_ops_metrics_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsMetricsRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ops Metrics",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/pipelines": {
+      "get": {
+        "description": "Return recent ingestion run activity.",
+        "operationId": "get_ops_pipelines_api_v2_ops_pipelines_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPipelineActivityRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ops Pipelines",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/podcasts": {
+      "get": {
+        "description": "List managed podcasts with filters and count sorting.",
+        "operationId": "list_ops_podcasts_endpoint_api_v2_ops_podcasts_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "per_page",
+            "required": false,
+            "schema": {
+              "default": 25,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Per Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PodcastStatus"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "source",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "$ref": "#/components/schemas/PodcastSourceType"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Source"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "required": false,
+            "schema": {
+              "default": "created_at",
+              "enum": [
+                "created_at",
+                "name",
+                "episode_count",
+                "mention_count"
+              ],
+              "title": "Sort",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "order",
+            "required": false,
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "title": "Order",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPodcastListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ops Podcasts Endpoint",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      },
+      "post": {
+        "description": "Create a managed podcast and record the action.",
+        "operationId": "create_ops_podcast_endpoint_api_v2_ops_podcasts_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpsPodcastCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPodcastRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Ops Podcast Endpoint",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/podcasts/{podcast_id}": {
+      "get": {
+        "description": "Return one managed podcast summary.",
+        "operationId": "get_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "podcast_id",
+            "required": true,
+            "schema": {
+              "title": "Podcast Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPodcastRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Ops Podcast Endpoint",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      },
+      "patch": {
+        "description": "Partially update a managed podcast and record the action.",
+        "operationId": "update_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "podcast_id",
+            "required": true,
+            "schema": {
+              "title": "Podcast Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpsPodcastUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPodcastRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Update Ops Podcast Endpoint",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/podcasts/{podcast_id}/archive": {
+      "post": {
+        "description": "Pause a managed podcast and record the action.",
+        "operationId": "archive_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__archive_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "podcast_id",
+            "required": true,
+            "schema": {
+              "title": "Podcast Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsPodcastRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Archive Ops Podcast Endpoint",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/retention": {
+      "get": {
+        "description": "List recent transcript assets for retention review.",
+        "operationId": "list_ops_retention_api_v2_ops_retention_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 40,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/OpsTranscriptRetentionRead"
+                  },
+                  "title": "Response List Ops Retention Api V2 Ops Retention Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Ops Retention",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/retention/{transcript_id}/apply": {
+      "post": {
+        "description": "Persist a retention evaluation and record the action.",
+        "operationId": "apply_ops_retention_api_v2_ops_retention__transcript_id__apply_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsRetentionPreviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Apply Ops Retention",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/retention/{transcript_id}/preview": {
+      "get": {
+        "description": "Dry-run the retention policy for one transcript.",
+        "operationId": "preview_ops_retention_api_v2_ops_retention__transcript_id__preview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsRetentionPreviewRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Preview Ops Retention",
+        "tags": [
+          "v2",
+          "ops"
+        ]
+      }
+    },
+    "/api/v2/ops/retention/{transcript_id}/purge": {
+      "post": {
+        "description": "Purge an eligible transcript and record the action.",
+        "operationId": "purge_ops_transcript_endpoint_api_v2_ops_retention__transcript_id__purge_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "transcript_id",
+            "required": true,
+            "schema": {
+              "title": "Transcript Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsTranscriptPurgeRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Purge Ops Transcript Endpoint",
+        "tags": [
+          "v2",
+          "ops"
         ]
       }
     },

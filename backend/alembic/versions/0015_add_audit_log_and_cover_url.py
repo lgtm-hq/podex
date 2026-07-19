@@ -1,7 +1,7 @@
 """Add audit log and podcast cover url.
 
 Revision ID: 0015
-Revises: 0013
+Revises: 0014
 Create Date: 2026-07-19 00:59:25.071943
 """
 
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from alembic import op  # type: ignore[attr-defined]
 
 revision: str = "0015"
-down_revision: str | None = "0013"
+down_revision: str | None = "0014"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
