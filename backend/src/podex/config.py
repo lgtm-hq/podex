@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     # configured by the deployment environment; requests must present it in
     # the X-Ops-Key header.
     ops_api_key: str = ""
+    ops_review_pending_alert_threshold: int = 50
+    ops_alert_delivery_pending_threshold: int = 25
+
+    # Scheduler runner deployable. The loop plans due interval work and
+    # executes recurring discovery, digest delivery, and retention sweeps.
+    scheduler_tick_seconds: int = 60
+    scheduler_digest_interval_minutes: int = 1440
+    scheduler_retention_interval_minutes: int = 1440
 
 
 @lru_cache

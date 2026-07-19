@@ -16,6 +16,8 @@ from podex.schemas.ops import (
     OpsAuditLogEntryRead,
     OpsAuditLogListRead,
     OpsMetricsRead,
+    OpsOperationalAlertListRead,
+    OpsOperationalAlertRead,
     OpsPipelineActivityRead,
     OpsPodcastCreateRequest,
     OpsPodcastListRead,
@@ -29,6 +31,10 @@ from podex.schemas.ops import (
     PodcastSourceType,
 )
 from podex.services.audit_log import list_audit_logs, record_audit_log
+from podex.services.operational_alerts import (
+    OperationalAlertThresholdsData,
+    evaluate_operational_alerts,
+)
 from podex.services.ops_metrics import get_operational_metrics
 from podex.services.ops_podcast_commands import (
     CreateOpsPodcastInputData,
@@ -99,6 +105,31 @@ def get_ops_metrics(
     metrics = get_operational_metrics(db=db)
     db.commit()
     return OpsMetricsRead.model_validate(metrics, from_attributes=True)
+
+
+def get_ops_operational_alerts(
+    request: Request,
+    db: DbSession,
+    settings: AppSettings,
+) -> OpsOperationalAlertListRead:
+    """Return configured operational threshold breaches."""
+    _require_ops_access(request=request, settings=settings)
+    metrics = get_operational_metrics(db=db)
+    alerts = evaluate_operational_alerts(
+        metrics=metrics,
+        thresholds=OperationalAlertThresholdsData(
+            review_pending=settings.ops_review_pending_alert_threshold,
+            alert_delivery_pending=settings.ops_alert_delivery_pending_threshold,
+        ),
+    )
+    db.commit()
+    return OpsOperationalAlertListRead(
+        measured_at=metrics.measured_at,
+        alerts=[
+            OpsOperationalAlertRead.model_validate(alert, from_attributes=True)
+            for alert in alerts
+        ],
+    )
 
 
 def list_ops_podcasts_endpoint(
@@ -406,6 +437,12 @@ def get_ops_audit_log(
 
 
 router.add_api_route("/metrics", get_ops_metrics, methods=["GET"])
+router.add_api_route(
+    "/alerts",
+    get_ops_operational_alerts,
+    methods=["GET"],
+    response_model=OpsOperationalAlertListRead,
+)
 router.add_api_route(
     "/podcasts",
     list_ops_podcasts_endpoint,

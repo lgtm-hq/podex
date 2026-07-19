@@ -1044,6 +1044,73 @@
         "title": "OpsMetricsRead",
         "type": "object"
       },
+      "OpsOperationalAlertListRead": {
+        "description": "Threshold breaches measured from operational metrics.",
+        "properties": {
+          "alerts": {
+            "items": {
+              "$ref": "#/components/schemas/OpsOperationalAlertRead"
+            },
+            "title": "Alerts",
+            "type": "array"
+          },
+          "measured_at": {
+            "format": "date-time",
+            "title": "Measured At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "measured_at",
+          "alerts"
+        ],
+        "title": "OpsOperationalAlertListRead",
+        "type": "object"
+      },
+      "OpsOperationalAlertRead": {
+        "description": "One actionable operator-facing health alert.",
+        "properties": {
+          "current_value": {
+            "title": "Current Value",
+            "type": "integer"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "playbook_slug": {
+            "title": "Playbook Slug",
+            "type": "string"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "threshold": {
+            "title": "Threshold",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "severity",
+          "title",
+          "message",
+          "current_value",
+          "threshold",
+          "playbook_slug"
+        ],
+        "title": "OpsOperationalAlertRead",
+        "type": "object"
+      },
       "OpsPipelineActivityRead": {
         "description": "Recent pipeline activity.",
         "properties": {
@@ -3244,6 +3311,29 @@
         "tags": [
           "v2",
           "media"
+        ]
+      }
+    },
+    "/api/v2/ops/alerts": {
+      "get": {
+        "description": "Return configured operational threshold breaches.",
+        "operationId": "get_ops_operational_alerts_api_v2_ops_alerts_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpsOperationalAlertListRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Get Ops Operational Alerts",
+        "tags": [
+          "v2",
+          "ops"
         ]
       }
     },

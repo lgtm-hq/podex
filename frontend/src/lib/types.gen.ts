@@ -464,6 +464,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/ops/alerts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ops Operational Alerts
+         * @description Return configured operational threshold breaches.
+         */
+        get: operations["get_ops_operational_alerts_api_v2_ops_alerts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/ops/audit-log": {
         parameters: {
             query?: never;
@@ -1260,6 +1280,39 @@ export interface components {
              */
             measured_at: string;
             review: components["schemas"]["OpsReviewThroughputRead"];
+        };
+        /**
+         * OpsOperationalAlertListRead
+         * @description Threshold breaches measured from operational metrics.
+         */
+        OpsOperationalAlertListRead: {
+            /** Alerts */
+            alerts: components["schemas"]["OpsOperationalAlertRead"][];
+            /**
+             * Measured At
+             * Format: date-time
+             */
+            measured_at: string;
+        };
+        /**
+         * OpsOperationalAlertRead
+         * @description One actionable operator-facing health alert.
+         */
+        OpsOperationalAlertRead: {
+            /** Current Value */
+            current_value: number;
+            /** Key */
+            key: string;
+            /** Message */
+            message: string;
+            /** Playbook Slug */
+            playbook_slug: string;
+            /** Severity */
+            severity: string;
+            /** Threshold */
+            threshold: number;
+            /** Title */
+            title: string;
         };
         /**
          * OpsPipelineActivityRead
@@ -2413,6 +2466,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ops_operational_alerts_api_v2_ops_alerts_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsOperationalAlertListRead"];
                 };
             };
         };

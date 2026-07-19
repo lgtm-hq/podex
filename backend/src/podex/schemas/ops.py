@@ -131,6 +131,27 @@ class OpsMetricsRead(BaseModel):
     alerts: OpsAlertDeliveryRead
 
 
+class OpsOperationalAlertRead(BaseModel):
+    """One actionable operator-facing health alert."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    key: str
+    severity: str
+    title: str
+    message: str
+    current_value: int
+    threshold: int
+    playbook_slug: str
+
+
+class OpsOperationalAlertListRead(BaseModel):
+    """Threshold breaches measured from operational metrics."""
+
+    measured_at: datetime
+    alerts: list[OpsOperationalAlertRead]
+
+
 class OpsTranscriptRetentionRead(BaseModel):
     """Operator-facing state for one raw transcript asset."""
 
@@ -214,6 +235,8 @@ __all__ = [
     "OpsAlertDeliveryRead",
     "OpsIngestionRunRead",
     "OpsMetricsRead",
+    "OpsOperationalAlertListRead",
+    "OpsOperationalAlertRead",
     "OpsPipelineActivityRead",
     "OpsPodcastCreateRequest",
     "OpsPodcastListRead",
