@@ -1,0 +1,14 @@
+---
+import OpsRetentionManager from "../../components/OpsRetentionManager";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Transcript retention" description="Review lifecycle tiers and apply retention policy.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Operations
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Transcript retention</h1>
+  </section>
+  <OpsRetentionManager client:load />
+</Layout>

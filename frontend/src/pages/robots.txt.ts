@@ -13,6 +13,7 @@ export function buildRobotsTxt(siteUrl: string = SITE_URL): string {
     "User-agent: *",
     "Allow: /",
     "Disallow: /api/",
+    "Disallow: /ops/",
     "",
     `Sitemap: ${siteUrl.replace(/\/+$/, "")}/sitemap.xml`,
     "",
