@@ -32,6 +32,7 @@ class Podcast(Base):
     name: Mapped[str] = mapped_column(String(255), index=True)
     slug: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     description: Mapped[str | None] = mapped_column(String(2000), default=None)
+    cover_url: Mapped[str | None] = mapped_column(String(500), default=None)
     status: Mapped[PodcastStatus] = mapped_column(
         SAEnum(PodcastStatus, native_enum=False, length=20),
         default=PodcastStatus.WATCHLIST,

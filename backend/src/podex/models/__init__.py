@@ -13,6 +13,7 @@ from podex.models.account_quota_usage import AccountQuotaUsage
 from podex.models.account_saved_media import AccountSavedMedia
 from podex.models.account_subscription import AccountSubscription
 from podex.models.account_user import AccountUser
+from podex.models.audit_log import AuditAction, AuditLog
 from podex.models.base import Base
 from podex.models.derivative_generation_run import (
     DerivativeGenerationRun,
@@ -67,6 +68,8 @@ __all__ = [
     "AccountSavedMedia",
     "AccountSubscription",
     "AccountUser",
+    "AuditAction",
+    "AuditLog",
     "Base",
     "DerivativeGenerationRun",
     "DerivativeGenerationRunStatus",

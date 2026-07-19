@@ -83,6 +83,11 @@ class Settings(BaseSettings):
     billing_provider_name: str = ""
     billing_checkout_url: str = ""
 
+    # Ops console API. The ops surface stays disabled until a key is
+    # configured by the deployment environment; requests must present it in
+    # the X-Ops-Key header.
+    ops_api_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

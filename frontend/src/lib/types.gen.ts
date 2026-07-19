@@ -464,6 +464,214 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/ops/audit-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ops Audit Log
+         * @description List immutable audit records, newest first.
+         */
+        get: operations["get_ops_audit_log_api_v2_ops_audit_log_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/metrics": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ops Metrics
+         * @description Return operational dashboard metrics.
+         */
+        get: operations["get_ops_metrics_api_v2_ops_metrics_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/pipelines": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ops Pipelines
+         * @description Return recent ingestion run activity.
+         */
+        get: operations["get_ops_pipelines_api_v2_ops_pipelines_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/podcasts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ops Podcasts Endpoint
+         * @description List managed podcasts with filters and count sorting.
+         */
+        get: operations["list_ops_podcasts_endpoint_api_v2_ops_podcasts_get"];
+        put?: never;
+        /**
+         * Create Ops Podcast Endpoint
+         * @description Create a managed podcast and record the action.
+         */
+        post: operations["create_ops_podcast_endpoint_api_v2_ops_podcasts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/podcasts/{podcast_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ops Podcast Endpoint
+         * @description Return one managed podcast summary.
+         */
+        get: operations["get_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Ops Podcast Endpoint
+         * @description Partially update a managed podcast and record the action.
+         */
+        patch: operations["update_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__patch"];
+        trace?: never;
+    };
+    "/api/v2/ops/podcasts/{podcast_id}/archive": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Archive Ops Podcast Endpoint
+         * @description Pause a managed podcast and record the action.
+         */
+        post: operations["archive_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__archive_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/retention": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ops Retention
+         * @description List recent transcript assets for retention review.
+         */
+        get: operations["list_ops_retention_api_v2_ops_retention_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/retention/{transcript_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Ops Retention
+         * @description Persist a retention evaluation and record the action.
+         */
+        post: operations["apply_ops_retention_api_v2_ops_retention__transcript_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/retention/{transcript_id}/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Preview Ops Retention
+         * @description Dry-run the retention policy for one transcript.
+         */
+        get: operations["preview_ops_retention_api_v2_ops_retention__transcript_id__preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/retention/{transcript_id}/purge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Purge Ops Transcript Endpoint
+         * @description Purge an eligible transcript and record the action.
+         */
+        post: operations["purge_ops_transcript_endpoint_api_v2_ops_retention__transcript_id__purge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/podcasts": {
         parameters: {
             query?: never;
@@ -960,6 +1168,307 @@ export interface components {
             /** Timestamp Seconds */
             timestamp_seconds: number | null;
         };
+        /**
+         * OpsAlertDeliveryRead
+         * @description Generated and delivered account notification health.
+         */
+        OpsAlertDeliveryRead: {
+            /** Delivered Digests Last 24H */
+            delivered_digests_last_24h: number;
+            /** Delivered Events Last 24H */
+            delivered_events_last_24h: number;
+            /** Generated Events Last 24H */
+            generated_events_last_24h: number;
+            /** Pending Events */
+            pending_events: number;
+        };
+        /**
+         * OpsAuditLogEntryRead
+         * @description One immutable audit record.
+         */
+        OpsAuditLogEntryRead: {
+            /** Action */
+            action: string;
+            /** Actor Name */
+            actor_name: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Id */
+            id: number;
+            /** Metadata Json */
+            metadata_json: {
+                [key: string]: unknown;
+            } | null;
+            /** Resource Id */
+            resource_id: number | null;
+            /** Resource Identifier */
+            resource_identifier: string | null;
+            /** Resource Type */
+            resource_type: string;
+            /** Summary */
+            summary: string;
+        };
+        /**
+         * OpsAuditLogListRead
+         * @description Paginated audit log payload.
+         */
+        OpsAuditLogListRead: {
+            /** Items */
+            items: components["schemas"]["OpsAuditLogEntryRead"][];
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * OpsIngestionRunRead
+         * @description Ingestion run summary for pipeline views.
+         */
+        OpsIngestionRunRead: {
+            /** Completed At */
+            completed_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Duration Seconds */
+            duration_seconds: number | null;
+            /** Error Summary */
+            error_summary: string | null;
+            /** Id */
+            id: number;
+            /** Started At */
+            started_at: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * OpsMetricsRead
+         * @description Combined operational metrics for the ops dashboard.
+         */
+        OpsMetricsRead: {
+            alerts: components["schemas"]["OpsAlertDeliveryRead"];
+            /**
+             * Measured At
+             * Format: date-time
+             */
+            measured_at: string;
+            review: components["schemas"]["OpsReviewThroughputRead"];
+        };
+        /**
+         * OpsPipelineActivityRead
+         * @description Recent pipeline activity.
+         */
+        OpsPipelineActivityRead: {
+            /** Runs */
+            runs: components["schemas"]["OpsIngestionRunRead"][];
+        };
+        /**
+         * OpsPodcastCreateRequest
+         * @description Create a managed podcast.
+         */
+        OpsPodcastCreateRequest: {
+            /** Cover Url */
+            cover_url?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Discovery Source */
+            discovery_source?: string | null;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** @default {} */
+            sources: components["schemas"]["OpsPodcastSourcesInput"];
+            /** @default watchlist */
+            status: components["schemas"]["PodcastStatus"];
+        };
+        /**
+         * OpsPodcastListRead
+         * @description Paginated podcast management payload.
+         */
+        OpsPodcastListRead: {
+            /** Items */
+            items: components["schemas"]["OpsPodcastRead"][];
+            /** Page */
+            page: number;
+            /** Per Page */
+            per_page: number;
+            /** Total */
+            total: number;
+        };
+        /**
+         * OpsPodcastRead
+         * @description Podcast summary for ops catalog management views.
+         */
+        OpsPodcastRead: {
+            /** Cover Url */
+            cover_url: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Description */
+            description: string | null;
+            /** Discovery Source */
+            discovery_source: string | null;
+            /** Episode Count */
+            episode_count: number;
+            /** Id */
+            id: number;
+            /** Mention Count */
+            mention_count: number;
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            sources: components["schemas"]["OpsPodcastSourcesRead"];
+            status: components["schemas"]["PodcastStatus"];
+        };
+        /**
+         * OpsPodcastSourcesInput
+         * @description Source identifiers accepted on podcast mutations.
+         */
+        OpsPodcastSourcesInput: {
+            /** Apple Id */
+            apple_id?: string | null;
+            /** Podscripts Slug */
+            podscripts_slug?: string | null;
+            /** Rss Url */
+            rss_url?: string | null;
+            /** Spotify Id */
+            spotify_id?: string | null;
+            /** Youtube Channel Id */
+            youtube_channel_id?: string | null;
+        };
+        /**
+         * OpsPodcastSourcesRead
+         * @description Source identifiers associated with a managed podcast.
+         */
+        OpsPodcastSourcesRead: {
+            /** Apple Id */
+            apple_id: string | null;
+            /** Podscripts Slug */
+            podscripts_slug: string | null;
+            /** Rss Url */
+            rss_url: string | null;
+            /** Spotify Id */
+            spotify_id: string | null;
+            /** Youtube Channel Id */
+            youtube_channel_id: string | null;
+        };
+        /**
+         * OpsPodcastUpdateRequest
+         * @description Partially update a managed podcast; only provided fields change.
+         */
+        OpsPodcastUpdateRequest: {
+            /** Cover Url */
+            cover_url?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Discovery Source */
+            discovery_source?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Slug */
+            slug?: string | null;
+            sources?: components["schemas"]["OpsPodcastSourcesInput"] | null;
+            status?: components["schemas"]["PodcastStatus"] | null;
+        };
+        /**
+         * OpsRetentionDecisionRead
+         * @description Lifecycle decision produced by a retention evaluation.
+         */
+        OpsRetentionDecisionRead: {
+            /** Age Days */
+            age_days: number;
+            /** Purge Blockers */
+            purge_blockers: string[];
+            /** Purge Eligible */
+            purge_eligible: boolean;
+            /** Retention Suppressed */
+            retention_suppressed: boolean;
+            /** Tier */
+            tier: string;
+        };
+        /**
+         * OpsRetentionPreviewRead
+         * @description Dry-run lifecycle result plus derivative safety gate.
+         */
+        OpsRetentionPreviewRead: {
+            decision: components["schemas"]["OpsRetentionDecisionRead"];
+            /** Derivative Coverage Ready */
+            derivative_coverage_ready: boolean;
+            /** Extraction Confidence */
+            extraction_confidence: number | null;
+            /** Missing Query Classes */
+            missing_query_classes: string[];
+            transcript: components["schemas"]["OpsTranscriptRetentionRead"];
+        };
+        /**
+         * OpsReviewThroughputRead
+         * @description Review decision activity and outstanding pressure.
+         */
+        OpsReviewThroughputRead: {
+            /** Decisions Last 24H */
+            decisions_last_24h: number;
+            /** Median Decision Minutes Last 24H */
+            median_decision_minutes_last_24h: number | null;
+            /** Pending Items */
+            pending_items: number;
+        };
+        /**
+         * OpsTranscriptPurgeRead
+         * @description Result of an operator-approved transcript purge.
+         */
+        OpsTranscriptPurgeRead: {
+            /** Digest Id */
+            digest_id: number;
+            transcript: components["schemas"]["OpsTranscriptRetentionRead"];
+        };
+        /**
+         * OpsTranscriptRetentionRead
+         * @description Operator-facing state for one raw transcript asset.
+         */
+        OpsTranscriptRetentionRead: {
+            /** Digest Id */
+            digest_id: number | null;
+            /** Episode Id */
+            episode_id: number;
+            /** Episode Title */
+            episode_title: string;
+            /** Fetched At */
+            fetched_at: string | null;
+            /** Has Raw Payload */
+            has_raw_payload: boolean;
+            /** Has Stored Artifact */
+            has_stored_artifact: boolean;
+            /** Id */
+            id: number;
+            /** Podcast Name */
+            podcast_name: string;
+            /** Policy Version */
+            policy_version: string | null;
+            /** Provider */
+            provider: string;
+            /** Purge Eligible At */
+            purge_eligible_at: string | null;
+            /** Purged At */
+            purged_at: string | null;
+            /** Retention Exempt Sample */
+            retention_exempt_sample: boolean;
+            /** Source Retention Opt Out */
+            source_retention_opt_out: boolean;
+            /** Tier */
+            tier: string;
+        };
         /** Page[EpisodeRead] */
         Page_EpisodeRead_: {
             /** Items */
@@ -1028,6 +1537,18 @@ export interface components {
             /** Slug */
             slug: string;
         };
+        /**
+         * PodcastSourceType
+         * @description Supported source filters for ops podcast management views.
+         * @enum {string}
+         */
+        PodcastSourceType: "rss" | "spotify" | "apple" | "youtube" | "podscripts";
+        /**
+         * PodcastStatus
+         * @description Status of a podcast in the processing workflow.
+         * @enum {string}
+         */
+        PodcastStatus: "watchlist" | "active" | "paused";
         /**
          * PreferenceRead
          * @description Notification preferences for the current account.
@@ -1883,6 +2404,380 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Page_MentionRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ops_audit_log_api_v2_ops_audit_log_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                resource_type?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsAuditLogListRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ops_metrics_api_v2_ops_metrics_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsMetricsRead"];
+                };
+            };
+        };
+    };
+    get_ops_pipelines_api_v2_ops_pipelines_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPipelineActivityRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_ops_podcasts_endpoint_api_v2_ops_podcasts_get: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+                status?: components["schemas"]["PodcastStatus"] | null;
+                source?: components["schemas"]["PodcastSourceType"] | null;
+                sort?: "created_at" | "name" | "episode_count" | "mention_count";
+                order?: "asc" | "desc";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPodcastListRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_ops_podcast_endpoint_api_v2_ops_podcasts_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsPodcastCreateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPodcastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPodcastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsPodcastUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPodcastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    archive_ops_podcast_endpoint_api_v2_ops_podcasts__podcast_id__archive_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                podcast_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsPodcastRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_ops_retention_api_v2_ops_retention_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsTranscriptRetentionRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_ops_retention_api_v2_ops_retention__transcript_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transcript_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsRetentionPreviewRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_ops_retention_api_v2_ops_retention__transcript_id__preview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transcript_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsRetentionPreviewRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    purge_ops_transcript_endpoint_api_v2_ops_retention__transcript_id__purge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                transcript_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsTranscriptPurgeRead"];
                 };
             };
             /** @description Validation Error */
