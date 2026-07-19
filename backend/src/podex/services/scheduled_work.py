@@ -235,6 +235,9 @@ def _next_due_after(
     after: datetime,
 ) -> datetime:
     """Calculate the next due timestamp after a reference time."""
+    if start_at.tzinfo is None:
+        # SQLite returns naive datetimes; stored values are always UTC.
+        start_at = start_at.replace(tzinfo=UTC)
     if start_at > after:
         return start_at
     interval = timedelta(minutes=interval_minutes)
