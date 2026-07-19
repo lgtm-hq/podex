@@ -1,0 +1,14 @@
+---
+import AccountOverview from "../../components/AccountOverview";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Your account" description="Overview of your Podex account and recent digests.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Account
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Your account</h1>
+  </section>
+  <AccountOverview client:load />
+</Layout>

@@ -1,0 +1,14 @@
+---
+import MagicLinkVerify from "../../components/MagicLinkVerify";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Sign in" description="Completing your passwordless sign-in.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Account
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Sign in</h1>
+  </section>
+  <MagicLinkVerify client:load />
+</Layout>

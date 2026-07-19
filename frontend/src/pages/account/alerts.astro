@@ -1,0 +1,14 @@
+---
+import AccountAlerts from "../../components/AccountAlerts";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Alerts" description="Your alert rules for new activity.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Account
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Alerts</h1>
+  </section>
+  <AccountAlerts client:load />
+</Layout>
