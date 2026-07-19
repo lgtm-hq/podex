@@ -22,6 +22,15 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.34.0] - 2026-07-19
+
+### Added
+
+- **ops**: add DMCA takedown intake, decision workflow, and coordinated suppression
+  (#290) (7cf0338)
+- **frontend**: add account pages for sign-in, saved, follows, alerts, and settings
+  (#288) (3db6d31)
+
 ## [0.33.0] - 2026-07-19
 
 ### Added
