@@ -22,6 +22,15 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.33.0] - 2026-07-19
+
+### Added
+
+- **scheduler**: promote scheduler into an explicit deployable with recurring digest and
+  retention work (#286) (e0170cc)
+- **frontend**: add ops console UI for dashboard, podcasts, pipelines, and retention
+  (#284) (a29fc5d)
+
 ## [0.32.0] - 2026-07-19
 
 ### Added
