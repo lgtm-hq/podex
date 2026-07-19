@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.34.1] - 2026-07-19
+
+### Fixed
+
+- **security**: harden the magic-link flow (#291) (c7954fb)
+
 ## [0.34.0] - 2026-07-19
 
 ### Added
