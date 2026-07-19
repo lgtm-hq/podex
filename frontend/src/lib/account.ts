@@ -125,3 +125,11 @@ export function updatePreferences(input: {
     body: JSON.stringify(input),
   });
 }
+
+export function exportAccountData(): Promise<Record<string, unknown>> {
+  return accountFetch("/me/export");
+}
+
+export function deleteAccount(): Promise<{ signed_out: boolean }> {
+  return accountFetch("/me", { method: "DELETE" });
+}

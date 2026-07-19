@@ -2860,6 +2860,27 @@
       }
     },
     "/api/v2/me": {
+      "delete": {
+        "description": "Delete the account and everything stored for it, then sign out.",
+        "operationId": "delete_current_account_api_v2_me_delete",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthLogoutResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Delete Current Account",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      },
       "get": {
         "description": "Return the account represented by the current browser session.",
         "operationId": "get_current_account_api_v2_me_get",
@@ -3105,6 +3126,31 @@
           }
         },
         "summary": "Send Current Account Digest",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/me/export": {
+      "get": {
+        "description": "Return a machine-readable export of the account's stored data.",
+        "operationId": "export_current_account_api_v2_me_export_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Export Current Account Api V2 Me Export Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Export Current Account",
         "tags": [
           "v2",
           "auth"
