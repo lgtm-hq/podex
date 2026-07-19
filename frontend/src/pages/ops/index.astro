@@ -1,0 +1,14 @@
+---
+import OpsDashboard from "../../components/OpsDashboard";
+import Layout from "../../layouts/Layout.astro";
+---
+
+<Layout title="Operations dashboard" description="Operational health for reviews, pipelines, and notifications.">
+  <section class="mb-8 max-w-2xl">
+    <p class="text-xs uppercase tracking-[0.28em] text-[color:var(--color-accent)]">
+      Operations
+    </p>
+    <h1 class="font-display mt-3 text-4xl tracking-tight">Operations dashboard</h1>
+  </section>
+  <OpsDashboard client:load />
+</Layout>
