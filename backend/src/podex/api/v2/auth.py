@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from podex.api.deps import AppSettings, DbSession
 from podex.config import Settings, get_settings
 from podex.logging_config import get_logger
-from podex.models import AccountUser
+from podex.models import AccountUser, AuditAction
 from podex.schemas.account import (
     AccountUserRead,
     AlertEvaluationRead,
@@ -69,6 +69,7 @@ from podex.services.account_preferences import (
     get_account_preferences,
     update_account_preferences,
 )
+from podex.services.account_privacy import delete_account, export_account_data
 from podex.services.account_saves import (
     SavedMediaData,
     list_saved_media,
@@ -84,6 +85,7 @@ from podex.services.account_subscriptions import (
     get_account_subscription,
     get_quota_snapshot,
 )
+from podex.services.audit_log import record_audit_log
 from podex.services.billing_checkout import (
     BillingCheckoutProvider,
     build_billing_checkout_provider,
@@ -564,6 +566,47 @@ def update_current_account_preferences(
     return PreferenceRead.model_validate(preferences)
 
 
+def export_current_account(
+    request: Request,
+    db: DbSession,
+    settings: AppSettings,
+) -> dict[str, object]:
+    """Return a machine-readable export of the account's stored data."""
+    user = _require_authenticated_account(request=request, db=db, settings=settings)
+    export: dict[str, object] = export_account_data(db=db, user=user)
+    db.commit()
+    return export
+
+
+def delete_current_account(
+    request: Request,
+    response: Response,
+    db: DbSession,
+    settings: AppSettings,
+) -> AuthLogoutResponse:
+    """Delete the account and everything stored for it, then sign out."""
+    user = _require_authenticated_account(request=request, db=db, settings=settings)
+    result = delete_account(db=db, user=user)
+    record_audit_log(
+        db=db,
+        action=AuditAction.DELETE_ACCOUNT,
+        resource_type="account_user",
+        resource_id=result.user_id,
+        summary=f"Account {result.user_id} deleted at the owner's request",
+        metadata_json={
+            "sessions": result.sessions,
+            "saves": result.saves,
+            "follows": result.follows,
+            "alert_rules": result.alert_rules,
+            "alert_events": result.alert_events,
+            "digests": result.digests,
+        },
+    )
+    response.delete_cookie(key=settings.auth_session_cookie_name, path="/")
+    db.commit()
+    return AuthLogoutResponse(signed_out=True)
+
+
 def get_current_account_subscription(
     request: Request,
     db: DbSession,
@@ -771,4 +814,16 @@ router.add_api_route(
     begin_current_account_checkout,
     methods=["POST"],
     response_model=SubscriptionCheckoutRead,
+)
+
+router.add_api_route(
+    "/me/export",
+    export_current_account,
+    methods=["GET"],
+)
+router.add_api_route(
+    "/me",
+    delete_current_account,
+    methods=["DELETE"],
+    response_model=AuthLogoutResponse,
 )

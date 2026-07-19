@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 
 import {
+  deleteAccount,
+  exportAccountData,
   getPreferences,
   type Preference,
   updatePreferences,
@@ -22,6 +24,7 @@ function SettingsBody() {
   const [preference, setPreference] = useState<Preference | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   useEffect(() => {
     getPreferences()
@@ -91,6 +94,66 @@ function SettingsBody() {
       {saved ? (
         <p className="mt-4 text-sm text-[color:var(--color-accent)]">Saved.</p>
       ) : null}
+
+      <h2 className="font-display mt-10 text-2xl">Your data</h2>
+      <p className="mt-2 text-sm text-[color:var(--color-muted)]">
+        Download everything stored for this account, or delete the account and
+        all of its data permanently.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <button
+          className="rounded border border-[color:var(--color-hairline)] px-4 py-2 text-sm"
+          type="button"
+          onClick={() => {
+            exportAccountData()
+              .then((data) => {
+                const blob = new Blob([JSON.stringify(data, null, 2)], {
+                  type: "application/json",
+                });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = "podex-account-export.json";
+                link.click();
+                URL.revokeObjectURL(url);
+              })
+              .catch(() => setError("Unable to export your data."));
+          }}
+        >
+          Export my data
+        </button>
+        {confirmingDelete ? (
+          <span className="flex items-center gap-3 text-sm">
+            Delete this account and all of its data permanently?
+            <button
+              className="rounded bg-red-700 px-3 py-1.5 text-white"
+              type="button"
+              onClick={() => {
+                deleteAccount()
+                  .then(() => window.location.assign("/account"))
+                  .catch(() => setError("Unable to delete your account."));
+              }}
+            >
+              Yes, delete everything
+            </button>
+            <button
+              className="underline"
+              type="button"
+              onClick={() => setConfirmingDelete(false)}
+            >
+              Cancel
+            </button>
+          </span>
+        ) : (
+          <button
+            className="rounded border border-red-700 px-4 py-2 text-sm text-red-700"
+            type="button"
+            onClick={() => setConfirmingDelete(true)}
+          >
+            Delete account
+          </button>
+        )}
+      </div>
     </div>
   );
 }

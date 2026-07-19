@@ -345,6 +345,39 @@ describe("account pages", () => {
     expect(await screen.findByText("Saved.")).toBeDefined();
   });
 
+  it("AccountSettings exports data and deletes with confirmation", async () => {
+    const fetchMock = mockRoutes(
+      { "/me/preferences": PREFERENCE, "/me": USER, "/me/export": { a: 1 } },
+      {},
+    );
+    vi.stubGlobal("URL", {
+      createObjectURL: vi.fn(() => "blob:x"),
+      revokeObjectURL: vi.fn(),
+    });
+    const assign = vi.fn();
+    vi.stubGlobal("location", { ...window.location, assign });
+
+    render(<AccountSettings />);
+    fireEvent.click(await screen.findByText("Export my data"));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([url]) =>
+          String(url).endsWith("/me/export"),
+        ),
+      ).toBe(true);
+    });
+
+    fireEvent.click(screen.getByText("Delete account"));
+    fireEvent.click(await screen.findByText("Cancel"));
+    fireEvent.click(screen.getByText("Delete account"));
+    fireEvent.click(await screen.findByText("Yes, delete everything"));
+    await waitFor(() => {
+      expect(
+        fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE"),
+      ).toBe(true);
+    });
+  });
+
   it("MagicLinkVerify redeems the token and redirects", async () => {
     mockRoutes({
       "/auth/magic-link/verify": {

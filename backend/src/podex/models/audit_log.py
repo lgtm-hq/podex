@@ -37,6 +37,7 @@ class AuditAction(StrEnum):
     UPDATE_RETENTION_SAMPLING = auto()
     UPDATE_TRANSCRIPT_RETENTION_POLICY = auto()
     DECIDE_TAKEDOWN_REQUEST = auto()
+    DELETE_ACCOUNT = auto()
     UPSERT_MEDIA_EXTERNAL_REF = auto()
 
 
