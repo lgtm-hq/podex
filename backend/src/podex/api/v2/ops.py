@@ -11,7 +11,11 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from podex.api.deps import AppSettings, DbSession
-from podex.models import AuditAction, PodcastStatus
+from podex.models import (
+    AuditAction,
+    PodcastStatus,
+    TakedownRequestStatus,
+)
 from podex.schemas.ops import (
     OpsAuditLogEntryRead,
     OpsAuditLogListRead,
@@ -26,6 +30,10 @@ from podex.schemas.ops import (
     OpsPodcastUpdateRequest,
     OpsRetentionPreviewRead,
     OpsSortOrder,
+    OpsTakedownDecisionRead,
+    OpsTakedownDecisionRequest,
+    OpsTakedownExecutionRead,
+    OpsTakedownRequestRead,
     OpsTranscriptPurgeRead,
     OpsTranscriptRetentionRead,
     PodcastSourceType,
@@ -53,6 +61,12 @@ from podex.services.ops_retention_commands import (
     purge_ops_transcript,
 )
 from podex.services.pipeline_queries import list_recent_ingestion_runs
+from podex.services.takedown_requests import (
+    TakedownDecisionInputData,
+    decide_takedown_request,
+    execute_approved_takedown_request,
+    list_takedown_requests,
+)
 from podex.services.transcript_artifacts import build_transcript_artifact_store
 from podex.services.transcript_retention import TranscriptRetentionPolicy
 
@@ -408,6 +422,88 @@ def purge_ops_transcript_endpoint(
     )
 
 
+def list_ops_takedown_requests(
+    request: Request,
+    db: DbSession,
+    settings: AppSettings,
+    status_filter: Annotated[
+        TakedownRequestStatus | None,
+        Query(alias="status"),
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[OpsTakedownRequestRead]:
+    """List submitted takedown cases for privileged review."""
+    _require_ops_access(request=request, settings=settings)
+    listed = list_takedown_requests(db=db, status=status_filter, limit=limit)
+    db.commit()
+    return [
+        OpsTakedownRequestRead.model_validate(item, from_attributes=True)
+        for item in listed
+    ]
+
+
+def decide_ops_takedown_request(
+    request_id: int,
+    payload: OpsTakedownDecisionRequest,
+    request: Request,
+    db: DbSession,
+    settings: AppSettings,
+) -> OpsTakedownDecisionRead:
+    """Decide a pending takedown; approvals execute suppression immediately."""
+    _require_ops_access(request=request, settings=settings)
+    try:
+        decided = decide_takedown_request(
+            db=db,
+            request_id=request_id,
+            payload=TakedownDecisionInputData(
+                status=TakedownRequestStatus(payload.status),
+                actor_name=payload.actor_name,
+                note=payload.note,
+            ),
+        )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if decided is None:
+        raise HTTPException(status_code=404, detail="Takedown request not found")
+    execution = None
+    if decided.status == TakedownRequestStatus.APPROVED.value:
+        try:
+            result = execute_approved_takedown_request(
+                db=db,
+                request=decided,
+                artifact_store=build_transcript_artifact_store(settings=settings),
+            )
+        except ValueError as error:
+            db.rollback()
+            raise HTTPException(status_code=409, detail=str(error)) from error
+        execution = OpsTakedownExecutionRead(
+            episode_ids=list(result.episode_ids),
+            media_ids=list(result.media_ids),
+            transcripts_suppressed=result.transcripts_suppressed,
+            derivatives_suppressed=result.derivatives_suppressed,
+            mentions_unpublished=result.mentions_unpublished,
+            source_opt_outs_registered=result.source_opt_outs_registered,
+        )
+    record_audit_log(
+        db=db,
+        action=AuditAction.DECIDE_TAKEDOWN_REQUEST,
+        resource_type="takedown_request",
+        resource_id=decided.id,
+        actor_name=payload.actor_name,
+        summary=f"Takedown request {decided.id} {decided.status}",
+        metadata_json=(execution.model_dump() if execution is not None else None),
+    )
+    db.commit()
+    return OpsTakedownDecisionRead(
+        request=OpsTakedownRequestRead.model_validate(
+            decided,
+            from_attributes=True,
+        ),
+        execution=execution,
+    )
+
+
 def get_ops_audit_log(
     request: Request,
     db: DbSession,
@@ -503,6 +599,18 @@ router.add_api_route(
     purge_ops_transcript_endpoint,
     methods=["POST"],
     response_model=OpsTranscriptPurgeRead,
+)
+router.add_api_route(
+    "/takedown-requests",
+    list_ops_takedown_requests,
+    methods=["GET"],
+    response_model=list[OpsTakedownRequestRead],
+)
+router.add_api_route(
+    "/takedown-requests/{request_id}/decide",
+    decide_ops_takedown_request,
+    methods=["POST"],
+    response_model=OpsTakedownDecisionRead,
 )
 router.add_api_route(
     "/audit-log",

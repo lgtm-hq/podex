@@ -226,6 +226,79 @@ class OpsAuditLogListRead(BaseModel):
     per_page: int
 
 
+class TakedownRequestCreate(BaseModel):
+    """Public takedown intake submission."""
+
+    subject_type: Literal["podcast", "episode", "mention"]
+    subject_id: int
+    requester_type: Literal["creator", "rights_holder", "operator"]
+    requester_name: str = Field(min_length=1, max_length=255)
+    requester_email: str = Field(min_length=3, max_length=320)
+    basis: str = Field(min_length=1, max_length=5000)
+    requested_actions: list[
+        Literal[
+            "suppress_raw_transcript",
+            "suppress_derivatives",
+            "unpublish_mentions",
+            "register_source_opt_out",
+        ]
+    ] = Field(min_length=1)
+
+
+class TakedownRequestCreatedRead(BaseModel):
+    """Acknowledgement returned to a takedown submitter."""
+
+    id: int
+    status: str
+
+
+class OpsTakedownRequestRead(BaseModel):
+    """Privileged view of one takedown case."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    subject_type: str
+    subject_id: int
+    requester_type: str
+    requester_name: str
+    requester_email: str
+    basis: str
+    requested_actions_json: list[str]
+    status: str
+    decision_note: str | None
+    decided_by: str | None
+    decided_at: datetime | None
+    metadata_json: dict[str, Any] | None
+    created_at: datetime
+
+
+class OpsTakedownDecisionRequest(BaseModel):
+    """Operator decision for one pending takedown request."""
+
+    status: Literal["approved", "rejected"]
+    actor_name: str | None = Field(default=None, max_length=100)
+    note: str = Field(min_length=1, max_length=5000)
+
+
+class OpsTakedownExecutionRead(BaseModel):
+    """Suppression counts recorded when an approval executes."""
+
+    episode_ids: list[int]
+    media_ids: list[int]
+    transcripts_suppressed: int
+    derivatives_suppressed: int
+    mentions_unpublished: int
+    source_opt_outs_registered: int
+
+
+class OpsTakedownDecisionRead(BaseModel):
+    """Decision outcome plus execution summary for approvals."""
+
+    request: OpsTakedownRequestRead
+    execution: OpsTakedownExecutionRead | None
+
+
 OpsPodcastSortField = Literal["created_at", "name", "episode_count", "mention_count"]
 OpsSortOrder = Literal["asc", "desc"]
 
@@ -249,6 +322,12 @@ __all__ = [
     "OpsRetentionPreviewRead",
     "OpsReviewThroughputRead",
     "OpsSortOrder",
+    "OpsTakedownDecisionRead",
+    "OpsTakedownDecisionRequest",
+    "OpsTakedownExecutionRead",
+    "OpsTakedownRequestRead",
+    "TakedownRequestCreate",
+    "TakedownRequestCreatedRead",
     "OpsTranscriptPurgeRead",
     "OpsTranscriptRetentionRead",
     "PodcastSourceType",

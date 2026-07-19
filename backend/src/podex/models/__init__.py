@@ -50,6 +50,12 @@ from podex.models.semantic_chunk import (
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
 )
+from podex.models.takedown_request import (
+    TakedownRequest,
+    TakedownRequesterType,
+    TakedownRequestStatus,
+    TakedownSubjectType,
+)
 from podex.models.transcript import Transcript
 from podex.models.transcript_artifact import TranscriptArtifact
 from podex.models.transcript_digest import TranscriptDigest
@@ -106,6 +112,10 @@ __all__ = [
     "ReviewItemStatus",
     "ReviewPriority",
     "ScheduledWorkItemModel",
+    "TakedownRequest",
+    "TakedownRequesterType",
+    "TakedownRequestStatus",
+    "TakedownSubjectType",
     "Transcript",
     "TranscriptArtifact",
     "TranscriptDigest",

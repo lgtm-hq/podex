@@ -692,6 +692,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/ops/takedown-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Ops Takedown Requests
+         * @description List submitted takedown cases for privileged review.
+         */
+        get: operations["list_ops_takedown_requests_api_v2_ops_takedown_requests_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/ops/takedown-requests/{request_id}/decide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Decide Ops Takedown Request
+         * @description Decide a pending takedown; approvals execute suppression immediately.
+         */
+        post: operations["decide_ops_takedown_request_api_v2_ops_takedown_requests__request_id__decide_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/podcasts": {
         parameters: {
             query?: never;
@@ -771,6 +811,26 @@ export interface paths {
         get: operations["read_status_api_v2_status_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/takedowns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submit Takedown Request
+         * @description Accept a takedown submission for privileged review.
+         */
+        post: operations["submit_takedown_request_api_v2_takedowns_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1478,6 +1538,86 @@ export interface components {
             pending_items: number;
         };
         /**
+         * OpsTakedownDecisionRead
+         * @description Decision outcome plus execution summary for approvals.
+         */
+        OpsTakedownDecisionRead: {
+            execution: components["schemas"]["OpsTakedownExecutionRead"] | null;
+            request: components["schemas"]["OpsTakedownRequestRead"];
+        };
+        /**
+         * OpsTakedownDecisionRequest
+         * @description Operator decision for one pending takedown request.
+         */
+        OpsTakedownDecisionRequest: {
+            /** Actor Name */
+            actor_name?: string | null;
+            /** Note */
+            note: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "approved" | "rejected";
+        };
+        /**
+         * OpsTakedownExecutionRead
+         * @description Suppression counts recorded when an approval executes.
+         */
+        OpsTakedownExecutionRead: {
+            /** Derivatives Suppressed */
+            derivatives_suppressed: number;
+            /** Episode Ids */
+            episode_ids: number[];
+            /** Media Ids */
+            media_ids: number[];
+            /** Mentions Unpublished */
+            mentions_unpublished: number;
+            /** Source Opt Outs Registered */
+            source_opt_outs_registered: number;
+            /** Transcripts Suppressed */
+            transcripts_suppressed: number;
+        };
+        /**
+         * OpsTakedownRequestRead
+         * @description Privileged view of one takedown case.
+         */
+        OpsTakedownRequestRead: {
+            /** Basis */
+            basis: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Decided At */
+            decided_at: string | null;
+            /** Decided By */
+            decided_by: string | null;
+            /** Decision Note */
+            decision_note: string | null;
+            /** Id */
+            id: number;
+            /** Metadata Json */
+            metadata_json: {
+                [key: string]: unknown;
+            } | null;
+            /** Requested Actions Json */
+            requested_actions_json: string[];
+            /** Requester Email */
+            requester_email: string;
+            /** Requester Name */
+            requester_name: string;
+            /** Requester Type */
+            requester_type: string;
+            /** Status */
+            status: string;
+            /** Subject Id */
+            subject_id: number;
+            /** Subject Type */
+            subject_type: string;
+        };
+        /**
          * OpsTranscriptPurgeRead
          * @description Result of an operator-approved transcript purge.
          */
@@ -1702,6 +1842,48 @@ export interface components {
             /** Tier */
             tier: string;
         };
+        /**
+         * TakedownRequestCreate
+         * @description Public takedown intake submission.
+         */
+        TakedownRequestCreate: {
+            /** Basis */
+            basis: string;
+            /** Requested Actions */
+            requested_actions: ("suppress_raw_transcript" | "suppress_derivatives" | "unpublish_mentions" | "register_source_opt_out")[];
+            /** Requester Email */
+            requester_email: string;
+            /** Requester Name */
+            requester_name: string;
+            /**
+             * Requester Type
+             * @enum {string}
+             */
+            requester_type: "creator" | "rights_holder" | "operator";
+            /** Subject Id */
+            subject_id: number;
+            /**
+             * Subject Type
+             * @enum {string}
+             */
+            subject_type: "podcast" | "episode" | "mention";
+        };
+        /**
+         * TakedownRequestCreatedRead
+         * @description Acknowledgement returned to a takedown submitter.
+         */
+        TakedownRequestCreatedRead: {
+            /** Id */
+            id: number;
+            /** Status */
+            status: string;
+        };
+        /**
+         * TakedownRequestStatus
+         * @description Review states for takedown requests.
+         * @enum {string}
+         */
+        TakedownRequestStatus: "pending" | "approved" | "rejected";
         /** ValidationError */
         ValidationError: {
             /** Context */
@@ -2864,6 +3046,73 @@ export interface operations {
             };
         };
     };
+    list_ops_takedown_requests_api_v2_ops_takedown_requests_get: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["TakedownRequestStatus"] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsTakedownRequestRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_ops_takedown_request_api_v2_ops_takedown_requests__request_id__decide_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OpsTakedownDecisionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsTakedownDecisionRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_podcasts_api_v2_podcasts_get: {
         parameters: {
             query?: {
@@ -2967,6 +3216,39 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+        };
+    };
+    submit_takedown_request_api_v2_takedowns_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TakedownRequestCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TakedownRequestCreatedRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
