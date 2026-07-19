@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.32.0] - 2026-07-19
+
+### Added
+
+- **ops**: add audit log, podcast management, and guarded ops API (#282) (ae870ba)
+
 ## [0.31.0] - 2026-07-18
 
 ### Added
