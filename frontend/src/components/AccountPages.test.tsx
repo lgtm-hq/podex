@@ -355,7 +355,8 @@ describe("account pages", () => {
     const assign = vi.fn();
     vi.stubGlobal("location", {
       ...window.location,
-      search: "?token=abc&redirect_path=/account/saved",
+      search: "?redirect_path=/account/saved",
+      hash: "#token=abc",
       assign,
     });
 
@@ -370,6 +371,7 @@ describe("account pages", () => {
     vi.stubGlobal("location", {
       ...window.location,
       search: "",
+      hash: "",
       assign: vi.fn(),
     });
 

@@ -11,7 +11,10 @@ export default function MagicLinkVerify() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
+    const fragment = new URLSearchParams(
+      window.location.hash.replace(/^#/, ""),
+    );
+    const token = fragment.get("token");
     if (!token) {
       setState("failed");
       return;

@@ -14,7 +14,11 @@ class MagicLinkToken(Base):
     __tablename__ = "magic_link_tokens"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("account_users.id"), index=True)
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("account_users.id"),
+        index=True,
+    )
+    email: Mapped[str] = mapped_column(String(320), index=True, default="")
     token_digest: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     redirect_path: Mapped[str | None] = mapped_column(String(300))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)

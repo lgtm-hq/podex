@@ -17,10 +17,10 @@ from podex.services.account_auth import (
 _NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
 
-def test_issue_magic_link_creates_user_and_hashed_token(
+def test_issue_magic_link_defers_account_creation(
     db_session: Session,
 ) -> None:
-    """A first sign-in request creates the account and a hashed challenge."""
+    """A sign-in request stores a hashed challenge without minting a user."""
     issued = issue_magic_link(
         db=db_session,
         email="  Reader@Example.COM ",
@@ -30,10 +30,11 @@ def test_issue_magic_link_creates_user_and_hashed_token(
     )
     db_session.commit()
 
-    user = db_session.execute(select(AccountUser)).scalar_one()
     challenge = db_session.execute(select(MagicLinkToken)).scalar_one()
     assert_that(issued.email).is_equal_to("reader@example.com")
-    assert_that(user.email).is_equal_to("reader@example.com")
+    assert_that(db_session.execute(select(AccountUser)).scalar_one_or_none()).is_none()
+    assert_that(challenge.email).is_equal_to("reader@example.com")
+    assert_that(challenge.user_id).is_none()
     assert_that(challenge.token_digest).is_not_equal_to(issued.token)
     assert_that(challenge.redirect_path).is_equal_to("/account")
     assert_that(issued.expires_at).is_equal_to(_NOW + timedelta(minutes=15))
@@ -90,8 +91,12 @@ def test_authenticate_magic_link_issues_single_use_session(
     assert_that(session).is_not_none()
     if session is None:  # pragma: no cover - narrowed above
         raise AssertionError
+    assert_that(session.user.email).is_equal_to("reader@example.com")
     assert_that(session.user.last_signed_in_at).is_equal_to(
         _NOW.replace(tzinfo=None),
+    )
+    assert_that(db_session.execute(select(AccountUser)).scalar_one().id).is_equal_to(
+        session.user.id,
     )
     replay = authenticate_magic_link(
         db=db_session,
