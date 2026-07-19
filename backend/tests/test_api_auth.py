@@ -49,7 +49,7 @@ def _sign_in(client: TestClient) -> str:
     )
     if requested.status_code != 202:  # pragma: no cover - guard
         raise AssertionError(requested.text)
-    token = parse_qs(urlparse(sender.deliveries[-1][1]).query)["token"][0]
+    token = parse_qs(urlparse(sender.deliveries[-1][1]).fragment)["token"][0]
     verified = client.post("/api/v2/auth/magic-link/verify", json={"token": token})
     if verified.status_code != 200:  # pragma: no cover - guard
         raise AssertionError(verified.text)
@@ -82,7 +82,7 @@ def test_magic_link_session_lifecycle_uses_hashed_credentials(
     assert_that(requested.status_code).is_equal_to(202)
     assert_that(sender.deliveries[0][0]).is_equal_to("reader@example.com")
     assert_that(sender.deliveries[0][1]).contains("redirect_path=%2Faccount%2Fsaved")
-    token = parse_qs(urlparse(sender.deliveries[0][1]).query)["token"][0]
+    token = parse_qs(urlparse(sender.deliveries[0][1]).fragment)["token"][0]
     challenge = db_session.query(MagicLinkToken).one()
     assert_that(challenge.token_digest).is_not_equal_to(token)
 

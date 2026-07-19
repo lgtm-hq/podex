@@ -210,11 +210,17 @@ def request_auth_magic_link(
         redirect_path=payload.redirect_path,
         ttl_minutes=settings.auth_magic_link_ttl_minutes,
     )
-    query = {"token": issued.token}
-    if issued.redirect_path is not None:
-        query["redirect_path"] = issued.redirect_path
+    # The token travels in the URL fragment, which browsers never send in
+    # Referer headers or request lines, so it stays out of proxy and access
+    # logs. Only the redirect path rides in the query string.
+    query = (
+        f"?{urlencode({'redirect_path': issued.redirect_path})}"
+        if issued.redirect_path is not None
+        else ""
+    )
+    fragment = urlencode({"token": issued.token})
     verification_url = (
-        f"{settings.public_web_url.rstrip('/')}/auth/verify?{urlencode(query)}"
+        f"{settings.public_web_url.rstrip('/')}/auth/verify{query}#{fragment}"
     )
     try:
         sender.send_magic_link(email=issued.email, verification_url=verification_url)

@@ -40,21 +40,18 @@ def issue_magic_link(
     """Create a one-time magic-link challenge for a normalized email address."""
     effective_now = now or datetime.now(UTC)
     normalized_email = email.strip().casefold()
-    user = db.query(AccountUser).filter(AccountUser.email == normalized_email).first()
-    if user is None:
-        user = AccountUser(email=normalized_email)
-        db.add(user)
-        db.flush()
 
+    # Account rows are created only on successful verification so that
+    # unauthenticated link requests cannot mint unbounded users.
     db.query(MagicLinkToken).filter(
-        MagicLinkToken.user_id == user.id,
+        MagicLinkToken.email == normalized_email,
         MagicLinkToken.consumed_at.is_(None),
     ).update({MagicLinkToken.consumed_at: effective_now}, synchronize_session=False)
     raw_token = token_urlsafe(32)
     expires_at = effective_now + timedelta(minutes=ttl_minutes)
     db.add(
         MagicLinkToken(
-            user_id=user.id,
+            email=normalized_email,
             token_digest=_token_digest(raw_token),
             redirect_path=redirect_path,
             expires_at=expires_at,
@@ -90,7 +87,12 @@ def authenticate_magic_link(
     ):
         return None
 
-    user = db.query(AccountUser).filter(AccountUser.id == challenge.user_id).one()
+    user = db.query(AccountUser).filter(AccountUser.email == challenge.email).first()
+    if user is None:
+        user = AccountUser(email=challenge.email)
+        db.add(user)
+        db.flush()
+    challenge.user_id = user.id
     raw_session_token = token_urlsafe(32)
     expires_at = effective_now + timedelta(days=session_ttl_days)
     challenge.consumed_at = effective_now
