@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v2/auth/callback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Complete Workos Callback
+         * @description Finish hosted sign-in: validate state, exchange the code, set session.
+         */
+        get: operations["complete_workos_callback_api_v2_auth_callback_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v2/auth/login": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Begin Workos Login
+         * @description Start hosted WorkOS AuthKit sign-in with a short-lived state cookie.
+         */
+        get: operations["begin_workos_login_api_v2_auth_login_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/auth/logout": {
         parameters: {
             query?: never;
@@ -830,7 +870,7 @@ export interface paths {
         };
         /**
          * Read Status
-         * @description Report that the v2 API surface is reachable.
+         * @description Report that the v2 API surface is reachable and how sign-in works.
          */
         get: operations["read_status_api_v2_status_get"];
         put?: never;
@@ -897,8 +937,12 @@ export interface components {
             created_at: string;
             /** Email */
             email: string;
+            /** First Name */
+            first_name: string | null;
             /** Id */
             id: number;
+            /** Last Name */
+            last_name: string | null;
             /** Last Signed In At */
             last_signed_in_at: string | null;
         };
@@ -991,6 +1035,33 @@ export interface components {
         AlertRuleUpdateRequest: {
             /** Enabled */
             enabled: boolean;
+        };
+        /**
+         * ApiStatusRead
+         * @description Reachability probe plus the public sign-in configuration flags.
+         *
+         *     Attributes:
+         *         status: Always ``"ok"`` when the surface is reachable.
+         *         api: The API surface identifier (``"v2"``).
+         *         workos_enabled: Whether hosted WorkOS AuthKit sign-in is configured,
+         *             so the frontend can offer it before attempting a redirect.
+         */
+        ApiStatusRead: {
+            /**
+             * Api
+             * @default v2
+             */
+            api: string;
+            /**
+             * Status
+             * @default ok
+             */
+            status: string;
+            /**
+             * Workos Enabled
+             * @default false
+             */
+            workos_enabled: boolean;
         };
         /**
          * AuthLogoutResponse
@@ -1930,6 +2001,58 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    complete_workos_callback_api_v2_auth_callback_get: {
+        parameters: {
+            query: {
+                code: string;
+                state: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    begin_workos_login_api_v2_auth_login_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     logout_account_session_api_v2_auth_logout_post: {
         parameters: {
             query?: never;
@@ -3279,9 +3402,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["ApiStatusRead"];
                 };
             };
         };

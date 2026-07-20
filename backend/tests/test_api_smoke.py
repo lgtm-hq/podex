@@ -28,7 +28,9 @@ def test_health_and_status_smoke(client: TestClient) -> None:
 
     status = client.get("/api/v2/status")
     assert_that(status.status_code).is_equal_to(200)
-    assert_that(status.json()).is_equal_to({"status": "ok", "api": "v2"})
+    assert_that(status.json()).is_equal_to(
+        {"status": "ok", "api": "v2", "workos_enabled": False}
+    )
 
 
 def test_empty_catalog_smoke(client: TestClient) -> None:

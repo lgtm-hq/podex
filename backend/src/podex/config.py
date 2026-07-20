@@ -72,6 +72,20 @@ class Settings(BaseSettings):
     smtp_from_email: str = ""
     smtp_starttls: bool = True
 
+    # Hosted sign-in via WorkOS AuthKit. All three values come from the
+    # deployment environment; with any of them missing the feature stays
+    # off and the SMTP magic-link flow remains the only sign-in path.
+    workos_client_id: str = ""
+    workos_api_key: str = ""
+    workos_redirect_uri: str = ""
+
+    @property
+    def workos_enabled(self) -> bool:
+        """Whether hosted WorkOS AuthKit sign-in is fully configured."""
+        return bool(
+            self.workos_client_id and self.workos_api_key and self.workos_redirect_uri,
+        )
+
     # Paid tier and billing. Both gates default off: ``paid_tier_enabled``
     # controls whether checkout can begin, ``paid_tier_enforced`` controls
     # whether personalization writes require entitlement. The checkout URL
