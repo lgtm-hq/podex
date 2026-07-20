@@ -32,7 +32,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         requests_per_second: Rate limit for API calls.
     """
 
-    BASE_URL = "http://www.omdbapi.com"
+    BASE_URL = "https://www.omdbapi.com"
 
     source = EnrichmentSource.OMDB
 

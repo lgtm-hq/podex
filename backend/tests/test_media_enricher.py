@@ -1480,6 +1480,13 @@ def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     ss.close()
 
 
+def test_omdb_uses_https_base_url() -> None:
+    """The OMDB base URL uses the https scheme (api key in query)."""
+    from podex.services.enrichment import OMDBProvider
+
+    assert_that(OMDBProvider.BASE_URL).starts_with("https://")
+
+
 def test_provider_context_managers_close_clients() -> None:
     """Context-manager protocol closes every API-key provider."""
     from podex.services.enrichment import (
