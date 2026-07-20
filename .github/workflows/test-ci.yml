@@ -41,6 +41,73 @@ jobs:
       contents: read
       pull-requests: write
 
+  # Postgres migration replay (#299 / epic #295): proves the Alembic chain
+  # (0001+) replays cleanly on Postgres — not just SQLite — ahead of the Neon
+  # cutover. Direct job rather than an lgtm-ci reusable workflow because
+  # reusable-test-python has no service-container support.
+  test-postgres-migrations:
+    name: 🐘 Postgres Migration Replay
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # pgvector-enabled image: migration 0010 creates a vector(1536)
+        # column on Postgres, which requires the pgvector extension that the
+        # stock postgres image does not ship.
+        # yamllint disable-line rule:line-length
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
+        env:
+          POSTGRES_USER: podex
+          # Trust auth: throwaway CI service on localhost only; avoids a
+          # placeholder password that secret scanners flag.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: podex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U podex -d podex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden runner
+        # The Postgres service container is pulled by the runner before any
+        # step executes, so blocking docker.io here is safe. Allowlist covers
+        # setup-uv's release download, uv's python-build-standalone fetch, and
+        # dependency resolution from PyPI.
+        # Pinned to SHA for supply chain security
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            github-releases.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+      - name: Checkout repository
+        # Pinned to SHA for supply chain security
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Install uv
+        # Pinned to SHA for supply chain security
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990  # v8.3.2
+        with:
+          version: latest
+          enable-cache: false
+      - name: Replay migrations on Postgres
+        env:
+          PODEX_DATABASE_URL: postgresql+psycopg://podex@localhost:5432/podex
+        run: bash .github/scripts/postgres-migration-replay.sh
+
   # Coverage publishing (#200 / epic #114): no separate coverage.yml calling
   # reusable-coverage.yml. test-coverage already collects coverage, enforces the
   # 85% threshold, uploads artifacts, and publishes the PR summary via

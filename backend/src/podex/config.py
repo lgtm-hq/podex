@@ -24,6 +24,17 @@ class Settings(BaseSettings):
     public_web_url: str = "http://localhost:4321"
     database_url: str = "sqlite:///./podex.db"
 
+    # Connection pooling for server-backed databases (Railway + Neon).
+    # Applied only when ``database_url`` is not SQLite; the local SQLite
+    # default keeps SQLAlchemy's stock pooling untouched. Defaults are sized
+    # for a small Railway service talking to Neon's pooled endpoint: a modest
+    # steady pool with equal burst headroom, recycled well inside typical
+    # idle-connection cutoffs, and pre-ping so suspended/rotated backends are
+    # detected instead of surfacing stale-connection errors.
+    database_pool_size: int = Field(default=5, ge=1)
+    database_max_overflow: int = Field(default=5, ge=0)
+    database_pool_recycle_seconds: int = Field(default=300, ge=1)
+
     # Rate limiting. Defaults are deliberately generous so ordinary traffic
     # (and the test suite) never trips the limiter; tests inject tight values.
     # When ``rate_limit_redis_url`` is unset the limiter runs process-locally;

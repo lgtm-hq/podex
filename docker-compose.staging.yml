@@ -7,12 +7,19 @@
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging up --build -d
 #   docker compose -f docker-compose.staging.yml --env-file .env.staging \
 #     run --rm api alembic upgrade head
+#
+# Migrations: the backend image's entrypoint (backend/scripts/start.sh) can
+# run `alembic upgrade head` automatically at startup when AUTO_MIGRATE=1 is
+# set in the service environment. The default is off, so the explicit
+# `run --rm api alembic upgrade head` step above remains the staging flow.
 
 name: podex-staging
 
 services:
   db:
-    image: postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    # pgvector-enabled image: migration 0010 creates a vector(1536) column on
+    # Postgres, which needs the pgvector extension the stock image lacks.
+    image: pgvector/pgvector:pg18@sha256:12a379b47ad65289572ea0756efc11b7c241a6662833e8af7038cd3b73d647e0
     restart: unless-stopped
     env_file:
       - path: .env.staging

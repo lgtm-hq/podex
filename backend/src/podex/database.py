@@ -6,7 +6,33 @@ from typing import Any
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
-from podex.config import get_settings
+from podex.config import Settings, get_settings
+
+
+def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
+    """Return ``create_engine`` keyword arguments for the configured database.
+
+    SQLite keeps the historical behavior (``check_same_thread=False`` so the
+    FastAPI thread pool can share connections, stock pooling). Server-backed
+    databases (e.g. Neon Postgres behind Railway) get ``pool_pre_ping`` plus
+    settings-driven pool sizing so suspended or rotated backends are detected
+    and idle connections are recycled.
+
+    Args:
+        settings: Application settings providing the database URL and pool
+            tuning values.
+
+    Returns:
+        Keyword arguments to splat into :func:`sqlalchemy.create_engine`.
+    """
+    if settings.database_url.startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}}
+    return {
+        "pool_pre_ping": True,
+        "pool_size": settings.database_pool_size,
+        "max_overflow": settings.database_max_overflow,
+        "pool_recycle": settings.database_pool_recycle_seconds,
+    }
 
 
 def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
@@ -30,10 +56,7 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
 
 _settings = get_settings()
 
-_connect_args = (
-    {"check_same_thread": False} if _settings.database_url.startswith("sqlite") else {}
-)
-engine = create_engine(_settings.database_url, connect_args=_connect_args)
+engine = create_engine(_settings.database_url, **build_engine_kwargs(_settings))
 enable_sqlite_foreign_keys(engine)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
