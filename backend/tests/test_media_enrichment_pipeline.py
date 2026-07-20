@@ -85,6 +85,11 @@ def test_enrich_pending_media_skips_low_confidence_results(
     assert_that(result.processed_count).is_equal_to(1)
     assert_that(result.enriched_count).is_zero()
     assert_that(media.google_books_id).is_none()
+    assert_that(media.enriched_at).is_none()
+    alias_count = (
+        db_session.query(MediaAlias).filter(MediaAlias.media_id == media.id).count()
+    )
+    assert_that(alias_count).is_zero()
 
 
 class _FakeEnricher:

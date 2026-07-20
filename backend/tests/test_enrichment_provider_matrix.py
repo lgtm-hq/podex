@@ -325,6 +325,7 @@ def test_tmdb_person_happy_path() -> None:
     )
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
@@ -356,6 +357,7 @@ def test_crossref_happy_path() -> None:
     )
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("10.1000")
         assert_that(result.metadata["title"]).is_equal_to(
@@ -387,6 +389,7 @@ def test_semantic_scholar_happy_path() -> None:
     )
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
         assert_that(result.metadata["title"]).is_equal_to(

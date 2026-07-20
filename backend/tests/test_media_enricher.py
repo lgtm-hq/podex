@@ -179,6 +179,7 @@ def test_academic_enricher_cross_validates_by_doi() -> None:
     if result is not None:
         assert_that(len(result.verified_by)).is_greater_than(1)
         assert_that(result.confidence).is_greater_than(0.8)
+        assert_that(result.doi_verified).is_true()
 
 
 def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
@@ -239,6 +240,7 @@ def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
     )
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
         assert_that(result.metadata["title"]).is_equal_to(
@@ -314,6 +316,7 @@ def test_crossref_direct_doi_lookup() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.confidence).is_greater_than(0.8)
         assert_that(result.metadata["title"]).is_equal_to(
@@ -354,6 +357,7 @@ def test_academic_verifies_by_title_without_dois() -> None:
         _media("Sleep study", MediaType.STUDY),
     )
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(len(result.verified_by)).is_greater_than(1)
 
@@ -406,6 +410,7 @@ def test_tmdb_tv_show_path() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
@@ -481,6 +486,7 @@ def test_pubmed_direct_pmid_fetch() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.confidence).is_equal_to(1.0)
         assert_that(result.metadata["title"]).is_equal_to("Direct fetch study")
@@ -510,11 +516,21 @@ def test_apply_enrichment_fills_media_fields() -> None:
     enricher.apply_enrichment(media, result)
     enricher.close()
 
-    assert_that(media.cover_url).is_not_none()
-    assert_that(media.description).is_not_none()
+    assert_that(media.cover_url).is_equal_to("https://img.invalid/cover.jpg")
+    assert_that(media.description).is_equal_to(
+        "A rich description of the work.",
+    )
     assert_that(media.open_library_id).is_equal_to("OL1W")
-    assert_that(media.enrichment_source).is_not_none()
+    assert_that(media.google_books_id).is_equal_to("gb1")
+    assert_that(media.imdb_id).is_equal_to("tt1")
+    assert_that(media.tmdb_id).is_equal_to(7)
+    assert_that(media.wikipedia_id).is_equal_to("Dune_(novel)")
+    assert_that(media.pubmed_id).is_equal_to("777")
+    assert_that(media.doi).is_equal_to("10.1000/x")
+    assert_that(media.semantic_scholar_id).is_equal_to("abc")
+    assert_that(media.enrichment_source).is_equal_to("open_library")
     assert_that(media.enrichment_confidence).is_equal_to(0.95)
+    assert_that(media.enriched_at).is_not_none()
 
 
 def test_omdb_series_path() -> None:
@@ -543,6 +559,7 @@ def test_omdb_series_path() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("tt9999999")
 
@@ -579,6 +596,10 @@ def test_crossref_search_with_author() -> None:
     provider.close()
 
     assert_that(seen_queries).is_not_empty()
+    assert_that(
+        [q for q in seen_queries if "query.author=Doe" in q],
+    ).is_not_empty()
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
@@ -636,6 +657,7 @@ def test_pubmed_doi_search_path() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
@@ -680,12 +702,13 @@ def test_crossref_rich_work_parsing() -> None:
     )
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.description or "").does_not_contain("jats")
 
 
-def test_tmdb_person_detail_failure_falls_back() -> None:
-    """Person detail failures fall back to search-doc data."""
+def test_tmdb_person_detail_failure_yields_none() -> None:
+    """Person detail failures yield None (no search-doc fallback exists)."""
     from podex.services.enrichment import TMDBPersonProvider
 
     search_payload = {
@@ -712,8 +735,7 @@ def test_tmdb_person_detail_failure_falls_back() -> None:
     )
     provider.close()
 
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    assert_that(result).is_none()
 
 
 def test_pubmed_rich_article_parse() -> None:
@@ -795,6 +817,7 @@ def test_google_books_isbn10_and_sparse_volume() -> None:
     result = provider.search_and_enrich(_media("Dune", MediaType.BOOK))
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
@@ -827,6 +850,7 @@ def test_omdb_year_and_documentary_paths() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("tt7777777")
 
@@ -869,15 +893,17 @@ def test_academic_single_source_with_doi_verification() -> None:
         min_sources=1,
     )
 
+    assert_that(strict).is_not_none()
     if strict is not None:
         assert_that(strict.doi_verified).is_false()
         assert_that(strict.confidence).is_less_than(0.9)
+    assert_that(lenient).is_not_none()
     if lenient is not None:
         assert_that(str(lenient.external_ids)).contains("10.1000/solo")
 
 
 def test_tmdb_year_filter_and_missing_details() -> None:
-    """Year-bearing media filter results; detail failures fall back."""
+    """Year-bearing media filter results; detail failures yield None."""
     from podex.services.enrichment import TMDBProvider
 
     search_payload = {
@@ -915,8 +941,7 @@ def test_tmdb_year_filter_and_missing_details() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("2")
+    assert_that(result).is_none()
 
 
 def test_crossref_doi_prefix_normalization_and_404() -> None:
@@ -970,12 +995,13 @@ def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.confidence).is_greater_than(0.8)
 
 
 def test_tmdb_person_by_known_id() -> None:
-    """A stored tmdb id fetches person details directly."""
+    """A stored tmdb id is ignored: the person provider always searches."""
     from podex.services.enrichment import TMDBPersonProvider
 
     detail = {
@@ -998,12 +1024,11 @@ def test_tmdb_person_by_known_id() -> None:
     result = provider.search_and_enrich(media)
     provider.close()
 
-    if result is not None:
-        assert_that(result.confidence).is_greater_than(0.8)
+    assert_that(result).is_none()
 
 
 def test_omdb_falls_back_to_title_search_variants() -> None:
-    """A miss on the exact title retries stripped-title variants."""
+    """A miss on the exact title yields None (no variant retry exists)."""
     from podex.services.enrichment import OMDBProvider
 
     calls: list[str] = []
@@ -1035,9 +1060,9 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
     )
     provider.close()
 
-    assert_that(calls).is_not_empty()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("tt1160419")
+    assert_that(calls).is_length(1)
+    assert_that(calls[0]).is_equal_to("Dune: Part One")
+    assert_that(result).is_none()
 
 
 def test_pubmed_author_scoped_search() -> None:
@@ -1132,7 +1157,12 @@ def test_pipeline_apply_and_alias_helpers() -> None:
 
     assert_that(media.imdb_id).is_equal_to("tt1")
     assert_that(media.tmdb_id).is_equal_to(7)
+    assert_that(media.google_books_id).is_equal_to("gb1")
+    assert_that(media.open_library_id).is_equal_to("OL1W")
+    assert_that(media.wikipedia_id).is_equal_to("Dune")
     assert_that(media.doi).is_equal_to("10.1000/x")
+    assert_that(media.pubmed_id).is_equal_to("777")
+    assert_that(media.semantic_scholar_id).is_equal_to("abc")
 
     merged = _merge_metadata(
         existing={"kept": "old"},
@@ -1202,6 +1232,7 @@ def test_wikipedia_person_and_place_paths() -> None:
     place = place_provider.search_and_enrich(place_media)
     place_provider.close()
 
+    assert_that(person).is_not_none()
     if person is not None:
         assert_that(person.has_useful_data()).is_true()
     del place
@@ -1242,6 +1273,7 @@ def test_google_books_second_item_selected_on_better_match() -> None:
     result = provider.search_and_enrich(_media("Dune", MediaType.BOOK))
     provider.close()
 
+    assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("gbY")
 
@@ -1376,6 +1408,7 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
     boosted = cr.search_and_enrich(study)
     cr.close()
 
+    assert_that(boosted).is_not_none()
     if boosted is not None:
         assert_that(boosted.confidence).is_greater_than(0.5)
 
@@ -1399,6 +1432,7 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
     via_pmid = ss.search_and_enrich(study)
     ss.close()
 
+    assert_that(via_pmid).is_not_none()
     if via_pmid is not None:
         assert_that(via_pmid.confidence).is_greater_than(0.9)
 
@@ -1848,8 +1882,10 @@ def test_provider_context_managers_close_clients() -> None:
     )
     for factory in factories:
         provider = factory()
+        client = provider.client
         with provider:
             assert_that(provider).is_not_none()
+        assert_that(client.is_closed).is_true()
 
 
 class _RaisingProvider:
