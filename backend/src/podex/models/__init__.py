@@ -15,6 +15,7 @@ from podex.models.account_subscription import AccountSubscription
 from podex.models.account_user import AccountUser
 from podex.models.audit_log import AuditAction, AuditLog
 from podex.models.base import Base
+from podex.models.billing_webhook_event import BillingWebhookEvent
 from podex.models.derivative_generation_run import (
     DerivativeGenerationRun,
     DerivativeGenerationRunStatus,
@@ -77,6 +78,7 @@ __all__ = [
     "AuditAction",
     "AuditLog",
     "Base",
+    "BillingWebhookEvent",
     "DerivativeGenerationRun",
     "DerivativeGenerationRunStatus",
     "DerivativeSummaryKind",

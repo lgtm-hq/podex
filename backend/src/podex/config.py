@@ -108,6 +108,20 @@ class Settings(BaseSettings):
     billing_provider_name: str = ""
     billing_checkout_url: str = ""
 
+    # Paddle Merchant of Record. Every identifier defaults to an empty
+    # string so the Paddle provider stays disabled until the deployment
+    # environment configures it; the webhook route rejects requests until
+    # the signing secret is set.
+    paddle_api_key: str = ""
+    paddle_webhook_secret: str = ""
+    paddle_price_id: str = ""
+    paddle_checkout_url: str = ""
+
+    @property
+    def paddle_checkout_enabled(self) -> bool:
+        """Whether Paddle-hosted checkout is fully configured."""
+        return bool(self.paddle_checkout_url and self.paddle_price_id)
+
     # Ops console API. The ops surface stays disabled until a key is
     # configured by the deployment environment; requests must present it in
     # the X-Ops-Key header.

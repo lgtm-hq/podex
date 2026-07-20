@@ -3,7 +3,16 @@
 from fastapi import APIRouter
 
 from podex.api.deps import AppSettings
-from podex.api.v2 import auth, episodes, media, ops, podcasts, stats, takedowns
+from podex.api.v2 import (
+    auth,
+    billing,
+    episodes,
+    media,
+    ops,
+    podcasts,
+    stats,
+    takedowns,
+)
 from podex.api.v2.schemas import ApiStatusRead
 
 api_v2_router = APIRouter(tags=["v2"])
@@ -25,5 +34,6 @@ api_v2_router.include_router(episodes.router)
 api_v2_router.include_router(media.router)
 api_v2_router.include_router(stats.router)
 api_v2_router.include_router(auth.router)
+api_v2_router.include_router(billing.router)
 api_v2_router.include_router(ops.router)
 api_v2_router.include_router(takedowns.router)
