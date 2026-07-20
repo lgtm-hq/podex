@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.39.1] - 2026-07-20
+
+### Fixed
+
+- **enrichment**: resolve post-merge review findings in the enrichment service layer
+  (#336) (a4b50e7)
+
 ## [0.39.0] - 2026-07-20
 
 ### Added
