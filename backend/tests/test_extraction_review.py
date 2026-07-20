@@ -281,6 +281,82 @@ def test_persist_leaves_ambiguous_duplicate_titles_unlinked(
     assert_that(candidate.media_id).is_none()
 
 
+def test_persist_preserves_known_author_on_sparse_replay(
+    db_session: Session,
+) -> None:
+    """A replay without a creator keeps the previously known author."""
+    episode = _episode(db_session)
+    rich = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+    sparse = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[rich],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[sparse],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.suggested_author).is_equal_to("Frank Herbert")
+    events = db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+    for event in events:
+        changed_fields = (event.metadata_json or {}).get("changed_fields", [])
+        assert_that(changed_fields).does_not_contain("suggested_author")
+
+
+def test_persist_updates_author_on_replay_with_new_creator(
+    db_session: Session,
+) -> None:
+    """A replay with a new non-empty creator still updates the author."""
+    episode = _episode(db_session)
+    first = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.9)
+    corrected = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[first],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[corrected],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.suggested_author).is_equal_to("Frank Herbert")
+
+
 def test_persist_skips_items_with_existing_published_mentions(
     db_session: Session,
 ) -> None:

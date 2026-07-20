@@ -478,7 +478,8 @@ def _update_candidate(
     """
     candidate.raw_title = item.title
     candidate.normalized_title = normalized_title
-    candidate.suggested_author = item.creator
+    if _normalize_value(value=item.creator) is not None:
+        candidate.suggested_author = item.creator
     candidate.confidence = item.confidence
     candidate.extraction_source = extraction_source
     candidate.timestamp_seconds = timestamp_seconds or candidate.timestamp_seconds
