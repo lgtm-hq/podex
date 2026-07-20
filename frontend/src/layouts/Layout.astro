@@ -77,6 +77,14 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..700&family=Fraunces:opsz,wght,SOFT,WONK@9..144,300..900,0..100,0..1&display=swap"
     />
 
+    <script>
+      // Sentry error tracking: no-op (and never loaded) unless
+      // PUBLIC_SENTRY_DSN is configured for the deployment.
+      import { initSentry } from "../lib/sentry";
+
+      void initSentry();
+    </script>
+
     {
       structuredEntries.map((entry) => (
         <script
