@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.39.0] - 2026-07-20
+
+### Added
+
+- **observability**: expose gated Prometheus /metrics endpoint (#331) (12f4fd0)
+- **billing**: add Paddle checkout and signed webhook entitlement (#332) (45b238e)
+
+### Changed
+
+- **deps-dev**: update dependency lintro to 0.85.1 (minor) (#340) (088307e)
+- **deps-dev**: update dependency lintro to 0.84.1 (patch) (#338) (f1430c1)
+
 ## [0.38.0] - 2026-07-20
 
 ### Added
