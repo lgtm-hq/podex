@@ -674,13 +674,14 @@ def persist_extracted_candidates(
             before=before_snapshot,
             after=after_snapshot,
         )
-        _record_candidate_provenance(
-            db=db,
-            candidate=candidate,
-            event_type=MentionCandidateProvenanceEventType.UPDATED,
-            change_summary=_build_change_summary(changed_fields=changed_fields),
-            changed_fields=changed_fields,
-        )
+        if changed_fields:
+            _record_candidate_provenance(
+                db=db,
+                candidate=candidate,
+                event_type=MentionCandidateProvenanceEventType.UPDATED,
+                change_summary=_build_change_summary(changed_fields=changed_fields),
+                changed_fields=changed_fields,
+            )
         review_item_created = _ensure_review_item(
             db=db,
             candidate=candidate,
@@ -688,7 +689,7 @@ def persist_extracted_candidates(
         )
         summary = PersistedExtractionReviewData(
             candidates_created=summary.candidates_created,
-            candidates_updated=summary.candidates_updated + 1,
+            candidates_updated=summary.candidates_updated + int(bool(changed_fields)),
             review_items_created=(
                 summary.review_items_created + int(review_item_created)
             ),

@@ -12,6 +12,7 @@ from podex.models import (
     Mention,
     MentionCandidate,
     MentionCandidateProvenance,
+    MentionCandidateProvenanceEventType,
     MentionCandidateState,
     Podcast,
     ReviewItem,
@@ -355,6 +356,82 @@ def test_persist_updates_author_on_replay_with_new_creator(
 
     candidate = db_session.execute(select(MentionCandidate)).scalar_one()
     assert_that(candidate.suggested_author).is_equal_to("Frank Herbert")
+
+
+def test_persist_identical_replay_is_a_no_op(db_session: Session) -> None:
+    """Replaying identical inputs records no update and no provenance."""
+    episode = _episode(db_session)
+    item = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[item],
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[item],
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_created).is_equal_to(0)
+    assert_that(result.candidates_updated).is_equal_to(0)
+    events = db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+    assert_that(events).is_length(1)
+    assert_that(events[0].event_type).is_equal_to(
+        MentionCandidateProvenanceEventType.CREATED.value,
+    )
+
+
+def test_persist_changed_replay_records_single_update_event(
+    db_session: Session,
+) -> None:
+    """A replay that changes a field counts and records exactly one update."""
+    episode = _episode(db_session)
+    first = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7)
+    changed = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.9)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[first],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[changed],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_updated).is_equal_to(1)
+    updated_events = [
+        event
+        for event in (
+            db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+        )
+        if event.event_type == MentionCandidateProvenanceEventType.UPDATED.value
+    ]
+    assert_that(updated_events).is_length(1)
 
 
 def test_persist_skips_items_with_existing_published_mentions(
