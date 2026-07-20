@@ -22,6 +22,22 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [1.0.0] - 2026-07-20
+
+### Changed
+
+- **config**: nest rate_limit through observability settings domains (#375) (22bc798)
+- **adr**: establish ADR practice — directory, template, and convention (#363) (feec8fe)
+- **deps-dev**: update dependency lintro to 0.88.1 (minor) (#377) (93d24da)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.11.30 (patch) (#376) (2c0168e)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.59.1 (patch) (#373) (65384c1)
+- **config**: nested settings foundation — DatabaseSettings + ADR 0001 (#374) (6e3b6fa)
+- **deps**: update actions/checkout action to v7.0.1 (patch) (#372) (f94dcbe)
+- **enrichment**: split media enricher tests into per-provider modules (#364) (5e9f98e)
+- **deps-dev**: update dependency lintro to 0.87.1 (patch) (#345) (cde98a5)
+- **enrichment**: strengthen weak assertions across enrichment suites (#344) (78d0825)
+- **deps-dev**: update dependency lintro to 0.87.0 (minor) (#342) (280ab7d)
+
 ## [0.39.1] - 2026-07-20
 
 ### Fixed
