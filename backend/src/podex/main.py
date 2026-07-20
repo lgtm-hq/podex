@@ -8,6 +8,7 @@ from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
+from podex.observability import init_sentry
 from podex.services.cache import TTLCache
 from podex.services.limiter_factory import build_rate_limiter
 
@@ -16,6 +17,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure the Podex FastAPI application."""
     resolved = settings or get_settings()
     configure_logging()
+    init_sentry(resolved)
     app = FastAPI(title=resolved.app_name, debug=resolved.debug)
     # Stash the resolved settings on ``app.state`` so route dependencies see
     # the same instance ``create_app`` used to configure middleware — tests

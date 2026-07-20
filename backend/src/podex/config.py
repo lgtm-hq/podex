@@ -96,6 +96,12 @@ class Settings(BaseSettings):
     scheduler_digest_interval_minutes: int = 1440
     scheduler_retention_interval_minutes: int = 1440
 
+    # Sentry error tracking. Disabled until a DSN is provided by the
+    # deployment environment; defaults are placeholder-free. Error tracking
+    # only — no tracing/profiling sample rates are configured.
+    sentry_dsn: str = ""
+    sentry_environment: str = "production"
+
 
 @lru_cache
 def get_settings() -> Settings:
