@@ -6,7 +6,7 @@ from assertpy import assert_that
 from sentry_sdk.types import Event
 
 from podex import __version__
-from podex.config import Settings
+from podex.config import ObservabilitySettings, RateLimitSettings, Settings
 from podex.main import create_app
 from podex.observability import init_sentry, scrub_event
 from podex.scheduler_runner import main as scheduler_main
@@ -14,7 +14,7 @@ from podex.scheduler_runner import main as scheduler_main
 
 def test_init_sentry_noops_without_dsn() -> None:
     """The SDK stays fully disabled when no DSN is configured."""
-    settings = Settings(sentry_dsn="")
+    settings = Settings(observability=ObservabilitySettings(sentry_dsn=""))
     with patch("podex.observability.sentry_sdk.init") as mock_init:
         result = init_sentry(settings)
     assert_that(result).is_false()
@@ -24,8 +24,10 @@ def test_init_sentry_noops_without_dsn() -> None:
 def test_init_sentry_initializes_with_dsn() -> None:
     """A configured DSN initializes the SDK with environment and release."""
     settings = Settings(
-        sentry_dsn="https://key@sentry.example/1",
-        sentry_environment="staging",
+        observability=ObservabilitySettings(
+            sentry_dsn="https://key@sentry.example/1",
+            sentry_environment="staging",
+        ),
     )
     with patch("podex.observability.sentry_sdk.init") as mock_init:
         result = init_sentry(settings)
@@ -42,8 +44,8 @@ def test_init_sentry_initializes_with_dsn() -> None:
 def test_init_sentry_defaults_keep_sdk_disabled() -> None:
     """Default settings carry an empty DSN so Sentry never activates."""
     settings = Settings()
-    assert_that(settings.sentry_dsn).is_empty()
-    assert_that(settings.sentry_environment).is_equal_to("production")
+    assert_that(settings.observability.sentry_dsn).is_empty()
+    assert_that(settings.observability.sentry_environment).is_equal_to("production")
 
 
 def test_scrub_event_redacts_emails_in_message() -> None:
@@ -100,7 +102,7 @@ def test_scrub_event_leaves_clean_events_untouched() -> None:
 
 def test_create_app_initializes_sentry() -> None:
     """The API app factory initializes Sentry with the resolved settings."""
-    settings = Settings(rate_limit_enabled=False)
+    settings = Settings(rate_limit=RateLimitSettings(enabled=False))
     with patch("podex.main.init_sentry") as mock_init:
         create_app(settings)
     mock_init.assert_called_once_with(settings)

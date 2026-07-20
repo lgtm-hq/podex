@@ -7,7 +7,7 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.config import BillingSettings, Settings
 from podex.models import AccountSubscription, AccountUser
 from podex.services.account_subscriptions import (
     API_REQUESTS,
@@ -52,12 +52,17 @@ def test_subscription_defaults_to_free(db_session: Session) -> None:
 def test_consume_paid_api_request_enforcement(db_session: Session) -> None:
     """Enforcement requires paid entitlement and honors monthly limits."""
     user = _create_user(db_session)
-    relaxed = Settings(paid_tier_enforced=False)
+    relaxed = Settings(billing=BillingSettings(paid_tier_enforced=False))
     assert_that(
         consume_paid_api_request(db=db_session, user_id=user.id, settings=relaxed),
     ).is_none()
 
-    enforced = Settings(paid_tier_enforced=True, paid_api_requests_per_month=2)
+    enforced = Settings(
+        billing=BillingSettings(
+            paid_tier_enforced=True,
+            paid_api_requests_per_month=2,
+        ),
+    )
     with pytest.raises(PaidSubscriptionRequiredError):
         consume_paid_api_request(db=db_session, user_id=user.id, settings=enforced)
 
@@ -107,8 +112,10 @@ def test_checkout_provider_builds_prefilled_url() -> None:
     assert_that(build_billing_checkout_provider(settings=Settings())).is_none()
     provider = build_billing_checkout_provider(
         settings=Settings(
-            billing_provider_name="hosted-test",
-            billing_checkout_url="https://billing.example/upgrade",
+            billing=BillingSettings(
+                provider_name="hosted-test",
+                checkout_url="https://billing.example/upgrade",
+            ),
         ),
     )
     assert_that(provider).is_instance_of(HostedBillingCheckoutProvider)
@@ -168,7 +175,7 @@ def test_paid_enforcement_blocks_personalization_writes(
     from podex.api.deps import get_app_settings
 
     app.dependency_overrides[get_app_settings] = lambda: Settings(
-        paid_tier_enforced=True,
+        billing=BillingSettings(paid_tier_enforced=True),
     )
 
     blocked = client.put(f"/api/v2/me/saves/{graph.media_id}", headers=cookie)

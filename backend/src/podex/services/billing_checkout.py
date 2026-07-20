@@ -95,14 +95,14 @@ def build_billing_checkout_provider(
     settings: Settings,
 ) -> BillingCheckoutProvider | None:
     """Build the configured provider bridge only when checkout is configured."""
-    if settings.paddle_checkout_enabled:
+    if settings.billing.paddle_checkout_enabled:
         return PaddleBillingCheckoutProvider(
-            checkout_url=settings.paddle_checkout_url,
-            price_id=settings.paddle_price_id,
+            checkout_url=settings.billing.paddle_checkout_url,
+            price_id=settings.billing.paddle_price_id,
         )
-    if not settings.billing_provider_name or not settings.billing_checkout_url:
+    if not settings.billing.provider_name or not settings.billing.checkout_url:
         return None
     return HostedBillingCheckoutProvider(
-        provider=settings.billing_provider_name,
-        checkout_url=settings.billing_checkout_url,
+        provider=settings.billing.provider_name,
+        checkout_url=settings.billing.checkout_url,
     )

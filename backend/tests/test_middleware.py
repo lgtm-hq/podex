@@ -9,7 +9,7 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
-from podex.config import Settings
+from podex.config import RateLimitSettings, Settings
 from podex.main import create_app
 from podex.middleware import REQUEST_ID_HEADER, RateLimitMiddleware
 from podex.services.limiter import SlidingWindowRateLimiter
@@ -36,10 +36,12 @@ def tight_client() -> Iterator[TestClient]:
         TestClient: A client backed by an app with a tight rate limit.
     """
     settings = Settings(
-        rate_limit_enabled=True,
-        rate_limit_max_requests=2,
-        rate_limit_window_seconds=60.0,
-        rate_limit_exempt_paths=["/health"],
+        rate_limit=RateLimitSettings(
+            enabled=True,
+            max_requests=2,
+            window_seconds=60.0,
+            exempt_paths=["/health"],
+        ),
     )
     with _make_client(settings) as client:
         yield client
@@ -108,7 +110,7 @@ def test_health_is_exempt_from_rate_limiting(tight_client: TestClient) -> None:
 
 def test_rate_limiting_can_be_disabled() -> None:
     """Disabling the limiter removes both the 429 path and its headers."""
-    settings = Settings(rate_limit_enabled=False)
+    settings = Settings(rate_limit=RateLimitSettings(enabled=False))
     with _make_client(settings) as client:
         for _ in range(10):
             response = client.get("/api/v2/status")
@@ -135,7 +137,7 @@ def test_access_log_emitted_when_handler_raises(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Unhandled handler exceptions still produce a 500 access-log line."""
-    app = create_app(Settings(rate_limit_enabled=False))
+    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
 
     async def _boom() -> None:
         """Route handler that always fails."""
@@ -157,7 +159,7 @@ def test_access_log_emitted_when_handler_raises(
 
 def test_cors_exposes_rate_limit_headers_to_browsers() -> None:
     """Cross-origin responses expose the request-id and rate-limit headers."""
-    settings = Settings(rate_limit_enabled=True)
+    settings = Settings(rate_limit=RateLimitSettings(enabled=True))
     with _make_client(settings) as client:
         response = client.get(
             "/api/v2/status", headers={"Origin": "http://localhost:4321"}
@@ -190,9 +192,11 @@ def test_middleware_works_with_redis_backed_limiter(
     )
 
     settings = Settings(
-        rate_limit_enabled=True,
-        rate_limit_max_requests=2,
-        rate_limit_window_seconds=60.0,
+        rate_limit=RateLimitSettings(
+            enabled=True,
+            max_requests=2,
+            window_seconds=60.0,
+        ),
     )
     with TestClient(create_app(settings)) as client:
         first = client.get("/api/v2/status")

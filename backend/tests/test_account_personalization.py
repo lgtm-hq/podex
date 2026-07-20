@@ -6,7 +6,7 @@ import pytest
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.config import AuthSettings, Settings
 from podex.models import AccountUser
 from podex.services.account_follows import (
     follow_podcast,
@@ -125,8 +125,10 @@ def test_build_magic_link_sender_requires_smtp_configuration() -> None:
     assert_that(build_magic_link_sender(settings=Settings())).is_none()
     sender = build_magic_link_sender(
         settings=Settings(
-            smtp_host="smtp.example.com",
-            smtp_from_email="signin@example.com",
+            auth=AuthSettings(
+                smtp_host="smtp.example.com",
+                smtp_from_email="signin@example.com",
+            ),
         ),
     )
     assert_that(sender).is_instance_of(SmtpMagicLinkSender)

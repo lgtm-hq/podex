@@ -8,7 +8,7 @@ import pytest
 import redis
 from assertpy import assert_that
 
-from podex.config import Settings
+from podex.config import RateLimitSettings, Settings
 from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
 from podex.services.limiter_factory import build_rate_limiter
 from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
@@ -278,11 +278,13 @@ def test_redis_limiter_matches_in_memory_decisions_over_a_sequence() -> None:
 
 
 def test_build_rate_limiter_returns_in_memory_when_redis_url_unset() -> None:
-    """An empty ``rate_limit_redis_url`` selects the in-memory backend."""
+    """An empty ``settings.rate_limit.redis_url`` selects the in-memory backend."""
     settings = Settings(
-        rate_limit_max_requests=4,
-        rate_limit_window_seconds=15.0,
-        rate_limit_redis_url="",
+        rate_limit=RateLimitSettings(
+            max_requests=4,
+            window_seconds=15.0,
+            redis_url="",
+        ),
     )
 
     limiter = build_rate_limiter(settings)
@@ -295,7 +297,7 @@ def test_build_rate_limiter_returns_in_memory_when_redis_url_unset() -> None:
 def test_build_rate_limiter_returns_redis_backend_when_url_set(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A non-empty ``rate_limit_redis_url`` selects the shared backend.
+    """A non-empty ``settings.rate_limit.redis_url`` selects the shared backend.
 
     The factory imports ``redis`` lazily; we swap in a fakeredis-backed
     ``from_url`` so no real network connection is attempted.
@@ -312,10 +314,12 @@ def test_build_rate_limiter_returns_redis_backend_when_url_set(
     monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
 
     settings = Settings(
-        rate_limit_max_requests=2,
-        rate_limit_window_seconds=60.0,
-        rate_limit_redis_url="redis://localhost:6379/0",
-        rate_limit_redis_prefix="podex-test:ratelimit",
+        rate_limit=RateLimitSettings(
+            max_requests=2,
+            window_seconds=60.0,
+            redis_url="redis://localhost:6379/0",
+            redis_prefix="podex-test:ratelimit",
+        ),
     )
 
     limiter = build_rate_limiter(settings)
@@ -437,7 +441,9 @@ def test_build_rate_limiter_configures_finite_redis_timeouts(
 
     monkeypatch.setattr(redis.Redis, "from_url", staticmethod(fake_from_url))
 
-    settings = Settings(rate_limit_redis_url="redis://localhost:6379/0")
+    settings = Settings(
+        rate_limit=RateLimitSettings(redis_url="redis://localhost:6379/0"),
+    )
 
     build_rate_limiter(settings)
 

@@ -12,7 +12,7 @@ from podex.api.v2.errors import (
     STATUS_CODE_TO_ERROR_CODE,
     error_code_for_status,
 )
-from podex.config import Settings
+from podex.config import RateLimitSettings, Settings
 from podex.main import create_app
 from podex.middleware import REQUEST_ID_HEADER
 
@@ -54,7 +54,7 @@ def test_unhandled_exception_returns_500_envelope(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Unhandled route errors are wrapped in an opaque 500 envelope."""
-    app = create_app(Settings(rate_limit_enabled=False))
+    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
 
     async def _boom() -> None:
         """Route handler that always fails."""
@@ -93,7 +93,7 @@ def test_http_exception_with_structured_detail_preserves_code(
     from podex.main import app as _base_app
 
     del _base_app
-    app = create_app(Settings(rate_limit_enabled=False))
+    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
 
     async def _custom() -> None:
         """Raise a structured HTTPException to exercise the handler."""

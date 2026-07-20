@@ -3,8 +3,8 @@
 This limiter keeps a sliding window of request timestamps per client key in
 process memory. It is intentionally simple and process-local: each worker
 enforces its own counts. It remains the default backend and the fallback used
-in development/tests; when ``rate_limit_redis_url`` is configured the factory
-in :mod:`podex.services.limiter_factory` swaps in a Redis-backed limiter that
+in development/tests; when ``settings.rate_limit.redis_url`` is configured the
+factory in :mod:`podex.services.limiter_factory` swaps in a Redis-backed limiter that
 shares state across workers.
 """
 
