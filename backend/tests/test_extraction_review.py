@@ -131,6 +131,39 @@ def test_persist_is_replay_safe_and_records_update_provenance(
     assert_that(len(events)).is_greater_than(1)
 
 
+def test_persist_repeated_match_in_one_batch_creates_single_review_item(
+    db_session: Session,
+) -> None:
+    """Two batch items resolving to one candidate create one review item."""
+    episode = _episode(db_session)
+    items = [
+        ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7),
+        ExtractedMedia(
+            title="Dune",
+            media_type=MediaType.BOOK,
+            creator="Frank Herbert",
+            confidence=0.9,
+        ),
+    ]
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=items,
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_created).is_equal_to(1)
+    assert_that(result.review_items_created).is_equal_to(1)
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    review_items = db_session.execute(select(ReviewItem)).scalars().all()
+    assert_that(review_items).is_length(1)
+    assert_that(review_items[0].mention_candidate_id).is_equal_to(candidate.id)
+
+
 def test_persist_skips_items_with_existing_published_mentions(
     db_session: Session,
 ) -> None:

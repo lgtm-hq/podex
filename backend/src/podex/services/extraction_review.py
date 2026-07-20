@@ -462,12 +462,12 @@ def _ensure_review_item(
     priority = _priority_for_confidence(confidence=confidence)
 
     if candidate.review_item is None:
-        db.add(
-            ReviewItem(
-                mention_candidate_id=candidate.id,
-                priority=priority.value,
-            )
+        review_item = ReviewItem(
+            mention_candidate_id=candidate.id,
+            priority=priority.value,
         )
+        candidate.review_item = review_item
+        db.add(review_item)
         return True
 
     if candidate.review_item.status in {
