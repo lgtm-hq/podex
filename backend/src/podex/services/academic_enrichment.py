@@ -8,12 +8,14 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING, Any
 
 from podex.services.enrichment.base import (
     EnrichmentResult,
     EnrichmentSource,
     VerifiedEnrichmentResult,
+    canonicalize_doi,
 )
 from podex.services.enrichment.crossref import CrossRefProvider
 from podex.services.enrichment.pubmed import PubMedProvider
@@ -23,6 +25,9 @@ if TYPE_CHECKING:
     from podex.models.media import Media
 
 logger = logging.getLogger(__name__)
+
+#: Default aggregate deadline for the concurrent provider fan-out.
+DEFAULT_AGGREGATE_TIMEOUT_SECONDS = 30.0
 
 
 class AcademicEnricher:
@@ -35,6 +40,8 @@ class AcademicEnricher:
     Args:
         ncbi_api_key: Optional NCBI API key for PubMed (higher rate limits).
         crossref_mailto: Optional email for CrossRef polite pool.
+        aggregate_timeout_seconds: Aggregate deadline for the concurrent
+            provider fan-out; providers still running past it are dropped.
     """
 
     SUPPORTED_TYPES = {"study", "article"}
@@ -43,7 +50,9 @@ class AcademicEnricher:
         self,
         ncbi_api_key: str | None = None,
         crossref_mailto: str | None = None,
+        aggregate_timeout_seconds: float = DEFAULT_AGGREGATE_TIMEOUT_SECONDS,
     ) -> None:
+        self.aggregate_timeout_seconds = aggregate_timeout_seconds
         self.providers = {
             EnrichmentSource.PUBMED: PubMedProvider(api_key=ncbi_api_key),
             EnrichmentSource.SEMANTIC_SCHOLAR: SemanticScholarProvider(),
@@ -73,20 +82,8 @@ class AcademicEnricher:
         if not self.supports_media_type(media.type):
             return None
 
-        # 1. Collect results from all providers
-        results: dict[EnrichmentSource, EnrichmentResult] = {}
-        for source, provider in self.providers.items():
-            try:
-                result = provider.search_and_enrich(media)
-                if result and result.confidence >= 0.5:
-                    results[source] = result
-                    logger.debug(
-                        f"Got result from {source.value} for '{media.title}' "
-                        f"(confidence: {result.confidence:.2f})"
-                    )
-            except Exception:
-                logger.exception(f"Error querying {source.value}")
-                continue
+        # 1. Collect results from all providers concurrently
+        results = self._collect_provider_results(media)
 
         if not results:
             logger.debug(f"No academic enrichment results for: {media.title}")
@@ -147,6 +144,63 @@ class AcademicEnricher:
 
         return None
 
+    def _collect_provider_results(
+        self,
+        media: Media,
+    ) -> dict[EnrichmentSource, EnrichmentResult]:
+        """Query all providers concurrently under an aggregate deadline.
+
+        Provider failures stay isolated: a raising provider is logged and
+        skipped, and a provider still running past the aggregate timeout is
+        dropped, while remaining results are still collected. Providers'
+        internal rate limiters are per-provider, so cross-provider
+        concurrency does not violate per-API cadence.
+
+        Args:
+            media: The media item to enrich.
+
+        Returns:
+            Results keyed by source, filtered to confidence >= 0.5.
+        """
+        results: dict[EnrichmentSource, EnrichmentResult] = {}
+        if not self.providers:
+            return results
+
+        executor = ThreadPoolExecutor(max_workers=len(self.providers))
+        try:
+            futures = {
+                executor.submit(provider.search_and_enrich, media): source
+                for source, provider in self.providers.items()
+            }
+            done, not_done = wait(
+                futures,
+                timeout=self.aggregate_timeout_seconds,
+            )
+            for future in not_done:
+                logger.warning(
+                    "Provider %s timed out after %.1fs for '%s'; dropping",
+                    futures[future].value,
+                    self.aggregate_timeout_seconds,
+                    media.title,
+                )
+            for future in done:
+                source = futures[future]
+                try:
+                    result = future.result()
+                except Exception:
+                    logger.exception(f"Error querying {source.value}")
+                    continue
+                if result and result.confidence >= 0.5:
+                    results[source] = result
+                    logger.debug(
+                        f"Got result from {source.value} for '{media.title}' "
+                        f"(confidence: {result.confidence:.2f})"
+                    )
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
+        return results
+
     def _verify_by_doi(
         self,
         results: dict[EnrichmentSource, EnrichmentResult],
@@ -189,33 +243,28 @@ class AcademicEnricher:
         self,
         results: dict[EnrichmentSource, EnrichmentResult],
     ) -> dict[EnrichmentSource, EnrichmentResult]:
-        """Verify results by title similarity.
+        """Verify results by provider-reported title similarity.
 
-        Uses the fact that all results came from the same query,
-        so we check if titles are similar enough across sources.
+        Only ``result.metadata["title"]`` values are compared; results
+        without an explicit provider title cannot participate in title
+        verification. At least two title-bearing results are required,
+        otherwise an empty dict is returned so callers fall back to
+        single-source behavior.
 
         Args:
             results: Results from multiple sources.
 
         Returns:
-            Dict of sources with similar titles.
+            Dict of sources with similar titles, or empty if unverified.
         """
-        if len(results) < 2:
-            return results
-
-        # Get titles from metadata or descriptions
         titles: dict[EnrichmentSource, str] = {}
         for source, result in results.items():
             title = result.metadata.get("title")
-            if not title and result.description:
-                # Use first sentence of description as pseudo-title
-                title = result.description.split(".")[0][:100]
             if title:
                 titles[source] = self._normalize_title(str(title))
 
-        if not titles:
-            # All results came from same search, assume they match
-            return results
+        if len(titles) < 2:
+            return {}
 
         # Check pairwise title similarity
         sources = list(titles.keys())
@@ -252,12 +301,8 @@ class AcademicEnricher:
         Returns:
             Normalized DOI.
         """
-        doi = doi.lower().strip()
-        # Remove common prefixes
-        for prefix in ["https://doi.org/", "http://doi.org/", "doi:"]:
-            if doi.startswith(prefix):
-                doi = doi[len(prefix) :]
-        return doi
+        canonical: str = canonicalize_doi(doi)
+        return canonical.lower()
 
     def _normalize_title(self, title: str) -> str:
         """Normalize title for comparison.

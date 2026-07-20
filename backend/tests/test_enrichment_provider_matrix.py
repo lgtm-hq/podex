@@ -358,6 +358,9 @@ def test_crossref_happy_path() -> None:
 
     if result is not None:
         assert_that(str(result.external_ids)).contains("10.1000")
+        assert_that(result.metadata["title"]).is_equal_to(
+            "Sleep and memory consolidation",
+        )
 
 
 def test_semantic_scholar_happy_path() -> None:
@@ -386,3 +389,6 @@ def test_semantic_scholar_happy_path() -> None:
 
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
+        assert_that(result.metadata["title"]).is_equal_to(
+            "Sleep and memory consolidation",
+        )

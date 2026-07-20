@@ -254,6 +254,10 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
 
         metadata: dict[str, Any] = {}
 
+        # Title (explicit contract for cross-source title verification)
+        if paper.get("title"):
+            metadata["title"] = paper["title"]
+
         # Authors
         authors = paper.get("authors", [])
         if authors:
