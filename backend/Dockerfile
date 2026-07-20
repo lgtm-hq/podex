@@ -58,7 +58,7 @@ FROM python:3.14-slim-bookworm@sha256:86f975aca15cf04a40b399eebede9aea7c82eae084
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/.venv/bin:${PATH}" \
-    PODEX_DATABASE_URL="sqlite:///./podex.db"
+    PODEX_DATABASE__URL="sqlite:///./podex.db"
 
 # Non-root system user for the app. `--no-log-init` avoids a 32 GiB sparse
 # lastlog file on some base images (well-documented useradd quirk).

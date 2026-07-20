@@ -34,7 +34,7 @@ Non-obvious caveats:
 - **Run migrations before starting/using the API:**
   `cd backend && uv run alembic upgrade head`. `alembic.ini` has an
   empty `sqlalchemy.url`; `alembic/env.py` falls back to
-  `PODEX_DATABASE_URL` (default `sqlite:///./podex.db`), so migrations
+  `PODEX_DATABASE__URL` (default `sqlite:///./podex.db`), so migrations
   and the app share the same DB file created in the `backend/` working
   dir. This is a one-shot setup step and is intentionally NOT in the
   automatic update script.

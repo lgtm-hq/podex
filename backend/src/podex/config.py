@@ -3,8 +3,30 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class DatabaseSettings(BaseModel):
+    """Database URL and connection-pool tuning.
+
+    Nested under ``settings.database``. Environment grammar:
+    ``PODEX_DATABASE__URL``, ``PODEX_DATABASE__POOL_SIZE``, etc.
+    Flat names such as ``PODEX_DATABASE_URL`` are not recognized.
+    """
+
+    url: str = "sqlite:///./podex.db"
+
+    # Connection pooling for server-backed databases (Railway + Neon).
+    # Applied only when ``url`` is not SQLite; the local SQLite default
+    # keeps SQLAlchemy's stock pooling untouched. Defaults are sized for
+    # a small Railway service talking to Neon's pooled endpoint: a modest
+    # steady pool with equal burst headroom, recycled well inside typical
+    # idle-connection cutoffs, and pre-ping so suspended/rotated backends
+    # are detected instead of surfacing stale-connection errors.
+    pool_size: int = Field(default=5, ge=1)
+    max_overflow: int = Field(default=5, ge=0)
+    pool_recycle_seconds: int = Field(default=300, ge=1)
 
 
 class Settings(BaseSettings):
@@ -12,6 +34,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="PODEX_",
+        env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
     )
@@ -22,18 +45,7 @@ class Settings(BaseSettings):
     api_v2_prefix: str = "/api/v2"
     cors_origins: list[str] = ["http://localhost:4321"]
     public_web_url: str = "http://localhost:4321"
-    database_url: str = "sqlite:///./podex.db"
-
-    # Connection pooling for server-backed databases (Railway + Neon).
-    # Applied only when ``database_url`` is not SQLite; the local SQLite
-    # default keeps SQLAlchemy's stock pooling untouched. Defaults are sized
-    # for a small Railway service talking to Neon's pooled endpoint: a modest
-    # steady pool with equal burst headroom, recycled well inside typical
-    # idle-connection cutoffs, and pre-ping so suspended/rotated backends are
-    # detected instead of surfacing stale-connection errors.
-    database_pool_size: int = Field(default=5, ge=1)
-    database_max_overflow: int = Field(default=5, ge=0)
-    database_pool_recycle_seconds: int = Field(default=300, ge=1)
+    database: DatabaseSettings = Field(default_factory=DatabaseSettings)
 
     # Rate limiting. Defaults are deliberately generous so ordinary traffic
     # (and the test suite) never trips the limiter; tests inject tight values.
