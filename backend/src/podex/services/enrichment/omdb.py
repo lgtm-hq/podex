@@ -66,8 +66,6 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if not self.supports_media_type(media.type):
             return None
 
-        self.rate_limiter.wait_sync()
-
         # If we have an IMDB ID, use it directly
         if media.imdb_id:
             data = self._get_by_imdb_id(media.imdb_id)
@@ -121,6 +119,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             OMDB response dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             response = self.client.get(
                 "/",
@@ -155,6 +154,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             OMDB response dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             params: dict[str, str | int] = {
                 "apikey": self.api_key,

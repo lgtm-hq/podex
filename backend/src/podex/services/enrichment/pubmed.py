@@ -193,6 +193,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if self.api_key:
             params["api_key"] = self.api_key
 
+        self.rate_limiter.wait_sync()
         try:
             response = self.client.get(self.SUMMARY_URL, params=params)
             response.raise_for_status()

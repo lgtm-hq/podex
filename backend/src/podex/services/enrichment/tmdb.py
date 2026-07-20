@@ -78,8 +78,6 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         for search_type in search_types:
             # Try each title variation
             for variation in variations:
-                self.rate_limiter.wait_sync()
-
                 # Clean the query for API
                 query = clean_for_api_search(variation)
                 if not query:
@@ -103,7 +101,6 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                         tmdb_id, confidence = best_match
 
                         # Fetch full details
-                        self.rate_limiter.wait_sync()
                         details = self._get_details(tmdb_id, search_type)
                         if details:
                             logger.debug(
@@ -131,6 +128,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             List of search results.
         """
+        self.rate_limiter.wait_sync()
         try:
             params: dict[str, str | int] = {"query": title}
             if year:
@@ -237,6 +235,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             Details dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             params = {"append_to_response": "credits,external_ids"}
             response = self.client.get(f"/{media_type}/{tmdb_id}", params=params)

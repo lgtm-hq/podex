@@ -1537,6 +1537,134 @@ def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
     assert_that(seen_paths[0]).is_equal_to("/paper/DOI:10.1000/x")
 
 
+def test_pubmed_waits_before_every_request() -> None:
+    """The esearch + esummary flow waits once per HTTP request."""
+    from podex.services.enrichment import PubMedProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request.url.path)
+        if "esearch" in request.url.path:
+            return httpx.Response(
+                200,
+                json={"esearchresult": {"idlist": ["555"]}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "result": {
+                    "uids": ["555"],
+                    "555": {
+                        "uid": "555",
+                        "title": "A Totally Unrelated Paper",
+                        "pubdate": "1999",
+                    },
+                },
+            },
+        )
+
+    provider = PubMedProvider()
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = provider.search_and_enrich(_media("Sleep study", MediaType.STUDY))
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(len(requests_seen)).is_equal_to(2)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_tmdb_waits_before_every_request() -> None:
+    """Search-with-year, search-without-year, and details each wait once."""
+    from podex.services.enrichment import TMDBProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(str(request.url))
+        if "/search/" in request.url.path:
+            if request.url.params.get("year"):
+                return httpx.Response(200, json={"results": []})
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": 2,
+                            "title": "Dune",
+                            "release_date": "2021-10-22",
+                            "popularity": 100.0,
+                        },
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": 2,
+                "title": "Dune",
+                "overview": "Desert planet epic.",
+                "release_date": "2021-10-22",
+            },
+        )
+
+    provider = TMDBProvider("key")
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
+    media.id = 20
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    assert_that(len(requests_seen)).is_equal_to(3)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_omdb_waits_before_every_request() -> None:
+    """A failed IMDB-ID lookup plus title search wait once per request."""
+    from podex.services.enrichment import OMDBProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(str(request.url))
+        if request.url.params.get("i"):
+            return httpx.Response(
+                200,
+                json={"Response": "False", "Error": "Incorrect IMDb ID."},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "Response": "True",
+                "Title": "Dune",
+                "Year": "2021",
+                "imdbID": "tt1160419",
+                "Plot": "Found by title.",
+                "imdbRating": "8.0",
+                "imdbVotes": "1",
+            },
+        )
+
+    provider = OMDBProvider("key")
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 21
+    media.imdb_id = "tt0000000"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    assert_that(len(requests_seen)).is_equal_to(2)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
 def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
     """A 401 response log line never contains the api key value."""
     import logging as _logging
