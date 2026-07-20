@@ -3,21 +3,21 @@
 # Postgres migration replay (#299)
 # -----------------------------------------------------------------------------
 # Replays the full Alembic migration chain against the CI Postgres service and
-# runs the migration test module as a smoke check. PODEX_DATABASE_URL must
+# runs the migration test module as a smoke check. PODEX_DATABASE__URL must
 # point at the Postgres service (alembic/env.py falls back to it when
 # alembic.ini leaves sqlalchemy.url empty).
 # =============================================================================
 set -euo pipefail
 
-if [[ -z "${PODEX_DATABASE_URL:-}" ]]; then
-  echo "PODEX_DATABASE_URL must be set to the Postgres service URL" >&2
+if [[ -z "${PODEX_DATABASE__URL:-}" ]]; then
+  echo "PODEX_DATABASE__URL must be set to the Postgres service URL" >&2
   exit 1
 fi
 
-case "${PODEX_DATABASE_URL}" in
+case "${PODEX_DATABASE__URL}" in
   postgresql*) ;;
   *)
-    echo "PODEX_DATABASE_URL must be a postgresql URL, got: ${PODEX_DATABASE_URL}" >&2
+    echo "PODEX_DATABASE__URL must be a postgresql URL, got: ${PODEX_DATABASE__URL}" >&2
     exit 1
     ;;
 esac

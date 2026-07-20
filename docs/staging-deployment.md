@@ -26,7 +26,7 @@ the stack will not start without `.env.staging`).
 | Variable | Read by | Purpose |
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | `db` | Postgres password |
-| `PODEX_DATABASE_URL` | `api` (Alembic + runtime) | SQLAlchemy connection string |
+| `PODEX_DATABASE__URL` | `api` (Alembic + runtime) | SQLAlchemy connection string |
 | `PODEX_ENVIRONMENT` | `api` | Runtime environment label |
 | `PODEX_CORS_ORIGINS` | `api` | Allowed browser origins (JSON list) |
 | `API_PORT` / `FRONTEND_PORT` | compose | Host ports published for `api` / `frontend` |
@@ -37,10 +37,10 @@ the stack will not start without `.env.staging`).
 
 ### Database credentials
 
-Set both `POSTGRES_PASSWORD` and `PODEX_DATABASE_URL` in `.env.staging`. The
+Set both `POSTGRES_PASSWORD` and `PODEX_DATABASE__URL` in `.env.staging`. The
 password in the URL must match `POSTGRES_PASSWORD`. If the password contains
 URI-reserved characters (`@`, `:`, `/`, `?`, `#`, etc.), URL-encode only the
-password segment of `PODEX_DATABASE_URL`:
+password segment of `PODEX_DATABASE__URL`:
 
 ```bash
 python -c "from urllib.parse import quote; print(quote('your-password', safe=''))"
@@ -50,7 +50,7 @@ Example:
 
 ```bash
 POSTGRES_PASSWORD='p@ss:word'
-PODEX_DATABASE_URL=postgresql://podex:p%40ss%3Aword@db:5432/podex
+PODEX_DATABASE__URL=postgresql://podex:p%40ss%3Aword@db:5432/podex
 ```
 
 ### Host ports and CORS
@@ -91,7 +91,7 @@ docker compose -f docker-compose.staging.yml --env-file .env.staging \
   run --rm api alembic upgrade head
 ```
 
-Alembic reads `PODEX_DATABASE_URL` via `backend/src/podex/config.py`.
+Alembic reads `PODEX_DATABASE__URL` via `backend/src/podex/config.py`.
 
 ## 4. Verify
 

@@ -19,19 +19,19 @@ def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
     and idle connections are recycled.
 
     Args:
-        settings: Application settings providing the database URL and pool
-            tuning values.
+        settings: Application settings providing ``settings.database`` URL
+            and pool tuning values.
 
     Returns:
         Keyword arguments to splat into :func:`sqlalchemy.create_engine`.
     """
-    if settings.database_url.startswith("sqlite"):
+    if settings.database.url.startswith("sqlite"):
         return {"connect_args": {"check_same_thread": False}}
     return {
         "pool_pre_ping": True,
-        "pool_size": settings.database_pool_size,
-        "max_overflow": settings.database_max_overflow,
-        "pool_recycle": settings.database_pool_recycle_seconds,
+        "pool_size": settings.database.pool_size,
+        "max_overflow": settings.database.max_overflow,
+        "pool_recycle": settings.database.pool_recycle_seconds,
     }
 
 
@@ -56,7 +56,7 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
 
 _settings = get_settings()
 
-engine = create_engine(_settings.database_url, **build_engine_kwargs(_settings))
+engine = create_engine(_settings.database.url, **build_engine_kwargs(_settings))
 enable_sqlite_foreign_keys(engine)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
