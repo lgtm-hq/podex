@@ -9,8 +9,63 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import httpx
+
 if TYPE_CHECKING:
     from podex.models.media import Media
+
+#: Prefixes stripped from DOI values, matched case-insensitively.
+_DOI_PREFIXES = (
+    "https://doi.org/",
+    "http://doi.org/",
+    "doi.org/",
+    "doi:",
+)
+
+
+def canonicalize_doi(value: str) -> str:
+    """Canonicalize a DOI by stripping URL/scheme prefixes and whitespace.
+
+    Strips ``https://doi.org/``, ``http://doi.org/``, ``doi.org/``, and
+    ``doi:`` prefixes (case-insensitively, repeatedly) so the bare DOI can
+    be used in provider-specific query syntax. The DOI body's case is
+    preserved.
+
+    Args:
+        value: Raw DOI value, possibly prefixed (e.g. from user input).
+
+    Returns:
+        The bare DOI (e.g. ``10.1000/x``).
+    """
+    doi = value.strip()
+    stripped = True
+    while stripped:
+        stripped = False
+        lowered = doi.lower()
+        for prefix in _DOI_PREFIXES:
+            if lowered.startswith(prefix):
+                doi = doi[len(prefix) :].strip()
+                stripped = True
+                break
+    return doi
+
+
+def describe_http_error(e: httpx.HTTPError) -> str:
+    """Describe an HTTP error without leaking URLs or credentials.
+
+    ``str(e)`` on httpx errors can include the full request URL, which may
+    carry API keys in query parameters. This helper returns only the status
+    code or the exception class name.
+
+    Args:
+        e: The httpx error to describe.
+
+    Returns:
+        ``"HTTP <status>"`` for status errors, else the exception class name.
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    return type(e).__name__
 
 
 class EnrichmentSource(StrEnum):

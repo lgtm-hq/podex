@@ -16,6 +16,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         requests_per_second: Rate limit for API calls.
     """
 
-    BASE_URL = "http://www.omdbapi.com"
+    BASE_URL = "https://www.omdbapi.com"
 
     source = EnrichmentSource.OMDB
 
@@ -64,8 +65,6 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         """
         if not self.supports_media_type(media.type):
             return None
-
-        self.rate_limiter.wait_sync()
 
         # If we have an IMDB ID, use it directly
         if media.imdb_id:
@@ -120,6 +119,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             OMDB response dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             response = self.client.get(
                 "/",
@@ -133,7 +133,9 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"OMDB error for IMDB ID {imdb_id}: {e}")
+            logger.warning(
+                f"OMDB error for IMDB ID {imdb_id}: {describe_http_error(e)}",
+            )
             return None
 
     def _search_by_title(
@@ -152,6 +154,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             OMDB response dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             params: dict[str, str | int] = {
                 "apikey": self.api_key,
@@ -167,7 +170,9 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"OMDB search error for '{title}': {e}")
+            logger.warning(
+                f"OMDB search error for '{title}': {describe_http_error(e)}",
+            )
             return None
 
     def _build_result(

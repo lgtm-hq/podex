@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 from podex.services.enrichment.search_utils import (
     calculate_similarity,
@@ -70,6 +71,13 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         # Determine primary search type (TV shows try TV first, others try movie first)
         search_types = ["tv", "movie"] if media.type == "tv_show" else ["movie", "tv"]
 
+        # Direct lookup by stored TMDB ID before any title search
+        if media.tmdb_id:
+            for search_type in search_types:
+                details = self._get_details(media.tmdb_id, search_type)
+                if details:
+                    return self._build_result(details, search_type, confidence=1.0)
+
         # Generate search variations
         variations = generate_search_variations(media.title, media.author)
 
@@ -77,8 +85,6 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         for search_type in search_types:
             # Try each title variation
             for variation in variations:
-                self.rate_limiter.wait_sync()
-
                 # Clean the query for API
                 query = clean_for_api_search(variation)
                 if not query:
@@ -102,7 +108,6 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                         tmdb_id, confidence = best_match
 
                         # Fetch full details
-                        self.rate_limiter.wait_sync()
                         details = self._get_details(tmdb_id, search_type)
                         if details:
                             logger.debug(
@@ -130,6 +135,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             List of search results.
         """
+        self.rate_limiter.wait_sync()
         try:
             params: dict[str, str | int] = {"query": title}
             if year:
@@ -144,7 +150,9 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: list[dict[str, Any]] = data.get("results", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB search error for '{title}': {e}")
+            logger.warning(
+                f"TMDB search error for '{title}': {describe_http_error(e)}",
+            )
             return []
 
     def _find_best_match(
@@ -234,6 +242,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             Details dict or None.
         """
+        self.rate_limiter.wait_sync()
         try:
             params = {"append_to_response": "credits,external_ids"}
             response = self.client.get(f"/{media_type}/{tmdb_id}", params=params)
@@ -241,7 +250,9 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB details error for ID {tmdb_id}: {e}")
+            logger.warning(
+                f"TMDB details error for ID {tmdb_id}: {describe_http_error(e)}",
+            )
             return None
 
     def _build_result(

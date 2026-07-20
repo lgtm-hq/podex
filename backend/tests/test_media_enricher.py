@@ -419,18 +419,23 @@ def test_semantic_scholar_direct_paper_id() -> None:
         "url": "https://ss.invalid/abc123",
         "venue": "Journal of Sleep",
     }
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, json=paper)
+
     provider = SemanticScholarProvider()
-    _swap_client_matrix(
-        provider,
-        lambda request: httpx.Response(200, json=paper),
-    )
+    _swap_client_matrix(provider, handler)
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.semantic_scholar_id = "abc123"
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(seen_paths).is_equal_to(["/paper/abc123"])
+    assert_that(result).is_not_none()
     if result is not None:
-        assert_that(result.confidence).is_greater_than(0.8)
+        assert_that(result.confidence).is_equal_to(1.0)
 
 
 def test_pubmed_direct_pmid_fetch() -> None:
@@ -1478,6 +1483,334 @@ def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     _swap_client_matrix(ss, lambda request: httpx.Response(200, json={}))
     assert_that(ss.search_and_enrich(movie)).is_none()
     ss.close()
+
+
+class _CountingLimiter:
+    """Rate-limiter double counting wait_sync calls without sleeping."""
+
+    def __init__(self) -> None:
+        self.waits = 0
+
+    def wait_sync(self) -> None:
+        """Count the wait instead of sleeping."""
+        self.waits += 1
+
+
+def test_pubmed_doi_search_canonicalizes_prefixed_doi() -> None:
+    """A prefixed DOI is canonicalized before the [doi] search term."""
+    from podex.services.enrichment import PubMedProvider
+
+    seen_terms: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_terms.append(request.url.params.get("term", ""))
+        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
+
+    provider = PubMedProvider()
+    provider.rate_limiter = _CountingLimiter()
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    media = _media("Sleep study", MediaType.STUDY)
+    media.doi = "https://doi.org/10.1000/x"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_terms[0]).is_equal_to("10.1000/x[doi]")
+
+
+def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
+    """A prefixed DOI is canonicalized before the DOI: paper lookup."""
+    from podex.services.enrichment import SemanticScholarProvider
+
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path.startswith("/paper/DOI:"):
+            return httpx.Response(404, text="not found")
+        return httpx.Response(200, json={"data": []})
+
+    provider = SemanticScholarProvider()
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = _media("Sleep study", MediaType.STUDY)
+    media.doi = "doi:10.1000/x"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_paths[0]).is_equal_to("/paper/DOI:10.1000/x")
+
+
+def test_pubmed_waits_before_every_request() -> None:
+    """The esearch + esummary flow waits once per HTTP request."""
+    from podex.services.enrichment import PubMedProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(request.url.path)
+        if "esearch" in request.url.path:
+            return httpx.Response(
+                200,
+                json={"esearchresult": {"idlist": ["555"]}},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "result": {
+                    "uids": ["555"],
+                    "555": {
+                        "uid": "555",
+                        "title": "A Totally Unrelated Paper",
+                        "pubdate": "1999",
+                    },
+                },
+            },
+        )
+
+    provider = PubMedProvider()
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    result = provider.search_and_enrich(_media("Sleep study", MediaType.STUDY))
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(len(requests_seen)).is_equal_to(2)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_tmdb_waits_before_every_request() -> None:
+    """Search-with-year, search-without-year, and details each wait once."""
+    from podex.services.enrichment import TMDBProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(str(request.url))
+        if "/search/" in request.url.path:
+            if request.url.params.get("year"):
+                return httpx.Response(200, json={"results": []})
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "id": 2,
+                            "title": "Dune",
+                            "release_date": "2021-10-22",
+                            "popularity": 100.0,
+                        },
+                    ],
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": 2,
+                "title": "Dune",
+                "overview": "Desert planet epic.",
+                "release_date": "2021-10-22",
+            },
+        )
+
+    provider = TMDBProvider("key")
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
+    media.id = 20
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    assert_that(len(requests_seen)).is_equal_to(3)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_omdb_waits_before_every_request() -> None:
+    """A failed IMDB-ID lookup plus title search wait once per request."""
+    from podex.services.enrichment import OMDBProvider
+
+    requests_seen: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests_seen.append(str(request.url))
+        if request.url.params.get("i"):
+            return httpx.Response(
+                200,
+                json={"Response": "False", "Error": "Incorrect IMDb ID."},
+            )
+        return httpx.Response(
+            200,
+            json={
+                "Response": "True",
+                "Title": "Dune",
+                "Year": "2021",
+                "imdbID": "tt1160419",
+                "Plot": "Found by title.",
+                "imdbRating": "8.0",
+                "imdbVotes": "1",
+            },
+        )
+
+    provider = OMDBProvider("key")
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 21
+    media.imdb_id = "tt0000000"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    assert_that(len(requests_seen)).is_equal_to(2)
+    assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_tmdb_direct_id_lookup_skips_search() -> None:
+    """A stored tmdb_id fetches details directly without any search."""
+    from podex.services.enrichment import TMDBProvider
+
+    seen_paths: list[str] = []
+    detail_payload = {
+        "id": 438631,
+        "title": "Dune",
+        "overview": "Desert planet epic.",
+        "release_date": "2021-10-22",
+        "poster_path": "/dune.jpg",
+        "external_ids": {"imdb_id": "tt1160419"},
+        "credits": {"cast": [], "crew": []},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/movie/438631":
+            return httpx.Response(200, json=detail_payload)
+        return httpx.Response(404, text="not found")
+
+    provider = TMDBProvider("key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 22
+    media.tmdb_id = 438631
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(seen_paths).is_equal_to(["/movie/438631"])
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(result.confidence).is_equal_to(1.0)
+        assert_that(str(result.external_ids)).contains("438631")
+
+
+def test_tmdb_direct_id_404_falls_back_to_search() -> None:
+    """A 404 on the stored tmdb_id falls back to title search."""
+    from podex.services.enrichment import TMDBProvider
+
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if "/search/" in request.url.path:
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(404, text="not found")
+
+    provider = TMDBProvider("key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 23
+    media.tmdb_id = 999999
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_paths[0]).is_equal_to("/movie/999999")
+    assert_that(seen_paths[1]).is_equal_to("/tv/999999")
+    assert_that(
+        [p for p in seen_paths if p.startswith("/search/")],
+    ).is_not_empty()
+
+
+def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
+    """A 401 response log line never contains the api key value."""
+    import logging as _logging
+
+    from podex.services.enrichment import OMDBProvider
+
+    provider = OMDBProvider("sekret-key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(
+        provider,
+        lambda request: httpx.Response(401, text="unauthorized"),
+    )
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 24
+    with caplog.at_level(_logging.WARNING):
+        result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(caplog.text).contains("HTTP 401")
+    assert_that(caplog.text).does_not_contain("sekret-key")
+
+
+def test_omdb_uses_https_base_url() -> None:
+    """The OMDB base URL uses the https scheme (api key in query)."""
+    from podex.services.enrichment import OMDBProvider
+
+    assert_that(OMDBProvider.BASE_URL).starts_with("https://")
+
+
+def test_pubmed_structured_abstract_joins_sections() -> None:
+    """Structured abstracts keep every AbstractText section."""
+    from podex.services.enrichment import PubMedProvider
+
+    xml = """<?xml version="1.0"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>4242</PMID>
+      <Article>
+        <ArticleTitle>Structured abstract study</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">Sleep matters.</AbstractText>
+          <AbstractText Label="CONCLUSIONS">Rest improves recall.</AbstractText>
+        </Abstract>
+        <AuthorList>
+          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
+        </AuthorList>
+        <Journal>
+          <Title>Journal</Title>
+          <JournalIssue><PubDate><Year>2021</Year></PubDate></JournalIssue>
+        </Journal>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"""
+    provider = PubMedProvider()
+    provider.rate_limiter = _CountingLimiter()
+    provider.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=xml),
+        ),
+    )
+    media = _media("Structured abstract study", MediaType.STUDY)
+    media.pubmed_id = "4242"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    if result is not None:
+        description = result.description or ""
+        assert_that(description).contains("Sleep matters.")
+        assert_that(description).contains("Rest improves recall.")
+        assert_that(description).contains("BACKGROUND")
+        assert_that(description).contains("CONCLUSIONS")
 
 
 def test_provider_context_managers_close_clients() -> None:

@@ -11,6 +11,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    canonicalize_doi,
 )
 
 if TYPE_CHECKING:
@@ -83,21 +84,28 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
         if not self.supports_media_type(media.type):
             return None
 
-        # 1. Direct lookup by DOI
-        if media.doi:
+        # 1. Direct lookup by stored Semantic Scholar ID
+        if media.semantic_scholar_id:
             self.rate_limiter.wait_sync()
-            paper = self._get_paper_by_id(f"DOI:{media.doi}")
+            paper = self._get_paper_by_id(media.semantic_scholar_id)
             if paper:
                 return self._build_result(paper, confidence=1.0)
 
-        # 2. Direct lookup by PMID
+        # 2. Direct lookup by DOI
+        if media.doi:
+            self.rate_limiter.wait_sync()
+            paper = self._get_paper_by_id(f"DOI:{canonicalize_doi(media.doi)}")
+            if paper:
+                return self._build_result(paper, confidence=1.0)
+
+        # 3. Direct lookup by PMID
         if media.pubmed_id:
             self.rate_limiter.wait_sync()
             paper = self._get_paper_by_id(f"PMID:{media.pubmed_id}")
             if paper:
                 return self._build_result(paper, confidence=0.95)
 
-        # 3. Search by title
+        # 4. Search by title
         self.rate_limiter.wait_sync()
         results = self._search(media.title)
 

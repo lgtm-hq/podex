@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    canonicalize_doi,
 )
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         """
         params: dict[str, str | int] = {
             "db": "pubmed",
-            "term": f"{doi}[doi]",
+            "term": f"{canonicalize_doi(doi)}[doi]",
             "retmode": "json",
             "retmax": 1,
         }
@@ -192,6 +193,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if self.api_key:
             params["api_key"] = self.api_key
 
+        self.rate_limiter.wait_sync()
         try:
             response = self.client.get(self.SUMMARY_URL, params=params)
             response.raise_for_status()
@@ -271,9 +273,15 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             title_elem = article_data.find("ArticleTitle")
             title = title_elem.text if title_elem is not None else ""
 
-            # Extract abstract
-            abstract_elem = article_data.find(".//AbstractText")
-            abstract = abstract_elem.text if abstract_elem is not None else ""
+            # Extract abstract (structured abstracts have multiple sections)
+            abstract_sections: list[str] = []
+            for abstract_elem in article_data.findall(".//AbstractText"):
+                text = (abstract_elem.text or "").strip()
+                if not text:
+                    continue
+                label = (abstract_elem.get("Label") or "").strip()
+                abstract_sections.append(f"{label}: {text}" if label else text)
+            abstract = " ".join(abstract_sections)
 
             # Extract authors
             authors: list[str] = []
