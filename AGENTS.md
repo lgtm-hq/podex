@@ -3,11 +3,12 @@
 ## Architecture Decision Records
 
 Decisions with lasting architectural consequence require an ADR under
-`docs/adr/` in the same PR that implements them. Use
-`docs/adr/template.md`, update the index in `docs/adr/README.md`, and
-treat accepted ADRs as immutable (supersede instead of editing). Grilling
-sessions that settle design must leave an ADR, not only issue comments.
-See `CONTRIBUTING.md` for the full convention.
+`docs/adr/`. Prefer the same PR that implements them; when the decision
+precedes code, a docs-only PR is fine. Use `docs/adr/template.md`, update
+the index in `docs/adr/README.md`, and treat accepted ADRs as immutable
+(supersede instead of editing). Grilling sessions that settle design must
+leave an ADR, not only issue comments. See `CONTRIBUTING.md` for the full
+convention.
 
 ## Cursor Cloud specific instructions
 

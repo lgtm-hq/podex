@@ -60,8 +60,9 @@ Do not invoke the underlying tools (ruff, black, mypy, eslint, etc.) directly.
 ## Architecture Decision Records
 
 Decisions with lasting architectural consequence get an
-[ADR](docs/adr/README.md) **in the same PR that implements them**.
-Grilling sessions that produce decisions also produce ADRs.
+[ADR](docs/adr/README.md). Prefer the **same PR that implements them**;
+when the decision precedes code, a docs-only PR is fine. Grilling
+sessions that produce decisions also produce ADRs.
 
 - Use `docs/adr/template.md` and add a row to `docs/adr/README.md`.
 - Accepted ADRs are immutable; supersede with a new ADR rather than
