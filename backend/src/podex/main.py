@@ -7,6 +7,7 @@ from podex.api.v2.errors import install_exception_handlers
 from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
 from podex.logging_config import configure_logging
+from podex.metrics import MetricsMiddleware, build_metrics, get_prometheus_metrics
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
 from podex.observability import init_sentry
 from podex.services.cache import TTLCache
@@ -28,6 +29,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # across requests (and workers within this process) so the aggregation
     # queries only run once per TTL window.
     app.state.cache = TTLCache()
+    # Fresh registry per app instance so repeated create_app calls (tests)
+    # never trip duplicate-registration errors or share samples.
+    metrics = build_metrics()
+    app.state.metrics = metrics
 
     install_exception_handlers(app)
 
@@ -43,6 +48,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             exempt_paths=tuple(resolved.rate_limit_exempt_paths),
         )
     app.add_middleware(RequestContextMiddleware)
+    # Registered after the limiter/context middleware so it observes every
+    # request that reaches the app — including rate-limited 429s (which are
+    # labelled ``unmatched`` because they short-circuit before routing).
+    app.add_middleware(MetricsMiddleware, metrics=metrics)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=resolved.cors_origins,
@@ -65,6 +74,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"status": "ok"}
 
     app.add_api_route("/health", health, methods=["GET"])
+    # Internal-only Prometheus exposition (X-Ops-Key gated). Deliberately on
+    # the app root — not the public read-only /api/v2 surface — and excluded
+    # from the OpenAPI schema so the published API contract is unchanged.
+    app.add_api_route(
+        "/metrics",
+        get_prometheus_metrics,
+        methods=["GET"],
+        include_in_schema=False,
+    )
 
     return app
 

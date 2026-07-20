@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from podex.config import Settings, get_settings
 from podex.database import SessionLocal
 from podex.logging_config import get_logger
+from podex.metrics import AppMetrics, build_metrics, observe_scheduler_tick
 from podex.observability import init_sentry
 from podex.services.notification_delivery import DigestSender, build_digest_sender
 from podex.services.recurring_discovery import (
@@ -78,11 +79,54 @@ def run_tick(
     )
 
 
+def run_instrumented_tick(
+    *,
+    db: Session,
+    settings: Settings,
+    digest_sender: DigestSender | None,
+    metrics: AppMetrics,
+) -> TickSummaryData:
+    """Run one tick, recording its duration and outcome as metrics.
+
+    Failures are recorded with outcome ``error`` and re-raised unchanged so
+    the caller's rollback/log handling still applies.
+
+    Args:
+        db: Database session.
+        settings: Runtime settings controlling cadences.
+        digest_sender: Configured digest delivery boundary, if any.
+        metrics: Collectors the tick sample is recorded on.
+
+    Returns:
+        Summary of the work performed this tick.
+    """
+    start = time.perf_counter()
+    outcome = "error"
+    try:
+        summary = run_tick(db=db, settings=settings, digest_sender=digest_sender)
+        outcome = "success"
+        return summary
+    finally:
+        observe_scheduler_tick(
+            metrics,
+            duration_seconds=time.perf_counter() - start,
+            outcome=outcome,
+        )
+
+
 class SchedulerRunner:
     """Long-running loop that executes scheduler ticks until stopped."""
 
-    def __init__(self, *, settings: Settings | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        settings: Settings | None = None,
+        metrics: AppMetrics | None = None,
+    ) -> None:
         self.settings = settings or get_settings()
+        # The runner is its own process, so it owns its own registry; the
+        # samples are process-local (see podex.metrics module docstring).
+        self.metrics = metrics or build_metrics()
         self._stopping = False
 
     def request_stop(self, signum: int, frame: FrameType | None) -> None:
@@ -101,10 +145,11 @@ class SchedulerRunner:
         while not self._stopping:
             db = SessionLocal()
             try:
-                summary = run_tick(
+                summary = run_instrumented_tick(
                     db=db,
                     settings=self.settings,
                     digest_sender=build_digest_sender(settings=self.settings),
+                    metrics=self.metrics,
                 )
                 logger.info(
                     "scheduler_tick planned=%s discovery=%s digests=%s retention=%s",
