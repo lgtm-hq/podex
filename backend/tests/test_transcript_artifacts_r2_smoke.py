@@ -15,6 +15,7 @@ See the r2 runbook in lgtm-hq/podex-ops (runbooks/r2.md) for the full
 staging smoke procedure (lgtm-hq/podex#300).
 """
 
+import contextlib
 import os
 import uuid
 from typing import Any
@@ -97,7 +98,12 @@ def test_r2_put_get_delete_round_trip(
         assert_that(stored.byte_size).is_greater_than(0)
 
         assert_that(r2_store.get_json(storage_key=storage_key)).is_equal_to(payload)
-    finally:
+    except BaseException:
+        # Best-effort cleanup that never masks the original test failure.
+        with contextlib.suppress(Exception):
+            r2_store.delete(storage_key=storage_key)
+        raise
+    else:
         r2_store.delete(storage_key=storage_key)
 
     with pytest.raises(botocore.exceptions.ClientError) as excinfo:
