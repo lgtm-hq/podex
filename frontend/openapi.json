@@ -358,6 +358,20 @@
         "title": "AuthSessionRead",
         "type": "object"
       },
+      "BillingWebhookAck": {
+        "description": "Acknowledgement returned to the billing provider's webhook sender.",
+        "properties": {
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "BillingWebhookAck",
+        "type": "object"
+      },
       "CatalogStats": {
         "description": "Top-level catalog counters plus a small top-list breakdown.\n\nAttributes:\n    podcasts: Total podcast sources in the catalog.\n    episodes: Total episodes across all sources.\n    media: Total canonical media items in the catalog. Counts every\n        ``Media`` row, not just those referenced by a mention.\n    mentions: Total episode<->media mention links.\n    top_media_types: Up to five media types ordered by descending count,\n        with ties broken alphabetically by type name for stability.",
         "properties": {
@@ -2781,6 +2795,29 @@
         "tags": [
           "v2",
           "auth"
+        ]
+      }
+    },
+    "/api/v2/billing/webhooks/paddle": {
+      "post": {
+        "description": "Verify, dedupe, and apply one signed Paddle webhook delivery.",
+        "operationId": "receive_paddle_webhook_api_v2_billing_webhooks_paddle_post",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingWebhookAck"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Receive Paddle Webhook",
+        "tags": [
+          "v2",
+          "billing"
         ]
       }
     },

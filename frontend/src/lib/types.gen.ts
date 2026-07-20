@@ -104,6 +104,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v2/billing/webhooks/paddle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Receive Paddle Webhook
+         * @description Verify, dedupe, and apply one signed Paddle webhook delivery.
+         */
+        post: operations["receive_paddle_webhook_api_v2_billing_webhooks_paddle_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v2/episodes": {
         parameters: {
             query?: never;
@@ -1114,6 +1134,14 @@ export interface components {
              */
             expires_at: string;
             user: components["schemas"]["AccountUserRead"];
+        };
+        /**
+         * BillingWebhookAck
+         * @description Acknowledgement returned to the billing provider's webhook sender.
+         */
+        BillingWebhookAck: {
+            /** Status */
+            status: string;
         };
         /**
          * CatalogStats
@@ -2135,6 +2163,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    receive_paddle_webhook_api_v2_billing_webhooks_paddle_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BillingWebhookAck"];
                 };
             };
         };

@@ -213,6 +213,7 @@ def test_openapi_surface_is_read_only_get() -> None:
     catalog_prefix = "/api/v2/"
     account_prefixes = (
         "/api/v2/auth",
+        "/api/v2/billing",
         "/api/v2/me",
         "/api/v2/ops",
         "/api/v2/takedowns",
@@ -240,7 +241,13 @@ def test_openapi_response_schemas_reference_read_dtos() -> None:
         if not path.startswith("/api/v2/") or path.endswith("/status"):
             continue
         if path.startswith(
-            ("/api/v2/auth", "/api/v2/me", "/api/v2/ops", "/api/v2/takedowns"),
+            (
+                "/api/v2/auth",
+                "/api/v2/billing",
+                "/api/v2/me",
+                "/api/v2/ops",
+                "/api/v2/takedowns",
+            ),
         ):
             continue
         success = operations["get"]["responses"]["200"]["content"]["application/json"][
