@@ -13,9 +13,31 @@
             "title": "Email",
             "type": "string"
           },
+          "first_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Name"
+          },
           "id": {
             "title": "Id",
             "type": "integer"
+          },
+          "last_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Name"
           },
           "last_signed_in_at": {
             "anyOf": [
@@ -33,6 +55,8 @@
         "required": [
           "id",
           "email",
+          "first_name",
+          "last_name",
           "created_at",
           "last_signed_in_at"
         ],
@@ -222,6 +246,28 @@
           "enabled"
         ],
         "title": "AlertRuleUpdateRequest",
+        "type": "object"
+      },
+      "ApiStatusRead": {
+        "description": "Reachability probe plus the public sign-in configuration flags.\n\nAttributes:\n    status: Always ``\"ok\"`` when the surface is reachable.\n    api: The API surface identifier (``\"v2\"``).\n    workos_enabled: Whether hosted WorkOS AuthKit sign-in is configured,\n        so the frontend can offer it before attempting a redirect.",
+        "properties": {
+          "api": {
+            "default": "v2",
+            "title": "Api",
+            "type": "string"
+          },
+          "status": {
+            "default": "ok",
+            "title": "Status",
+            "type": "string"
+          },
+          "workos_enabled": {
+            "default": false,
+            "title": "Workos Enabled",
+            "type": "boolean"
+          }
+        },
+        "title": "ApiStatusRead",
         "type": "object"
       },
       "AuthLogoutResponse": {
@@ -2557,6 +2603,78 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/v2/auth/callback": {
+      "get": {
+        "description": "Finish hosted sign-in: validate state, exchange the code, set session.",
+        "operationId": "complete_workos_callback_api_v2_auth_callback_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "code",
+            "required": true,
+            "schema": {
+              "title": "Code",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": true,
+            "schema": {
+              "title": "State",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Complete Workos Callback",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
+    "/api/v2/auth/login": {
+      "get": {
+        "description": "Start hosted WorkOS AuthKit sign-in with a short-lived state cookie.",
+        "operationId": "begin_workos_login_api_v2_auth_login_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Begin Workos Login",
+        "tags": [
+          "v2",
+          "auth"
+        ]
+      }
+    },
     "/api/v2/auth/logout": {
       "post": {
         "description": "Revoke the current account session and expire its browser cookie.",
@@ -4581,18 +4699,14 @@
     },
     "/api/v2/status": {
       "get": {
-        "description": "Report that the v2 API surface is reachable.",
+        "description": "Report that the v2 API surface is reachable and how sign-in works.",
         "operationId": "read_status_api_v2_status_get",
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "title": "Response Read Status Api V2 Status Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ApiStatusRead"
                 }
               }
             },

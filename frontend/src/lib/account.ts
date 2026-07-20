@@ -10,6 +10,7 @@ export type AlertRuleList = components["schemas"]["AlertRuleListRead"];
 export type DigestList = components["schemas"]["DigestListRead"];
 export type Preference = components["schemas"]["PreferenceRead"];
 export type AuthSession = components["schemas"]["AuthSessionRead"];
+export type ApiStatus = components["schemas"]["ApiStatusRead"];
 
 /** Error carrying the HTTP status so callers can branch on 401/503. */
 export class AccountApiError extends Error {
@@ -40,6 +41,11 @@ async function accountFetch<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+/** Public API status, including whether hosted WorkOS sign-in is offered. */
+export function getAuthStatus(): Promise<ApiStatus> {
+  return accountFetch("/status");
 }
 
 export function requestMagicLink(

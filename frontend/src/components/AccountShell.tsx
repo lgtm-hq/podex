@@ -3,10 +3,12 @@ import { type ReactNode, useEffect, useState } from "react";
 import {
   AccountApiError,
   type AccountUser,
+  getAuthStatus,
   getMe,
   logout,
   requestMagicLink,
 } from "../lib/account";
+import { API_BASE_URL } from "../lib/config";
 
 const NAV = [
   { href: "/account", label: "Overview" },
@@ -29,14 +31,21 @@ export default function AccountShell({
   children: (user: AccountUser) => ReactNode;
 }) {
   const [user, setUser] = useState<AccountUser | null>(null);
-  const [state, setState] = useState<"loading" | "anonymous" | "ready" | "error">(
-    "loading",
-  );
+  const [state, setState] = useState<
+    "loading" | "anonymous" | "ready" | "error"
+  >("loading");
   const [email, setEmail] = useState("");
   const [requested, setRequested] = useState(false);
   const [signInError, setSignInError] = useState<string | null>(null);
+  const [workosEnabled, setWorkosEnabled] = useState(false);
+  const [showEmailForm, setShowEmailForm] = useState(false);
 
   useEffect(() => {
+    // Hosted sign-in availability is advisory chrome: if the probe fails we
+    // simply keep the self-host email form as the only option.
+    getAuthStatus()
+      .then((apiStatus) => setWorkosEnabled(apiStatus.workos_enabled))
+      .catch(() => setWorkosEnabled(false));
     getMe()
       .then((me) => {
         setUser(me);
@@ -64,7 +73,7 @@ export default function AccountShell({
   }
 
   if (state === "anonymous" || user === null) {
-    return (
+    const emailForm = (
       <form
         className="max-w-md rounded-lg border border-[color:var(--color-hairline)] bg-[color:var(--color-surface)] p-6"
         onSubmit={(event) => {
@@ -113,6 +122,35 @@ export default function AccountShell({
           </>
         )}
       </form>
+    );
+
+    if (!workosEnabled) {
+      return emailForm;
+    }
+
+    return (
+      <div className="max-w-md">
+        <div className="rounded-lg border border-[color:var(--color-hairline)] bg-[color:var(--color-surface)] p-6">
+          <h2 className="font-display text-2xl">Sign in</h2>
+          <p className="mt-2 text-sm text-[color:var(--color-muted)]">
+            Continue with our hosted sign-in. No password needed.
+          </p>
+          <a
+            className="mt-4 inline-block rounded bg-[color:var(--color-accent)] px-4 py-2 text-sm text-white"
+            href={`${API_BASE_URL}/auth/login`}
+          >
+            Sign in
+          </a>
+          <button
+            className="mt-4 ml-4 text-xs text-[color:var(--color-muted)] underline"
+            type="button"
+            onClick={() => setShowEmailForm((current) => !current)}
+          >
+            Use an email link instead
+          </button>
+        </div>
+        {showEmailForm ? <div className="mt-4">{emailForm}</div> : null}
+      </div>
     );
   }
 

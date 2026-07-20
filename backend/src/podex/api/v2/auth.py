@@ -6,10 +6,12 @@ work. Magic-link and digest email delivery go through injectable sender
 boundaries so tests and deployments without SMTP stay deterministic.
 """
 
+from secrets import compare_digest, token_urlsafe
 from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from fastapi.responses import RedirectResponse
 
 from podex.api.deps import AppSettings, DbSession
 from podex.config import Settings, get_settings
@@ -57,6 +59,7 @@ from podex.services.account_auth import (
     authenticate_magic_link,
     get_authenticated_user,
     issue_magic_link,
+    issue_user_session,
     revoke_user_session,
 )
 from podex.services.account_digests import list_account_digests, send_pending_digest
@@ -95,9 +98,25 @@ from podex.services.magic_link_delivery import (
     build_magic_link_sender,
 )
 from podex.services.notification_delivery import DigestSender, build_digest_sender
+from podex.services.workos_auth import (
+    WorkOSAuthClient,
+    WorkOSAuthError,
+    build_workos_auth_client,
+    upsert_workos_account_user,
+)
 
 router = APIRouter(tags=["auth"])
 logger = get_logger(__name__)
+
+# The OAuth ``state`` value only needs to survive one round-trip through the
+# hosted sign-in screen, so its cookie stays deliberately short-lived.
+WORKOS_STATE_COOKIE = "podex_oauth_state"
+_WORKOS_STATE_TTL_SECONDS = 10 * 60
+
+
+def get_workos_auth_client() -> WorkOSAuthClient | None:
+    """Build the configured WorkOS AuthKit client, if credentials exist."""
+    return build_workos_auth_client(settings=get_settings())
 
 
 def get_auth_magic_link_sender() -> MagicLinkSender | None:
@@ -123,6 +142,10 @@ DigestSenderDep = Annotated[DigestSender | None, Depends(get_digest_sender)]
 BillingProviderDep = Annotated[
     BillingCheckoutProvider | None,
     Depends(get_billing_provider),
+]
+WorkOSClientDep = Annotated[
+    WorkOSAuthClient | None,
+    Depends(get_workos_auth_client),
 ]
 
 
@@ -264,6 +287,81 @@ def verify_auth_magic_link(
         user=AccountUserRead.model_validate(authenticated.user),
         expires_at=authenticated.expires_at,
     )
+
+
+def begin_workos_login(
+    settings: AppSettings,
+    workos: WorkOSClientDep,
+) -> RedirectResponse:
+    """Start hosted WorkOS AuthKit sign-in with a short-lived state cookie."""
+    if workos is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hosted sign-in is not configured",
+        )
+    state = token_urlsafe(32)
+    redirect = RedirectResponse(
+        url=workos.build_authorization_url(state=state),
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
+    redirect.set_cookie(
+        key=WORKOS_STATE_COOKIE,
+        value=state,
+        max_age=_WORKOS_STATE_TTL_SECONDS,
+        path="/",
+        secure=settings.auth_session_cookie_secure,
+        httponly=True,
+        samesite="lax",
+    )
+    return redirect
+
+
+def complete_workos_callback(
+    code: str,
+    state: str,
+    request: Request,
+    db: DbSession,
+    settings: AppSettings,
+    workos: WorkOSClientDep,
+) -> RedirectResponse:
+    """Finish hosted sign-in: validate state, exchange the code, set session."""
+    if workos is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Hosted sign-in is not configured",
+        )
+    expected_state = request.cookies.get(WORKOS_STATE_COOKIE)
+    if not state or not expected_state or not compare_digest(expected_state, state):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Sign-in state is invalid or expired",
+        )
+    try:
+        profile = workos.exchange_code(code=code)
+    except WorkOSAuthError as error:
+        logger.warning("workos_code_exchange_failed: %s", error)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to complete hosted sign-in",
+        ) from error
+    user = upsert_workos_account_user(db=db, profile=profile)
+    authenticated = issue_user_session(
+        db=db,
+        user=user,
+        session_ttl_days=settings.auth_session_ttl_days,
+    )
+    redirect = RedirectResponse(
+        url=f"{settings.public_web_url.rstrip('/')}/account",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
+    _set_session_cookie(
+        response=redirect,
+        token=authenticated.token,
+        settings=settings,
+    )
+    redirect.delete_cookie(key=WORKOS_STATE_COOKIE, path="/")
+    db.commit()
+    return redirect
 
 
 def logout_account_session(
@@ -681,6 +779,20 @@ router.add_api_route(
     verify_auth_magic_link,
     methods=["POST"],
     response_model=AuthSessionRead,
+)
+
+router.add_api_route(
+    "/auth/login",
+    begin_workos_login,
+    methods=["GET"],
+    response_model=None,
+)
+
+router.add_api_route(
+    "/auth/callback",
+    complete_workos_callback,
+    methods=["GET"],
+    response_model=None,
 )
 
 router.add_api_route(

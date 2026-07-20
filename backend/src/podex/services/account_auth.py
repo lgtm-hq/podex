@@ -93,9 +93,40 @@ def authenticate_magic_link(
         db.add(user)
         db.flush()
     challenge.user_id = user.id
+    challenge.consumed_at = effective_now
+    return issue_user_session(
+        db=db,
+        user=user,
+        session_ttl_days=session_ttl_days,
+        now=effective_now,
+    )
+
+
+def issue_user_session(
+    *,
+    db: Session,
+    user: AccountUser,
+    session_ttl_days: int,
+    now: datetime | None = None,
+) -> AuthenticatedSessionData:
+    """Issue a fresh opaque browser session for an authenticated account.
+
+    Shared by every sign-in path (magic link, hosted WorkOS AuthKit) so
+    the session layer stays identical regardless of how the user proved
+    their identity.
+
+    Args:
+        db: Active database session.
+        user: The account that just authenticated.
+        session_ttl_days: Session lifetime in days.
+        now: Optional clock override for deterministic tests.
+
+    Returns:
+        The user together with the raw session token and its expiry.
+    """
+    effective_now = now or datetime.now(UTC)
     raw_session_token = token_urlsafe(32)
     expires_at = effective_now + timedelta(days=session_ttl_days)
-    challenge.consumed_at = effective_now
     user.last_signed_in_at = effective_now
     db.add(
         UserSession(

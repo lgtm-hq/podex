@@ -15,5 +15,8 @@ class AccountUser(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     email: Mapped[str] = mapped_column(String(320), unique=True, index=True)
+    workos_id: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    first_name: Mapped[str | None] = mapped_column(String(100))
+    last_name: Mapped[str | None] = mapped_column(String(100))
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
     last_signed_in_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -93,6 +93,21 @@ class Page(BaseModel, Generic[ItemT]):
     offset: int = Field(ge=0)
 
 
+class ApiStatusRead(BaseModel):
+    """Reachability probe plus the public sign-in configuration flags.
+
+    Attributes:
+        status: Always ``"ok"`` when the surface is reachable.
+        api: The API surface identifier (``"v2"``).
+        workos_enabled: Whether hosted WorkOS AuthKit sign-in is configured,
+            so the frontend can offer it before attempting a redirect.
+    """
+
+    status: str = "ok"
+    api: str = "v2"
+    workos_enabled: bool = False
+
+
 class ErrorDetail(BaseModel):
     """A single field-level validation problem.
 

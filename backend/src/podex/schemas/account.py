@@ -16,6 +16,8 @@ class AccountUserRead(BaseModel):
 
     id: int
     email: str
+    first_name: str | None
+    last_name: str | None
     created_at: datetime
     last_signed_in_at: datetime | None
 
