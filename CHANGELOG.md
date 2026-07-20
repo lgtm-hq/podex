@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.37.2] - 2026-07-20
+
+### Fixed
+
+- **enrichment**: harden provider modules per post-merge review (#312-#316, #322) (#329)
+  (5f4d7a0)
+
 ## [0.37.1] - 2026-07-20
 
 ### Changed
