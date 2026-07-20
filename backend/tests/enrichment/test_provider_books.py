@@ -4,7 +4,7 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import MediaType
-from tests.enrichment.conftest import _media, _swap_client_matrix
+from tests.enrichment.conftest import _media, _swap_client
 
 
 def test_google_books_isbn10_and_sparse_volume() -> None:
@@ -27,7 +27,7 @@ def test_google_books_isbn10_and_sparse_volume() -> None:
         ],
     }
     provider = GoogleBooksProvider(api_key="key")
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
@@ -67,7 +67,7 @@ def test_google_books_second_item_selected_on_better_match() -> None:
         ],
     }
     provider = GoogleBooksProvider()
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )

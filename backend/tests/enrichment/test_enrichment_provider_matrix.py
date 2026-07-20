@@ -17,19 +17,13 @@ from podex.services.enrichment import (
     TMDBProvider,
     iTunesProvider,
 )
+from tests.enrichment.conftest import _swap_client
 
 
 def _media(title: str, media_type: MediaType) -> Media:
     media = Media(type=media_type, title=title, author="Frank Herbert")
     media.id = 1
     return media
-
-
-def _swap_client(provider: Any, handler: Any) -> None:
-    provider.client = httpx.Client(
-        transport=httpx.MockTransport(handler),
-        base_url="https://mock.invalid",
-    )
 
 
 _EMPTY_RESPONSES: dict[str, dict[str, Any]] = {

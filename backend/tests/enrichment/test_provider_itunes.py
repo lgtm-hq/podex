@@ -4,7 +4,7 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import MediaType
-from tests.enrichment.conftest import _media, _swap_client_matrix
+from tests.enrichment.conftest import _media, _swap_client
 
 
 def test_itunes_rejects_dissimilar_podcasts() -> None:
@@ -21,7 +21,7 @@ def test_itunes_rejects_dissimilar_podcasts() -> None:
         ],
     }
     provider = iTunesProvider()
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )

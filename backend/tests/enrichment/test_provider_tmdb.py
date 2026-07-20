@@ -7,7 +7,7 @@ from podex.models import Media, MediaType
 from tests.enrichment.conftest import (
     _CountingLimiter,
     _media,
-    _swap_client_matrix,
+    _swap_client,
 )
 
 
@@ -53,7 +53,7 @@ def test_tmdb_tv_show_path() -> None:
         return httpx.Response(200, json=detail_payload)
 
     provider = TMDBProvider("key")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.TV_SHOW, title="Example Show")
     media.id = 2
     result = provider.search_and_enrich(media)
@@ -86,7 +86,7 @@ def test_tmdb_person_detail_failure_yields_none() -> None:
         return httpx.Response(500, text="boom")
 
     provider = TMDBPersonProvider("key")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     result = provider.search_and_enrich(
         _media("Frank Herbert", MediaType.PERSON),
     )
@@ -128,7 +128,7 @@ def test_tmdb_year_filter_and_missing_details() -> None:
         return httpx.Response(500, text="down")
 
     provider = TMDBProvider("key")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
     media.id = 5
     result = provider.search_and_enrich(media)
@@ -152,7 +152,7 @@ def test_tmdb_person_by_known_id() -> None:
         "popularity": 5.0,
     }
     provider = TMDBPersonProvider("key")
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=detail),
     )
@@ -201,7 +201,7 @@ def test_tmdb_waits_before_every_request() -> None:
     provider = TMDBProvider("key")
     limiter = _CountingLimiter()
     provider.rate_limiter = limiter
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
     media.id = 20
     result = provider.search_and_enrich(media)
@@ -235,7 +235,7 @@ def test_tmdb_direct_id_lookup_skips_search() -> None:
 
     provider = TMDBProvider("key")
     provider.rate_limiter = _CountingLimiter()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune")
     media.id = 22
     media.tmdb_id = 438631
@@ -263,7 +263,7 @@ def test_tmdb_direct_id_404_falls_back_to_search() -> None:
 
     provider = TMDBProvider("key")
     provider.rate_limiter = _CountingLimiter()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune")
     media.id = 23
     media.tmdb_id = 999999

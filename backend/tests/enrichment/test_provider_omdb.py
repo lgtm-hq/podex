@@ -6,7 +6,7 @@ from assertpy import assert_that
 from podex.models import Media, MediaType
 from tests.enrichment.conftest import (
     _CountingLimiter,
-    _swap_client_matrix,
+    _swap_client,
 )
 
 
@@ -27,7 +27,7 @@ def test_omdb_series_path() -> None:
         "totalSeasons": "3",
     }
     provider = OMDBProvider("key")
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
@@ -56,7 +56,7 @@ def test_omdb_year_and_documentary_paths() -> None:
         "imdbVotes": "1,000",
     }
     provider = OMDBProvider("key")
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
@@ -101,7 +101,7 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
         )
 
     provider = OMDBProvider("key")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     result = provider.search_and_enrich(
         Media(type=MediaType.MOVIE, title="Dune: Part One"),
     )
@@ -126,7 +126,7 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
         "imdbVotes": "1",
     }
     omdb = OMDBProvider("key")
-    _swap_client_matrix(
+    _swap_client(
         omdb,
         lambda request: httpx.Response(200, json=omdb_payload),
     )
@@ -155,7 +155,7 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
         },
     }
     cr = CrossRefProvider()
-    _swap_client_matrix(
+    _swap_client(
         cr,
         lambda request: httpx.Response(200, json=crossref_payload),
     )
@@ -202,7 +202,7 @@ def test_omdb_waits_before_every_request() -> None:
     provider = OMDBProvider("key")
     limiter = _CountingLimiter()
     provider.rate_limiter = limiter
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune")
     media.id = 21
     media.imdb_id = "tt0000000"

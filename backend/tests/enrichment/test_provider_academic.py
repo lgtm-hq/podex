@@ -13,7 +13,7 @@ from tests.enrichment.conftest import (
     _RaisingProvider,
     _SlowProvider,
     _StubProvider,
-    _swap_client_matrix,
+    _swap_client,
 )
 
 
@@ -171,7 +171,7 @@ def test_crossref_direct_doi_lookup() -> None:
     from podex.services.enrichment import CrossRefProvider
 
     provider = CrossRefProvider()
-    _swap_client_matrix(provider, lambda request: httpx.Response(200, json=work))
+    _swap_client(provider, lambda request: httpx.Response(200, json=work))
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.doi = "10.1000/example.doi"
     result = provider.search_and_enrich(media)
@@ -238,7 +238,7 @@ def test_semantic_scholar_direct_paper_id() -> None:
         return httpx.Response(200, json=paper)
 
     provider = SemanticScholarProvider()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.semantic_scholar_id = "abc123"
     result = provider.search_and_enrich(media)
@@ -318,7 +318,7 @@ def test_crossref_search_with_author() -> None:
         return httpx.Response(200, json=payload)
 
     provider = CrossRefProvider(mailto="ops@example.com")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     result = provider.search_and_enrich(
         _media("Sleep and memory consolidation", MediaType.ARTICLE),
     )
@@ -422,7 +422,7 @@ def test_crossref_rich_work_parsing() -> None:
         },
     }
     provider = CrossRefProvider()
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
@@ -533,7 +533,7 @@ def test_crossref_doi_prefix_normalization_and_404() -> None:
         return httpx.Response(200, json={"message": {"items": []}})
 
     provider = CrossRefProvider()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = _media("Missing study", MediaType.STUDY)
     media.doi = "https://doi.org/10.1000/Missing"
     result = provider.search_and_enrich(media)
@@ -565,7 +565,7 @@ def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
         return httpx.Response(200, json={"data": []})
 
     provider = SemanticScholarProvider(api_key="key")
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.doi = "10.1000/via.doi"
     result = provider.search_and_enrich(media)
@@ -618,7 +618,7 @@ def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
         ],
     }
     ss = SemanticScholarProvider()
-    _swap_client_matrix(
+    _swap_client(
         ss,
         lambda request: httpx.Response(200, json=sparse_paper),
     )
@@ -639,7 +639,7 @@ def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
         },
     }
     cr = CrossRefProvider()
-    _swap_client_matrix(cr, lambda request: httpx.Response(200, json=no_doi))
+    _swap_client(cr, lambda request: httpx.Response(200, json=no_doi))
     cr_result = cr.search_and_enrich(
         _media("Sleep and memory consolidation", MediaType.ARTICLE),
     )
@@ -661,7 +661,7 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
         "externalIds": {"DOI": "10.1000/pmid.doi"},
     }
     ss = SemanticScholarProvider()
-    _swap_client_matrix(ss, lambda request: httpx.Response(200, json=paper))
+    _swap_client(ss, lambda request: httpx.Response(200, json=paper))
     study = _media("Sleep and memory consolidation", MediaType.STUDY)
     study.pubmed_id = "777"
     via_pmid = ss.search_and_enrich(study)
@@ -681,7 +681,7 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
         "imdbVotes": "10",
     }
     omdb = OMDBProvider("key")
-    _swap_client_matrix(
+    _swap_client(
         omdb,
         lambda request: httpx.Response(200, json=weak_payload),
     )
@@ -703,7 +703,7 @@ def test_crossref_doi_lookup_http_error() -> None:
         return httpx.Response(200, json={"message": {"items": []}})
 
     provider = CrossRefProvider()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = _media("Sleep study", MediaType.STUDY)
     media.doi = "10.1000/error.doi"
     result = provider.search_and_enrich(media)
@@ -759,7 +759,7 @@ def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     pm2.close()
 
     ss = SemanticScholarProvider()
-    _swap_client_matrix(ss, lambda request: httpx.Response(200, json={}))
+    _swap_client(ss, lambda request: httpx.Response(200, json={}))
     assert_that(ss.search_and_enrich(movie)).is_none()
     ss.close()
 
@@ -800,7 +800,7 @@ def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
 
     provider = SemanticScholarProvider()
     provider.rate_limiter = _CountingLimiter()
-    _swap_client_matrix(provider, handler)
+    _swap_client(provider, handler)
     media = _media("Sleep study", MediaType.STUDY)
     media.doi = "doi:10.1000/x"
     result = provider.search_and_enrich(media)

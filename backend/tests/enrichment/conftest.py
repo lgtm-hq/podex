@@ -47,7 +47,7 @@ def _enricher_with(providers: dict[EnrichmentSource, Any]) -> MediaEnricher:
     return enricher
 
 
-def _swap_client_matrix(provider: Any, handler: Any) -> None:
+def _swap_client(provider: Any, handler: Any) -> None:
     provider.client = httpx.Client(
         transport=httpx.MockTransport(handler),
         base_url="https://mock.invalid",

@@ -13,7 +13,7 @@ from tests.enrichment.conftest import (
     _enricher_with,
     _media,
     _StubProvider,
-    _swap_client_matrix,
+    _swap_client,
 )
 
 
@@ -248,7 +248,7 @@ def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
 
     provider = OMDBProvider("sekret-key")
     provider.rate_limiter = _CountingLimiter()
-    _swap_client_matrix(
+    _swap_client(
         provider,
         lambda request: httpx.Response(401, text="unauthorized"),
     )

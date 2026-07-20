@@ -4,7 +4,7 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import Media, MediaType
-from tests.enrichment.conftest import _media, _swap_client_matrix
+from tests.enrichment.conftest import _media, _swap_client
 
 
 def test_wikipedia_person_and_place_paths() -> None:
@@ -50,14 +50,14 @@ def test_wikipedia_person_and_place_paths() -> None:
         return httpx.Response(200, json=page_payload)
 
     person_provider = WikipediaProvider(requests_per_second=1000)
-    _swap_client_matrix(person_provider, handler)
+    _swap_client(person_provider, handler)
     person = person_provider.search_and_enrich(
         _media("Frank Herbert", MediaType.PERSON),
     )
     person_provider.close()
 
     place_provider = WikipediaProvider(requests_per_second=1000)
-    _swap_client_matrix(place_provider, handler)
+    _swap_client(place_provider, handler)
     place_media = Media(type=MediaType.PLACE, title="Frank Herbert")
     place_media.id = 9
     place = place_provider.search_and_enrich(place_media)
@@ -84,7 +84,7 @@ def test_wikipedia_variations_across_types() -> None:
         MediaType.PODCAST,
     ):
         provider = WikipediaProvider(requests_per_second=1000)
-        _swap_client_matrix(
+        _swap_client(
             provider,
             lambda request: httpx.Response(
                 200,
