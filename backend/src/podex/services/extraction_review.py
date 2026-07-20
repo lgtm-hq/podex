@@ -261,24 +261,48 @@ def _find_matching_media(
     db: Session,
     media_type: str,
     normalized_title: str | None,
+    normalized_creator: str | None,
+    year: int | None,
 ) -> Media | None:
     """Resolve an extracted title against existing canonical media records.
+
+    When several records share the same type and normalized title, the
+    extracted creator and year narrow the matches; an ambiguous result
+    yields no link rather than a guess.
 
     Args:
         db: Database session.
         media_type: Extracted media type value.
         normalized_title: Normalized extracted title.
+        normalized_creator: Normalized extracted author/creator.
+        year: Extracted publication year, if any.
 
     Returns:
-        Matching canonical media record when found.
+        Matching canonical media record when exactly one remains.
     """
     if normalized_title is None:
         return None
 
     candidates = db.query(Media).filter(Media.type == media_type).all()
-    for media in candidates:
-        if _normalize_value(value=media.title) == normalized_title:
-            return media
+    matches = [
+        media
+        for media in candidates
+        if _normalize_value(value=media.title) == normalized_title
+    ]
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+
+    if normalized_creator is not None:
+        matches = [
+            media
+            for media in matches
+            if _normalize_value(value=media.author) == normalized_creator
+        ]
+    if len(matches) > 1 and year is not None:
+        matches = [media for media in matches if media.year == year]
+
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -563,6 +587,8 @@ def persist_extracted_candidates(
             db=db,
             media_type=item.media_type.value,
             normalized_title=normalized_title,
+            normalized_creator=normalized_author,
+            year=item.year,
         )
 
         if matched_media is not None and matched_media.id in existing_media_mentions:

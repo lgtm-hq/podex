@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 
 from podex.models import (
     Episode,
+    Media,
+    Mention,
     MentionCandidate,
     MentionCandidateProvenance,
     MentionCandidateState,
@@ -204,6 +206,79 @@ def test_persist_repeated_match_in_one_batch_creates_single_review_item(
     review_items = db_session.execute(select(ReviewItem)).scalars().all()
     assert_that(review_items).is_length(1)
     assert_that(review_items[0].mention_candidate_id).is_equal_to(candidate.id)
+
+
+def _duplicate_dune_media(db_session: Session) -> tuple[Media, Media]:
+    frank = Media(
+        type=MediaType.BOOK,
+        title="Dune",
+        author="Frank Herbert",
+        year=1965,
+    )
+    brian = Media(type=MediaType.BOOK, title="Dune", author="Brian Herbert")
+    db_session.add_all([frank, brian])
+    db_session.commit()
+    return frank, brian
+
+
+def test_persist_disambiguates_duplicate_titles_by_creator(
+    db_session: Session,
+) -> None:
+    """A matching creator links the right record among duplicate titles."""
+    frank, _ = _duplicate_dune_media(db_session)
+    episode = _episode(db_session)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[
+            ExtractedMedia(
+                title="Dune",
+                media_type=MediaType.BOOK,
+                creator="Frank Herbert",
+                confidence=0.9,
+            ),
+        ],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.media_id).is_equal_to(frank.id)
+
+
+def test_persist_leaves_ambiguous_duplicate_titles_unlinked(
+    db_session: Session,
+) -> None:
+    """Duplicate titles without a discriminating creator stay unlinked."""
+    frank, _ = _duplicate_dune_media(db_session)
+    episode = _episode(db_session)
+    mention = Mention(episode_id=episode.id, media_id=frank.id, confidence=0.9)
+    db_session.add(mention)
+    db_session.commit()
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[
+            ExtractedMedia(
+                title="Dune",
+                media_type=MediaType.BOOK,
+                confidence=0.9,
+            ),
+        ],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.skipped_existing_mentions).is_equal_to(0)
+    assert_that(result.candidates_created).is_equal_to(1)
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.media_id).is_none()
 
 
 def test_persist_skips_items_with_existing_published_mentions(
