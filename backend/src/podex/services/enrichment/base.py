@@ -14,6 +14,41 @@ import httpx
 if TYPE_CHECKING:
     from podex.models.media import Media
 
+#: Prefixes stripped from DOI values, matched case-insensitively.
+_DOI_PREFIXES = (
+    "https://doi.org/",
+    "http://doi.org/",
+    "doi.org/",
+    "doi:",
+)
+
+
+def canonicalize_doi(value: str) -> str:
+    """Canonicalize a DOI by stripping URL/scheme prefixes and whitespace.
+
+    Strips ``https://doi.org/``, ``http://doi.org/``, ``doi.org/``, and
+    ``doi:`` prefixes (case-insensitively, repeatedly) so the bare DOI can
+    be used in provider-specific query syntax. The DOI body's case is
+    preserved.
+
+    Args:
+        value: Raw DOI value, possibly prefixed (e.g. from user input).
+
+    Returns:
+        The bare DOI (e.g. ``10.1000/x``).
+    """
+    doi = value.strip()
+    stripped = True
+    while stripped:
+        stripped = False
+        lowered = doi.lower()
+        for prefix in _DOI_PREFIXES:
+            if lowered.startswith(prefix):
+                doi = doi[len(prefix) :].strip()
+                stripped = True
+                break
+    return doi
+
 
 def describe_http_error(e: httpx.HTTPError) -> str:
     """Describe an HTTP error without leaking URLs or credentials.

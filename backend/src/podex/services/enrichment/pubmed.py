@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    canonicalize_doi,
 )
 
 if TYPE_CHECKING:
@@ -111,7 +112,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         """
         params: dict[str, str | int] = {
             "db": "pubmed",
-            "term": f"{doi}[doi]",
+            "term": f"{canonicalize_doi(doi)}[doi]",
             "retmode": "json",
             "retmax": 1,
         }

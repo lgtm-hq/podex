@@ -1491,6 +1491,52 @@ class _CountingLimiter:
         self.waits += 1
 
 
+def test_pubmed_doi_search_canonicalizes_prefixed_doi() -> None:
+    """A prefixed DOI is canonicalized before the [doi] search term."""
+    from podex.services.enrichment import PubMedProvider
+
+    seen_terms: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_terms.append(request.url.params.get("term", ""))
+        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
+
+    provider = PubMedProvider()
+    provider.rate_limiter = _CountingLimiter()
+    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
+    media = _media("Sleep study", MediaType.STUDY)
+    media.doi = "https://doi.org/10.1000/x"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_terms[0]).is_equal_to("10.1000/x[doi]")
+
+
+def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
+    """A prefixed DOI is canonicalized before the DOI: paper lookup."""
+    from podex.services.enrichment import SemanticScholarProvider
+
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path.startswith("/paper/DOI:"):
+            return httpx.Response(404, text="not found")
+        return httpx.Response(200, json={"data": []})
+
+    provider = SemanticScholarProvider()
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = _media("Sleep study", MediaType.STUDY)
+    media.doi = "doi:10.1000/x"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_paths[0]).is_equal_to("/paper/DOI:10.1000/x")
+
+
 def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
     """A 401 response log line never contains the api key value."""
     import logging as _logging

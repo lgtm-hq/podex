@@ -348,6 +348,22 @@ def test_rate_limiter_and_context_managers() -> None:
         assert_that(wiki.supports_media_type("book")).is_true()
 
 
+def test_canonicalize_doi_strips_prefixes() -> None:
+    """Bare DOIs pass through; every prefix form is stripped."""
+    from podex.services.enrichment.base import canonicalize_doi
+
+    assert_that(canonicalize_doi("10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("https://doi.org/10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("http://doi.org/10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("doi.org/10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("doi:10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("DOI:10.1000/x")).is_equal_to("10.1000/x")
+    assert_that(canonicalize_doi("  doi:https://doi.org/10.1000/x  ")).is_equal_to(
+        "10.1000/x",
+    )
+    assert_that(canonicalize_doi("10.1000/MixedCase")).is_equal_to("10.1000/MixedCase")
+
+
 def test_describe_http_error_redacts_details() -> None:
     """Status errors report the code; transport errors report the class."""
     from podex.services.enrichment.base import describe_http_error

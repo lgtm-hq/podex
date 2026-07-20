@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    canonicalize_doi,
 )
 
 if TYPE_CHECKING:
@@ -102,12 +103,9 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         Returns:
             Work data or None.
         """
-        # Normalize DOI - remove common prefixes
-        normalized_doi = doi.lower().strip()
-        for prefix in ["https://doi.org/", "http://doi.org/", "doi:"]:
-            if normalized_doi.startswith(prefix):
-                normalized_doi = normalized_doi[len(prefix) :]
-                break
+        # Normalize DOI - remove common prefixes (CrossRef DOIs are
+        # case-insensitive, so lowercase for a canonical path)
+        normalized_doi = canonicalize_doi(doi).lower()
 
         try:
             response = self.client.get(f"/works/{normalized_doi}")
