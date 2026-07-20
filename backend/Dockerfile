@@ -9,8 +9,10 @@
 #
 # Base images are tag+digest pinned so Renovate can update both together
 # (matches org convention). Build context is `backend/` (see docker-ci.yml).
-# Migrations are NOT run at build or start time — operators run
-# `alembic upgrade head` out-of-band before rolling the new image.
+# Migrations are NOT run at build time. At start time the scripts/start.sh
+# entrypoint runs `alembic upgrade head` only when AUTO_MIGRATE=1 (or "true")
+# is set by the deployment environment; by default operators still run
+# migrations out-of-band before rolling the new image.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -80,10 +82,17 @@ COPY --from=builder --chown=podex:podex /app/alembic.ini /app/alembic.ini
 COPY --from=builder --chown=podex:podex /app/alembic /app/alembic
 COPY --from=builder --chown=podex:podex /app/src /app/src
 
+# Entrypoint comes from the build context (not the builder stage) — it is not
+# part of the installed package. The executable bit is tracked by git.
+COPY --chown=podex:podex scripts/start.sh /app/scripts/start.sh
+
 USER podex
 
 EXPOSE 8000
 
-# Uvicorn from the resolved venv (PATH-first). Migrations are intentionally
-# NOT invoked here — see file header.
+# start.sh optionally runs migrations (AUTO_MIGRATE=1) then exec's CMD.
+# Default CMD serves the API via uvicorn from the resolved venv (PATH-first);
+# the scheduler deployable overrides CMD with `python -m podex.scheduler_runner`
+# and shares the same entrypoint contract.
+ENTRYPOINT ["/app/scripts/start.sh"]
 CMD ["uvicorn", "podex.main:app", "--host", "0.0.0.0", "--port", "8000"]
