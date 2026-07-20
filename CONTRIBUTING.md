@@ -57,6 +57,21 @@ Do not invoke the underlying tools (ruff, black, mypy, eslint, etc.) directly.
 - All required checks must pass before merge.
 - Address review feedback (human and automated) before requesting merge.
 
+## Architecture Decision Records
+
+Decisions with lasting architectural consequence get an
+[ADR](docs/adr/README.md). Prefer the **same PR that implements them**;
+when the decision precedes code, a docs-only PR is fine. Grilling
+sessions that produce decisions also produce ADRs.
+
+- Use `docs/adr/template.md` and add a row to `docs/adr/README.md`.
+- Accepted ADRs are immutable; supersede with a new ADR rather than
+  editing the Decision.
+- Backfilled historical decisions use status `accepted (backfilled)`.
+
+Skip an ADR for routine refactors, bug fixes, or choices already fully
+covered by an accepted ADR.
+
 ## Reporting issues
 
 Open a [GitHub issue](https://github.com/lgtm-hq/podex/issues) using a
