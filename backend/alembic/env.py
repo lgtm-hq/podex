@@ -2,7 +2,7 @@
 
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, text
 
 from alembic import context  # type: ignore[attr-defined]
 from podex.config import get_settings
@@ -40,6 +40,13 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        if connection.dialect.name == "postgresql":
+            # Migration 0010 creates a pgvector ``vector(1536)`` column, so
+            # the extension must exist before the chain replays. Idempotent,
+            # and runs on every upgrade so fresh databases (CI service
+            # containers, new Neon branches) need no manual step.
+            connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+            connection.commit()
         context.configure(connection=connection, target_metadata=target_metadata)
         with context.begin_transaction():
             context.run_migrations()

@@ -55,11 +55,16 @@ jobs:
       contents: read
     services:
       postgres:
+        # pgvector-enabled image: migration 0010 creates a vector(1536)
+        # column on Postgres, which requires the pgvector extension that the
+        # stock postgres image does not ship.
         # yamllint disable-line rule:line-length
-        image: postgres:16@sha256:33f923b05f64ca54ac4401c01126a6b92afe839a0aa0a52bc5aeb5cc958e5f20
+        image: pgvector/pgvector:pg16@sha256:1d533553fefe4f12e5d80c7b80622ba0c382abb5758856f52983d8789179f0fb
         env:
           POSTGRES_USER: podex
-          POSTGRES_PASSWORD: podex
+          # Trust auth: throwaway CI service on localhost only; avoids a
+          # placeholder password that secret scanners flag.
+          POSTGRES_HOST_AUTH_METHOD: trust
           POSTGRES_DB: podex
         ports:
           - 5432:5432
@@ -100,7 +105,7 @@ jobs:
           enable-cache: false
       - name: Replay migrations on Postgres
         env:
-          PODEX_DATABASE_URL: postgresql+psycopg://podex:podex@localhost:5432/podex
+          PODEX_DATABASE_URL: postgresql+psycopg://podex@localhost:5432/podex
         run: bash .github/scripts/postgres-migration-replay.sh
 
   # Coverage publishing (#200 / epic #114): no separate coverage.yml calling
