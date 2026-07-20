@@ -115,6 +115,32 @@ def _priority_for_confidence(*, confidence: float) -> ReviewPriority:
     return ReviewPriority.LOW
 
 
+def _phrase_in_tokens(*, phrase: str, segment: str) -> bool:
+    """Check whether a phrase appears as contiguous tokens in a segment.
+
+    Both inputs are expected to be pre-normalized via ``_normalize_value``
+    (lowercase, punctuation-stripped, whitespace-collapsed), so token-level
+    comparison avoids substring false positives such as ``it`` in ``italy``.
+
+    Args:
+        phrase: Normalized phrase to look for.
+        segment: Normalized segment text to search within.
+
+    Returns:
+        ``True`` when the phrase tokens appear contiguously and in order.
+    """
+    phrase_tokens = phrase.split()
+    segment_tokens = segment.split()
+    if not phrase_tokens or len(phrase_tokens) > len(segment_tokens):
+        return False
+
+    span = len(phrase_tokens)
+    return any(
+        segment_tokens[start : start + span] == phrase_tokens
+        for start in range(len(segment_tokens) - span + 1)
+    )
+
+
 def _segment_text(*, segment: dict[str, Any]) -> str | None:
     """Extract normalized text content from a transcript segment.
 
@@ -209,9 +235,12 @@ def _find_segment_context(
             continue
 
         score = 0
-        if normalized_title in normalized_segment:
+        if _phrase_in_tokens(phrase=normalized_title, segment=normalized_segment):
             score += 2
-        if normalized_creator is not None and normalized_creator in normalized_segment:
+        if normalized_creator is not None and _phrase_in_tokens(
+            phrase=normalized_creator,
+            segment=normalized_segment,
+        ):
             score += 1
 
         if score > best_score:
@@ -232,24 +261,48 @@ def _find_matching_media(
     db: Session,
     media_type: str,
     normalized_title: str | None,
+    normalized_creator: str | None,
+    year: int | None,
 ) -> Media | None:
     """Resolve an extracted title against existing canonical media records.
+
+    When several records share the same type and normalized title, the
+    extracted creator and year narrow the matches; an ambiguous result
+    yields no link rather than a guess.
 
     Args:
         db: Database session.
         media_type: Extracted media type value.
         normalized_title: Normalized extracted title.
+        normalized_creator: Normalized extracted author/creator.
+        year: Extracted publication year, if any.
 
     Returns:
-        Matching canonical media record when found.
+        Matching canonical media record when exactly one remains.
     """
     if normalized_title is None:
         return None
 
     candidates = db.query(Media).filter(Media.type == media_type).all()
-    for media in candidates:
-        if _normalize_value(value=media.title) == normalized_title:
-            return media
+    matches = [
+        media
+        for media in candidates
+        if _normalize_value(value=media.title) == normalized_title
+    ]
+    if len(matches) <= 1:
+        return matches[0] if matches else None
+
+    if normalized_creator is not None:
+        matches = [
+            media
+            for media in matches
+            if _normalize_value(value=media.author) == normalized_creator
+        ]
+    if len(matches) > 1 and year is not None:
+        matches = [media for media in matches if media.year == year]
+
+    if len(matches) == 1:
+        return matches[0]
     return None
 
 
@@ -425,7 +478,8 @@ def _update_candidate(
     """
     candidate.raw_title = item.title
     candidate.normalized_title = normalized_title
-    candidate.suggested_author = item.creator
+    if _normalize_value(value=item.creator) is not None:
+        candidate.suggested_author = item.creator
     candidate.confidence = item.confidence
     candidate.extraction_source = extraction_source
     candidate.timestamp_seconds = timestamp_seconds or candidate.timestamp_seconds
@@ -462,12 +516,12 @@ def _ensure_review_item(
     priority = _priority_for_confidence(confidence=confidence)
 
     if candidate.review_item is None:
-        db.add(
-            ReviewItem(
-                mention_candidate_id=candidate.id,
-                priority=priority.value,
-            )
+        review_item = ReviewItem(
+            mention_candidate_id=candidate.id,
+            priority=priority.value,
         )
+        candidate.review_item = review_item
+        db.add(review_item)
         return True
 
     if candidate.review_item.status in {
@@ -534,6 +588,8 @@ def persist_extracted_candidates(
             db=db,
             media_type=item.media_type.value,
             normalized_title=normalized_title,
+            normalized_creator=normalized_author,
+            year=item.year,
         )
 
         if matched_media is not None and matched_media.id in existing_media_mentions:
@@ -618,13 +674,14 @@ def persist_extracted_candidates(
             before=before_snapshot,
             after=after_snapshot,
         )
-        _record_candidate_provenance(
-            db=db,
-            candidate=candidate,
-            event_type=MentionCandidateProvenanceEventType.UPDATED,
-            change_summary=_build_change_summary(changed_fields=changed_fields),
-            changed_fields=changed_fields,
-        )
+        if changed_fields:
+            _record_candidate_provenance(
+                db=db,
+                candidate=candidate,
+                event_type=MentionCandidateProvenanceEventType.UPDATED,
+                change_summary=_build_change_summary(changed_fields=changed_fields),
+                changed_fields=changed_fields,
+            )
         review_item_created = _ensure_review_item(
             db=db,
             candidate=candidate,
@@ -632,7 +689,7 @@ def persist_extracted_candidates(
         )
         summary = PersistedExtractionReviewData(
             candidates_created=summary.candidates_created,
-            candidates_updated=summary.candidates_updated + 1,
+            candidates_updated=summary.candidates_updated + int(bool(changed_fields)),
             review_items_created=(
                 summary.review_items_created + int(review_item_created)
             ),

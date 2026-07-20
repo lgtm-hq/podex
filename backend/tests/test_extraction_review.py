@@ -8,15 +8,21 @@ from sqlalchemy.orm import Session
 
 from podex.models import (
     Episode,
+    Media,
+    Mention,
     MentionCandidate,
     MentionCandidateProvenance,
+    MentionCandidateProvenanceEventType,
     MentionCandidateState,
     Podcast,
     ReviewItem,
     ReviewPriority,
 )
 from podex.models.media import MediaType
-from podex.services.extraction_review import persist_extracted_candidates
+from podex.services.extraction_review import (
+    _find_segment_context,
+    persist_extracted_candidates,
+)
 from podex.services.llm_extraction import ExtractedMedia
 from tests.conftest import seed_catalog_graph
 
@@ -129,6 +135,303 @@ def test_persist_is_replay_safe_and_records_update_provenance(
         .all()
     )
     assert_that(len(events)).is_greater_than(1)
+
+
+def test_segment_context_rejects_substring_title_matches() -> None:
+    """A short title must not match inside an unrelated longer word."""
+    item = ExtractedMedia(title="It", media_type=MediaType.BOOK, confidence=0.9)
+    segments = [{"text": "italy is beautiful", "start": 10}]
+
+    match = _find_segment_context(item=item, segments=segments)
+
+    assert_that(match.timestamp_seconds).is_none()
+    assert_that(match.context).is_none()
+
+
+def test_segment_context_matches_standalone_token_title() -> None:
+    """A short title matches when it appears as a standalone token."""
+    item = ExtractedMedia(title="It", media_type=MediaType.BOOK, confidence=0.9)
+    segments = [{"text": "we read it last night", "start": 12}]
+
+    match = _find_segment_context(item=item, segments=segments)
+
+    assert_that(match.timestamp_seconds).is_equal_to(12)
+    assert_that(match.context).contains("we read it last night")
+
+
+def test_segment_context_requires_contiguous_ordered_title_tokens() -> None:
+    """Multi-word titles match only contiguous, in-order token runs."""
+    item = ExtractedMedia(
+        title="War and Peace",
+        media_type=MediaType.BOOK,
+        confidence=0.9,
+    )
+    scattered = [{"text": "peace talks and the war effort", "start": 5}]
+    contiguous = [{"text": "reading war and peace tonight", "start": 7}]
+
+    scattered_match = _find_segment_context(item=item, segments=scattered)
+    contiguous_match = _find_segment_context(item=item, segments=contiguous)
+
+    assert_that(scattered_match.timestamp_seconds).is_none()
+    assert_that(contiguous_match.timestamp_seconds).is_equal_to(7)
+
+
+def test_persist_repeated_match_in_one_batch_creates_single_review_item(
+    db_session: Session,
+) -> None:
+    """Two batch items resolving to one candidate create one review item."""
+    episode = _episode(db_session)
+    items = [
+        ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7),
+        ExtractedMedia(
+            title="Dune",
+            media_type=MediaType.BOOK,
+            creator="Frank Herbert",
+            confidence=0.9,
+        ),
+    ]
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=items,
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_created).is_equal_to(1)
+    assert_that(result.review_items_created).is_equal_to(1)
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    review_items = db_session.execute(select(ReviewItem)).scalars().all()
+    assert_that(review_items).is_length(1)
+    assert_that(review_items[0].mention_candidate_id).is_equal_to(candidate.id)
+
+
+def _duplicate_dune_media(db_session: Session) -> tuple[Media, Media]:
+    frank = Media(
+        type=MediaType.BOOK,
+        title="Dune",
+        author="Frank Herbert",
+        year=1965,
+    )
+    brian = Media(type=MediaType.BOOK, title="Dune", author="Brian Herbert")
+    db_session.add_all([frank, brian])
+    db_session.commit()
+    return frank, brian
+
+
+def test_persist_disambiguates_duplicate_titles_by_creator(
+    db_session: Session,
+) -> None:
+    """A matching creator links the right record among duplicate titles."""
+    frank, _ = _duplicate_dune_media(db_session)
+    episode = _episode(db_session)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[
+            ExtractedMedia(
+                title="Dune",
+                media_type=MediaType.BOOK,
+                creator="Frank Herbert",
+                confidence=0.9,
+            ),
+        ],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.media_id).is_equal_to(frank.id)
+
+
+def test_persist_leaves_ambiguous_duplicate_titles_unlinked(
+    db_session: Session,
+) -> None:
+    """Duplicate titles without a discriminating creator stay unlinked."""
+    frank, _ = _duplicate_dune_media(db_session)
+    episode = _episode(db_session)
+    mention = Mention(episode_id=episode.id, media_id=frank.id, confidence=0.9)
+    db_session.add(mention)
+    db_session.commit()
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[
+            ExtractedMedia(
+                title="Dune",
+                media_type=MediaType.BOOK,
+                confidence=0.9,
+            ),
+        ],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.skipped_existing_mentions).is_equal_to(0)
+    assert_that(result.candidates_created).is_equal_to(1)
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.media_id).is_none()
+
+
+def test_persist_preserves_known_author_on_sparse_replay(
+    db_session: Session,
+) -> None:
+    """A replay without a creator keeps the previously known author."""
+    episode = _episode(db_session)
+    rich = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+    sparse = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[rich],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[sparse],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.suggested_author).is_equal_to("Frank Herbert")
+    events = db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+    for event in events:
+        changed_fields = (event.metadata_json or {}).get("changed_fields", [])
+        assert_that(changed_fields).does_not_contain("suggested_author")
+
+
+def test_persist_updates_author_on_replay_with_new_creator(
+    db_session: Session,
+) -> None:
+    """A replay with a new non-empty creator still updates the author."""
+    episode = _episode(db_session)
+    first = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.9)
+    corrected = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[first],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[corrected],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    candidate = db_session.execute(select(MentionCandidate)).scalar_one()
+    assert_that(candidate.suggested_author).is_equal_to("Frank Herbert")
+
+
+def test_persist_identical_replay_is_a_no_op(db_session: Session) -> None:
+    """Replaying identical inputs records no update and no provenance."""
+    episode = _episode(db_session)
+    item = ExtractedMedia(
+        title="Dune",
+        media_type=MediaType.BOOK,
+        creator="Frank Herbert",
+        confidence=0.9,
+    )
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[item],
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[item],
+        segments=_SEGMENTS,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_created).is_equal_to(0)
+    assert_that(result.candidates_updated).is_equal_to(0)
+    events = db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+    assert_that(events).is_length(1)
+    assert_that(events[0].event_type).is_equal_to(
+        MentionCandidateProvenanceEventType.CREATED.value,
+    )
+
+
+def test_persist_changed_replay_records_single_update_event(
+    db_session: Session,
+) -> None:
+    """A replay that changes a field counts and records exactly one update."""
+    episode = _episode(db_session)
+    first = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.7)
+    changed = ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.9)
+
+    persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[first],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=[changed],
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+    )
+    db_session.commit()
+
+    assert_that(result.candidates_updated).is_equal_to(1)
+    updated_events = [
+        event
+        for event in (
+            db_session.execute(select(MentionCandidateProvenance)).scalars().all()
+        )
+        if event.event_type == MentionCandidateProvenanceEventType.UPDATED.value
+    ]
+    assert_that(updated_events).is_length(1)
 
 
 def test_persist_skips_items_with_existing_published_mentions(
