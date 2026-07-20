@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.36.0] - 2026-07-20
+
+### Added
+
+- **observability**: add Sentry error tracking for backend and frontend (#323) (08115fc)
+
 ## [0.35.0] - 2026-07-19
 
 ### Added
