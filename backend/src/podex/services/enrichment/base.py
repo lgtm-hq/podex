@@ -9,8 +9,28 @@ from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import httpx
+
 if TYPE_CHECKING:
     from podex.models.media import Media
+
+
+def describe_http_error(e: httpx.HTTPError) -> str:
+    """Describe an HTTP error without leaking URLs or credentials.
+
+    ``str(e)`` on httpx errors can include the full request URL, which may
+    carry API keys in query parameters. This helper returns only the status
+    code or the exception class name.
+
+    Args:
+        e: The httpx error to describe.
+
+    Returns:
+        ``"HTTP <status>"`` for status errors, else the exception class name.
+    """
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"HTTP {e.response.status_code}"
+    return type(e).__name__
 
 
 class EnrichmentSource(StrEnum):

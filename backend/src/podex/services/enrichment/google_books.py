@@ -11,6 +11,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -129,7 +130,7 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             result: list[dict[str, Any]] = data.get("items", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Google Books search error: {e}")
+            logger.warning(f"Google Books search error: {describe_http_error(e)}")
             return []
 
     def _get_volume(self, volume_id: str) -> dict[str, Any] | None:
@@ -147,7 +148,9 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Google Books volume error for {volume_id}: {e}")
+            logger.warning(
+                f"Google Books volume error for {volume_id}: {describe_http_error(e)}",
+            )
             return None
 
     def _find_best_match(

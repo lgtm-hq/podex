@@ -1480,6 +1480,40 @@ def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     ss.close()
 
 
+class _CountingLimiter:
+    """Rate-limiter double counting wait_sync calls without sleeping."""
+
+    def __init__(self) -> None:
+        self.waits = 0
+
+    def wait_sync(self) -> None:
+        """Count the wait instead of sleeping."""
+        self.waits += 1
+
+
+def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
+    """A 401 response log line never contains the api key value."""
+    import logging as _logging
+
+    from podex.services.enrichment import OMDBProvider
+
+    provider = OMDBProvider("sekret-key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(
+        provider,
+        lambda request: httpx.Response(401, text="unauthorized"),
+    )
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 24
+    with caplog.at_level(_logging.WARNING):
+        result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(caplog.text).contains("HTTP 401")
+    assert_that(caplog.text).does_not_contain("sekret-key")
+
+
 def test_omdb_uses_https_base_url() -> None:
     """The OMDB base URL uses the https scheme (api key in query)."""
     from podex.services.enrichment import OMDBProvider

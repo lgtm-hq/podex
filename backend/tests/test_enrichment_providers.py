@@ -348,6 +348,24 @@ def test_rate_limiter_and_context_managers() -> None:
         assert_that(wiki.supports_media_type("book")).is_true()
 
 
+def test_describe_http_error_redacts_details() -> None:
+    """Status errors report the code; transport errors report the class."""
+    from podex.services.enrichment.base import describe_http_error
+
+    request = httpx.Request("GET", "https://api.invalid/?apikey=sekret")
+    response = httpx.Response(500, request=request)
+    status_error = httpx.HTTPStatusError(
+        "boom",
+        request=request,
+        response=response,
+    )
+    assert_that(describe_http_error(status_error)).is_equal_to("HTTP 500")
+    assert_that(describe_http_error(httpx.ConnectError("refused"))).is_equal_to(
+        "ConnectError",
+    )
+    assert_that(describe_http_error(status_error)).does_not_contain("sekret")
+
+
 def test_provider_mismatch_and_variation_paths() -> None:
     """Low-similarity docs are rejected; movie-type variations execute."""
     mismatch = OpenLibraryProvider(requests_per_second=1000)

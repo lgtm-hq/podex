@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 from podex.services.enrichment.search_utils import (
     calculate_similarity,
@@ -144,7 +145,9 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: list[dict[str, Any]] = data.get("results", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB search error for '{title}': {e}")
+            logger.warning(
+                f"TMDB search error for '{title}': {describe_http_error(e)}",
+            )
             return []
 
     def _find_best_match(
@@ -241,7 +244,9 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB details error for ID {tmdb_id}: {e}")
+            logger.warning(
+                f"TMDB details error for ID {tmdb_id}: {describe_http_error(e)}",
+            )
             return None
 
     def _build_result(

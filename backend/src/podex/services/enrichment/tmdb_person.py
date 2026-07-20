@@ -11,6 +11,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -133,7 +134,9 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
             result: list[dict[str, Any]] = data.get("results", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB person search error for '{query}': {e}")
+            logger.warning(
+                f"TMDB person search error for '{query}': {describe_http_error(e)}",
+            )
             return []
 
     def _find_best_match(
@@ -210,7 +213,10 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
             result: dict[str, Any] = response.json()
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"TMDB person details error for ID {person_id}: {e}")
+            logger.warning(
+                f"TMDB person details error for ID {person_id}: "
+                f"{describe_http_error(e)}",
+            )
             return None
 
     def _build_result(
