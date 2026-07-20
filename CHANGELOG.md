@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.37.0] - 2026-07-20
+
+### Added
+
+- **auth**: add WorkOS AuthKit sign-in with self-host magic-link fallback (#325)
+  (84e9b63)
+
 ## [0.36.0] - 2026-07-20
 
 ### Added
