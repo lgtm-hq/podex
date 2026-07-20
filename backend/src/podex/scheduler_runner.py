@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from podex.config import Settings, get_settings
 from podex.database import SessionLocal
 from podex.logging_config import get_logger
+from podex.observability import init_sentry
 from podex.services.notification_delivery import DigestSender, build_digest_sender
 from podex.services.recurring_discovery import (
     reconcile_recurring_discovery_schedules,
@@ -130,6 +131,9 @@ class SchedulerRunner:
 
 def main() -> None:
     """Entry point for the scheduler deployable."""
+    # The runner is its own process, so it initializes Sentry independently
+    # of the API deployable.
+    init_sentry(get_settings())
     SchedulerRunner().run_forever()
 
 
