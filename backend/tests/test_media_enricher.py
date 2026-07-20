@@ -419,18 +419,23 @@ def test_semantic_scholar_direct_paper_id() -> None:
         "url": "https://ss.invalid/abc123",
         "venue": "Journal of Sleep",
     }
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return httpx.Response(200, json=paper)
+
     provider = SemanticScholarProvider()
-    _swap_client_matrix(
-        provider,
-        lambda request: httpx.Response(200, json=paper),
-    )
+    _swap_client_matrix(provider, handler)
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.semantic_scholar_id = "abc123"
     result = provider.search_and_enrich(media)
     provider.close()
 
+    assert_that(seen_paths).is_equal_to(["/paper/abc123"])
+    assert_that(result).is_not_none()
     if result is not None:
-        assert_that(result.confidence).is_greater_than(0.8)
+        assert_that(result.confidence).is_equal_to(1.0)
 
 
 def test_pubmed_direct_pmid_fetch() -> None:
@@ -1663,6 +1668,72 @@ def test_omdb_waits_before_every_request() -> None:
     assert_that(result).is_not_none()
     assert_that(len(requests_seen)).is_equal_to(2)
     assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
+
+def test_tmdb_direct_id_lookup_skips_search() -> None:
+    """A stored tmdb_id fetches details directly without any search."""
+    from podex.services.enrichment import TMDBProvider
+
+    seen_paths: list[str] = []
+    detail_payload = {
+        "id": 438631,
+        "title": "Dune",
+        "overview": "Desert planet epic.",
+        "release_date": "2021-10-22",
+        "poster_path": "/dune.jpg",
+        "external_ids": {"imdb_id": "tt1160419"},
+        "credits": {"cast": [], "crew": []},
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path == "/movie/438631":
+            return httpx.Response(200, json=detail_payload)
+        return httpx.Response(404, text="not found")
+
+    provider = TMDBProvider("key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 22
+    media.tmdb_id = 438631
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(seen_paths).is_equal_to(["/movie/438631"])
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(result.confidence).is_equal_to(1.0)
+        assert_that(str(result.external_ids)).contains("438631")
+
+
+def test_tmdb_direct_id_404_falls_back_to_search() -> None:
+    """A 404 on the stored tmdb_id falls back to title search."""
+    from podex.services.enrichment import TMDBProvider
+
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if "/search/" in request.url.path:
+            return httpx.Response(200, json={"results": []})
+        return httpx.Response(404, text="not found")
+
+    provider = TMDBProvider("key")
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client_matrix(provider, handler)
+    media = Media(type=MediaType.MOVIE, title="Dune")
+    media.id = 23
+    media.tmdb_id = 999999
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_none()
+    assert_that(seen_paths[0]).is_equal_to("/movie/999999")
+    assert_that(seen_paths[1]).is_equal_to("/tv/999999")
+    assert_that(
+        [p for p in seen_paths if p.startswith("/search/")],
+    ).is_not_empty()
 
 
 def test_provider_error_logs_redact_api_key(caplog: Any) -> None:

@@ -71,6 +71,13 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         # Determine primary search type (TV shows try TV first, others try movie first)
         search_types = ["tv", "movie"] if media.type == "tv_show" else ["movie", "tv"]
 
+        # Direct lookup by stored TMDB ID before any title search
+        if media.tmdb_id:
+            for search_type in search_types:
+                details = self._get_details(media.tmdb_id, search_type)
+                if details:
+                    return self._build_result(details, search_type, confidence=1.0)
+
         # Generate search variations
         variations = generate_search_variations(media.title, media.author)
 
