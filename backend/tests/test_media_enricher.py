@@ -1766,6 +1766,53 @@ def test_omdb_uses_https_base_url() -> None:
     assert_that(OMDBProvider.BASE_URL).starts_with("https://")
 
 
+def test_pubmed_structured_abstract_joins_sections() -> None:
+    """Structured abstracts keep every AbstractText section."""
+    from podex.services.enrichment import PubMedProvider
+
+    xml = """<?xml version="1.0"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation>
+      <PMID>4242</PMID>
+      <Article>
+        <ArticleTitle>Structured abstract study</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">Sleep matters.</AbstractText>
+          <AbstractText Label="CONCLUSIONS">Rest improves recall.</AbstractText>
+        </Abstract>
+        <AuthorList>
+          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
+        </AuthorList>
+        <Journal>
+          <Title>Journal</Title>
+          <JournalIssue><PubDate><Year>2021</Year></PubDate></JournalIssue>
+        </Journal>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>"""
+    provider = PubMedProvider()
+    provider.rate_limiter = _CountingLimiter()
+    provider.client = httpx.Client(
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(200, text=xml),
+        ),
+    )
+    media = _media("Structured abstract study", MediaType.STUDY)
+    media.pubmed_id = "4242"
+    result = provider.search_and_enrich(media)
+    provider.close()
+
+    assert_that(result).is_not_none()
+    if result is not None:
+        description = result.description or ""
+        assert_that(description).contains("Sleep matters.")
+        assert_that(description).contains("Rest improves recall.")
+        assert_that(description).contains("BACKGROUND")
+        assert_that(description).contains("CONCLUSIONS")
+
+
 def test_provider_context_managers_close_clients() -> None:
     """Context-manager protocol closes every API-key provider."""
     from podex.services.enrichment import (
