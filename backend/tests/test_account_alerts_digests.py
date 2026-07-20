@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.config import AuthSettings, Settings
 from podex.models import (
     AccountAlertEvent,
     AccountUser,
@@ -268,8 +268,10 @@ def test_build_digest_sender_requires_smtp_configuration() -> None:
     assert_that(build_digest_sender(settings=Settings())).is_none()
     sender = build_digest_sender(
         settings=Settings(
-            smtp_host="smtp.example.com",
-            smtp_from_email="digests@example.com",
+            auth=AuthSettings(
+                smtp_host="smtp.example.com",
+                smtp_from_email="digests@example.com",
+            ),
         ),
     )
     assert_that(sender).is_instance_of(SmtpDigestSender)

@@ -5,10 +5,10 @@ bucket; it is skipped entirely by default and therefore never runs in CI
 and never affects coverage. Arm it with:
 
     PODEX_R2_SMOKE=1 \
-    PODEX_TRANSCRIPT_ARTIFACT_S3_BUCKET=<staging-bucket> \
-    PODEX_TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL=<R2 S3 API endpoint> \
-    PODEX_TRANSCRIPT_ARTIFACT_S3_ACCESS_KEY_ID=<token-key-id> \
-    PODEX_TRANSCRIPT_ARTIFACT_S3_SECRET_ACCESS_KEY=<token-secret> \
+    PODEX_TRANSCRIPTS__S3_BUCKET=<staging-bucket> \
+    PODEX_TRANSCRIPTS__S3_ENDPOINT_URL=<R2 S3 API endpoint> \
+    PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID=<token-key-id> \
+    PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY=<token-secret> \
     uv run pytest tests/test_transcript_artifacts_r2_smoke.py
 
 See the r2 runbook in lgtm-hq/podex-ops (runbooks/r2.md) for the full
@@ -31,10 +31,10 @@ from podex.services.transcript_artifacts import (
 )
 
 _REQUIRED_ENV_VARS: tuple[str, ...] = (
-    "PODEX_TRANSCRIPT_ARTIFACT_S3_BUCKET",
-    "PODEX_TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL",
-    "PODEX_TRANSCRIPT_ARTIFACT_S3_ACCESS_KEY_ID",
-    "PODEX_TRANSCRIPT_ARTIFACT_S3_SECRET_ACCESS_KEY",
+    "PODEX_TRANSCRIPTS__S3_BUCKET",
+    "PODEX_TRANSCRIPTS__S3_ENDPOINT_URL",
+    "PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID",
+    "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY",
 )
 
 
@@ -66,15 +66,15 @@ def r2_store_fixture() -> EncryptedS3TranscriptArtifactStore:
         Encrypted S3-compatible store configured for the staging bucket.
     """
     return EncryptedS3TranscriptArtifactStore(
-        bucket=os.environ["PODEX_TRANSCRIPT_ARTIFACT_S3_BUCKET"],
+        bucket=os.environ["PODEX_TRANSCRIPTS__S3_BUCKET"],
         encryption_key=os.environ.get(
-            "PODEX_TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY",
+            "PODEX_TRANSCRIPTS__ENCRYPTION_KEY",
             Fernet.generate_key().decode("ascii"),
         ),
-        endpoint_url=os.environ["PODEX_TRANSCRIPT_ARTIFACT_S3_ENDPOINT_URL"],
-        region_name=os.environ.get("PODEX_TRANSCRIPT_ARTIFACT_S3_REGION_NAME", "auto"),
-        access_key_id=os.environ["PODEX_TRANSCRIPT_ARTIFACT_S3_ACCESS_KEY_ID"],
-        secret_access_key=os.environ["PODEX_TRANSCRIPT_ARTIFACT_S3_SECRET_ACCESS_KEY"],
+        endpoint_url=os.environ["PODEX_TRANSCRIPTS__S3_ENDPOINT_URL"],
+        region_name=os.environ.get("PODEX_TRANSCRIPTS__S3_REGION_NAME", "auto"),
+        access_key_id=os.environ["PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID"],
+        secret_access_key=os.environ["PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY"],
     )
 
 

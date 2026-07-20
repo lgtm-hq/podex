@@ -76,8 +76,9 @@ def scrub_event(event: Event, hint: Hint) -> Event:
 def init_sentry(settings: Settings) -> bool:
     """Initialize the Sentry SDK when a DSN is configured.
 
-    No-ops (leaving the SDK fully disabled) when ``settings.sentry_dsn`` is
-    empty. Tracing and profiling stay disabled — error tracking only.
+    No-ops (leaving the SDK fully disabled) when
+    ``settings.observability.sentry_dsn`` is empty. Tracing and profiling stay
+    disabled — error tracking only.
 
     Args:
         settings: Runtime settings providing the DSN and environment.
@@ -85,11 +86,11 @@ def init_sentry(settings: Settings) -> bool:
     Returns:
         True when the SDK was initialized, False when disabled.
     """
-    if not settings.sentry_dsn:
+    if not settings.observability.sentry_dsn:
         return False
     sentry_sdk.init(
-        dsn=settings.sentry_dsn,
-        environment=settings.sentry_environment,
+        dsn=settings.observability.sentry_dsn,
+        environment=settings.observability.sentry_environment,
         release=f"podex@{__version__}",
         before_send=scrub_event,
         send_default_pii=False,

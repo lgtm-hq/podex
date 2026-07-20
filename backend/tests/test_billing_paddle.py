@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
-from podex.config import Settings
+from podex.config import BillingSettings, Settings
 from podex.models import AccountSubscription, AccountUser, BillingWebhookEvent
 from podex.services.billing_checkout import (
     HostedBillingCheckoutProvider,
@@ -47,7 +47,7 @@ def _configure_paddle(client: TestClient) -> None:
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
     app.dependency_overrides[get_app_settings] = lambda: Settings(
-        paddle_webhook_secret=_SECRET,
+        billing=BillingSettings(paddle_webhook_secret=_SECRET),
     )
 
 
@@ -97,8 +97,10 @@ def test_paddle_provider_builds_prefilled_checkout() -> None:
     """The Paddle bridge carries email and an opaque account reference."""
     provider = build_billing_checkout_provider(
         settings=Settings(
-            paddle_checkout_url="https://buy.paddle.example/checkout",
-            paddle_price_id="pri_123",
+            billing=BillingSettings(
+                paddle_checkout_url="https://buy.paddle.example/checkout",
+                paddle_price_id="pri_123",
+            ),
         ),
     )
     assert_that(provider).is_instance_of(PaddleBillingCheckoutProvider)
@@ -126,17 +128,21 @@ def test_provider_builder_prefers_paddle_then_hosted() -> None:
     assert_that(build_billing_checkout_provider(settings=Settings())).is_none()
     hosted = build_billing_checkout_provider(
         settings=Settings(
-            billing_provider_name="hosted-test",
-            billing_checkout_url="https://billing.example/upgrade",
+            billing=BillingSettings(
+                provider_name="hosted-test",
+                checkout_url="https://billing.example/upgrade",
+            ),
         ),
     )
     assert_that(hosted).is_instance_of(HostedBillingCheckoutProvider)
     paddle = build_billing_checkout_provider(
         settings=Settings(
-            billing_provider_name="hosted-test",
-            billing_checkout_url="https://billing.example/upgrade",
-            paddle_checkout_url="https://buy.paddle.example/checkout",
-            paddle_price_id="pri_123",
+            billing=BillingSettings(
+                provider_name="hosted-test",
+                checkout_url="https://billing.example/upgrade",
+                paddle_checkout_url="https://buy.paddle.example/checkout",
+                paddle_price_id="pri_123",
+            ),
         ),
     )
     assert_that(paddle).is_instance_of(PaddleBillingCheckoutProvider)

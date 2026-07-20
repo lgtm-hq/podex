@@ -66,7 +66,7 @@ async def receive_paddle_webhook(
     settings: AppSettings,
 ) -> BillingWebhookAck:
     """Verify, dedupe, and apply one signed Paddle webhook delivery."""
-    if not settings.paddle_webhook_secret:
+    if not settings.billing.paddle_webhook_secret:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Paddle webhooks are not configured",
@@ -82,7 +82,7 @@ async def receive_paddle_webhook(
         verify_paddle_signature(
             signature_header=signature_header,
             raw_body=raw_body,
-            secret=settings.paddle_webhook_secret,
+            secret=settings.billing.paddle_webhook_secret,
         )
     except PaddleSignatureFormatError as exc:
         raise HTTPException(

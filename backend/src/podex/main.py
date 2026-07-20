@@ -23,7 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Stash the resolved settings on ``app.state`` so route dependencies see
     # the same instance ``create_app`` used to configure middleware — tests
     # (and callers passing an explicit ``settings=``) rely on this to override
-    # e.g. ``stats_cache_ttl_seconds`` without touching global state.
+    # e.g. ``settings.stats_cache.ttl_seconds`` without touching global state.
     app.state.settings = resolved
     # Process-wide read-through cache for aggregate/stats endpoints. Shared
     # across requests (and workers within this process) so the aggregation
@@ -39,13 +39,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # Middleware is applied in reverse registration order (last added runs
     # outermost). Register the rate limiter and request-context logger first so
     # CORS ends up outermost and still annotates 429 responses.
-    if resolved.rate_limit_enabled:
+    if resolved.rate_limit.enabled:
         limiter = build_rate_limiter(resolved)
         app.state.rate_limiter = limiter
         app.add_middleware(
             RateLimitMiddleware,
             limiter=limiter,
-            exempt_paths=tuple(resolved.rate_limit_exempt_paths),
+            exempt_paths=tuple(resolved.rate_limit.exempt_paths),
         )
     app.add_middleware(RequestContextMiddleware)
     # Registered after the limiter/context middleware so it observes every

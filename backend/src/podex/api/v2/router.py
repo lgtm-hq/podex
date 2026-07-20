@@ -20,7 +20,7 @@ api_v2_router = APIRouter(tags=["v2"])
 
 def read_status(settings: AppSettings) -> ApiStatusRead:
     """Report that the v2 API surface is reachable and how sign-in works."""
-    return ApiStatusRead(workos_enabled=settings.workos_enabled)
+    return ApiStatusRead(workos_enabled=settings.auth.workos_enabled)
 
 
 api_v2_router.add_api_route(

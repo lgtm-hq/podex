@@ -80,9 +80,9 @@ def get_quota_snapshot(
         period=period,
         feature=feature,
         limit=(
-            settings.paid_api_requests_per_month
+            settings.billing.paid_api_requests_per_month
             if feature == API_REQUESTS
-            else settings.paid_llm_requests_per_month
+            else settings.billing.paid_llm_requests_per_month
         ),
         used=usage.units if usage is not None else 0,
     )
@@ -96,7 +96,7 @@ def consume_paid_api_request(
     now: datetime | None = None,
 ) -> QuotaSnapshot | None:
     """Enforce paid access and record one personalized API mutation."""
-    if not settings.paid_tier_enforced:
+    if not settings.billing.paid_tier_enforced:
         return None
     subscription = get_account_subscription(db=db, user_id=user_id)
     if not has_paid_access(subscription=subscription):

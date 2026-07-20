@@ -47,13 +47,13 @@ class SmtpMagicLinkSender:
 
 def build_magic_link_sender(*, settings: Settings) -> MagicLinkSender | None:
     """Build SMTP delivery when sign-in email configuration is present."""
-    if not settings.smtp_host or not settings.smtp_from_email:
+    if not settings.auth.smtp_host or not settings.auth.smtp_from_email:
         return None
     return SmtpMagicLinkSender(
-        host=settings.smtp_host,
-        port=settings.smtp_port,
-        from_email=settings.smtp_from_email,
-        username=settings.smtp_username,
-        password=settings.smtp_password,
-        starttls=settings.smtp_starttls,
+        host=settings.auth.smtp_host,
+        port=settings.auth.smtp_port,
+        from_email=settings.auth.smtp_from_email,
+        username=settings.auth.smtp_username,
+        password=settings.auth.smtp_password,
+        starttls=settings.auth.smtp_starttls,
     )

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_cache
-from podex.config import Settings
+from podex.config import Settings, StatsCacheSettings
 from podex.database import get_db
 from podex.main import create_app
 from podex.models import Episode, Media, MediaType, Mention, Podcast
@@ -169,13 +169,13 @@ def test_stats_endpoint_honors_settings_from_create_app(
 ) -> None:
     """``create_app(settings=...)`` reaches the ``/api/v2/stats`` handler.
 
-    Explicitly building the app with ``stats_cache_ttl_seconds=0`` and no
+    Explicitly building the app with ``settings.stats_cache.ttl_seconds=0`` and no
     other override must produce a response that bypasses the cache — i.e.
     each call recomputes and no entry lands in ``app.state.cache``. If the
     dependency instead resolved to the cached global settings, the default
     30-second TTL would apply and this test would fail.
     """
-    settings = Settings(stats_cache_ttl_seconds=0)
+    settings = Settings(stats_cache=StatsCacheSettings(ttl_seconds=0))
     app = create_app(settings=settings)
 
     def override_get_db() -> Iterator[Session]:

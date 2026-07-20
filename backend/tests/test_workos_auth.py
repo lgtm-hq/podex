@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
 from podex.api.v2 import auth as v2_auth_api
-from podex.config import Settings
+from podex.config import AuthSettings, Settings
 from podex.models import AccountUser, UserSession
 from podex.services.workos_auth import (
     WORKOS_AUTHENTICATE_URL,
@@ -44,10 +44,12 @@ def _workos_settings(*, secure_cookies: bool = True) -> Settings:
         Settings enabling the WorkOS feature.
     """
     return Settings(
-        workos_client_id="client_123",
-        workos_api_key="sk_test_456",
-        workos_redirect_uri="https://app.example.com/api/v2/auth/callback",
-        auth_session_cookie_secure=secure_cookies,
+        auth=AuthSettings(
+            workos_client_id="client_123",
+            workos_api_key="sk_test_456",
+            workos_redirect_uri="https://app.example.com/api/v2/auth/callback",
+            session_cookie_secure=secure_cookies,
+        ),
     )
 
 
@@ -98,12 +100,16 @@ def _state_cookie(response: httpx.Response) -> str:
 
 def test_workos_enabled_requires_all_three_settings() -> None:
     """The feature stays off unless every WorkOS credential is present."""
-    assert_that(Settings().workos_enabled).is_false()
-    assert_that(Settings(workos_client_id="client_123").workos_enabled).is_false()
+    assert_that(Settings().auth.workos_enabled).is_false()
     assert_that(
-        Settings(workos_client_id="client_123", workos_api_key="sk").workos_enabled,
+        Settings(auth=AuthSettings(workos_client_id="client_123")).auth.workos_enabled,
     ).is_false()
-    assert_that(_workos_settings().workos_enabled).is_true()
+    assert_that(
+        Settings(
+            auth=AuthSettings(workos_client_id="client_123", workos_api_key="sk"),
+        ).auth.workos_enabled,
+    ).is_false()
+    assert_that(_workos_settings().auth.workos_enabled).is_true()
 
 
 def test_build_workos_auth_client_requires_configuration() -> None:

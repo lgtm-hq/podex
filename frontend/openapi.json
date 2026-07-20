@@ -4713,7 +4713,7 @@
     },
     "/api/v2/stats": {
       "get": {
-        "description": "Return catalog-wide counts and a small top-media-types breakdown.\n\nResponses are cached in-process for\n``PODEX_STATS_CACHE_TTL_SECONDS`` seconds (configurable via\n:class:`~podex.config.Settings`); set the TTL to ``0`` to bypass the\ncache entirely.",
+        "description": "Return catalog-wide counts and a small top-media-types breakdown.\n\nResponses are cached in-process for\n``PODEX_STATS_CACHE__TTL_SECONDS`` seconds (configurable via\n:class:`~podex.config.Settings`); set the TTL to ``0`` to bypass the\ncache entirely.",
         "operationId": "get_catalog_stats_api_v2_stats_get",
         "responses": {
           "200": {

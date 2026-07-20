@@ -31,7 +31,7 @@ the stack will not start without `.env.staging`).
 | `PODEX_CORS_ORIGINS` | `api` | Allowed browser origins (JSON list) |
 | `API_PORT` / `FRONTEND_PORT` | compose | Host ports published for `api` / `frontend` |
 | `PUBLIC_API_URL` | `frontend` (build arg) | Base URL for SSR API fetches |
-| `TRANSCRIPT_*`, `MEILI_*`, `API_KEY`, `SMTP_*` | *(future)* | Reserved for pipeline/auth; unused on main |
+| `PODEX_TRANSCRIPTS__*`, `MEILI_*`, `API_KEY`, `PODEX_AUTH__SMTP_*` | *(future)* | Reserved for pipeline/auth; unused on main |
 
 `.env.staging` is git-ignored; never commit real secrets.
 

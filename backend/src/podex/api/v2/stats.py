@@ -23,14 +23,14 @@ def get_catalog_stats(
     """Return catalog-wide counts and a small top-media-types breakdown.
 
     Responses are cached in-process for
-    ``PODEX_STATS_CACHE_TTL_SECONDS`` seconds (configurable via
+    ``PODEX_STATS_CACHE__TTL_SECONDS`` seconds (configurable via
     :class:`~podex.config.Settings`); set the TTL to ``0`` to bypass the
     cache entirely.
     """
     return stats_queries.get_catalog_stats(
         db,
         cache=cache,
-        ttl_seconds=settings.stats_cache_ttl_seconds,
+        ttl_seconds=settings.stats_cache.ttl_seconds,
     )
 
 

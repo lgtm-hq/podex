@@ -9,7 +9,7 @@ from assertpy import assert_that
 from cryptography.fernet import Fernet
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.config import Settings, TranscriptStorageSettings
 from podex.models import (
     Episode,
     Podcast,
@@ -185,8 +185,10 @@ def test_build_artifact_store_selects_encrypted_filesystem_by_default(
     """Verify local deployments retain the encrypted filesystem adapter."""
     store = build_transcript_artifact_store(
         settings=Settings(
-            transcript_artifact_storage_path=tmp_path,
-            transcript_artifact_encryption_key=Fernet.generate_key().decode("ascii"),
+            transcripts=TranscriptStorageSettings(
+                storage_path=tmp_path,
+                encryption_key=Fernet.generate_key().decode("ascii"),
+            ),
         ),
     )
 
@@ -205,11 +207,11 @@ def test_build_artifact_store_selects_s3_backend(
 
     store = build_transcript_artifact_store(
         settings=Settings(
-            transcript_artifact_storage_backend=(
-                TranscriptArtifactStorageBackend.ENCRYPTED_S3.value
+            transcripts=TranscriptStorageSettings(
+                storage_backend=TranscriptArtifactStorageBackend.ENCRYPTED_S3.value,
+                encryption_key=Fernet.generate_key().decode("ascii"),
+                s3_bucket="private-transcripts",
             ),
-            transcript_artifact_encryption_key=Fernet.generate_key().decode("ascii"),
-            transcript_artifact_s3_bucket="private-transcripts",
         ),
     )
 

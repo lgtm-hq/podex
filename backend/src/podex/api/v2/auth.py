@@ -158,7 +158,7 @@ def _require_authenticated_account(
     """Resolve the authenticated account or reject the request."""
     user = get_authenticated_user(
         db=db,
-        session_token=request.cookies.get(settings.auth_session_cookie_name),
+        session_token=request.cookies.get(settings.auth.session_cookie_name),
     )
     if user is None:
         raise HTTPException(
@@ -176,11 +176,11 @@ def _set_session_cookie(
 ) -> None:
     """Set the secure, http-only account session cookie."""
     response.set_cookie(
-        key=settings.auth_session_cookie_name,
+        key=settings.auth.session_cookie_name,
         value=token,
-        max_age=settings.auth_session_ttl_days * 24 * 60 * 60,
+        max_age=settings.auth.session_ttl_days * 24 * 60 * 60,
         path="/",
-        secure=settings.auth_session_cookie_secure,
+        secure=settings.auth.session_cookie_secure,
         httponly=True,
         samesite="lax",
     )
@@ -233,7 +233,7 @@ def request_auth_magic_link(
         db=db,
         email=payload.email,
         redirect_path=payload.redirect_path,
-        ttl_minutes=settings.auth_magic_link_ttl_minutes,
+        ttl_minutes=settings.auth.magic_link_ttl_minutes,
     )
     # The token travels in the URL fragment, which browsers never send in
     # Referer headers or request lines, so it stays out of proxy and access
@@ -270,7 +270,7 @@ def verify_auth_magic_link(
     authenticated = authenticate_magic_link(
         db=db,
         token=payload.token,
-        session_ttl_days=settings.auth_session_ttl_days,
+        session_ttl_days=settings.auth.session_ttl_days,
     )
     if authenticated is None:
         raise HTTPException(
@@ -309,7 +309,7 @@ def begin_workos_login(
         value=state,
         max_age=_WORKOS_STATE_TTL_SECONDS,
         path="/",
-        secure=settings.auth_session_cookie_secure,
+        secure=settings.auth.session_cookie_secure,
         httponly=True,
         samesite="lax",
     )
@@ -348,7 +348,7 @@ def complete_workos_callback(
     authenticated = issue_user_session(
         db=db,
         user=user,
-        session_ttl_days=settings.auth_session_ttl_days,
+        session_ttl_days=settings.auth.session_ttl_days,
     )
     redirect = RedirectResponse(
         url=f"{settings.public_web_url.rstrip('/')}/account",
@@ -373,9 +373,9 @@ def logout_account_session(
     """Revoke the current account session and expire its browser cookie."""
     signed_out = revoke_user_session(
         db=db,
-        session_token=request.cookies.get(settings.auth_session_cookie_name),
+        session_token=request.cookies.get(settings.auth.session_cookie_name),
     )
-    response.delete_cookie(key=settings.auth_session_cookie_name, path="/")
+    response.delete_cookie(key=settings.auth.session_cookie_name, path="/")
     db.commit()
     return AuthLogoutResponse(signed_out=signed_out)
 
@@ -700,7 +700,7 @@ def delete_current_account(
             "digests": result.digests,
         },
     )
-    response.delete_cookie(key=settings.auth_session_cookie_name, path="/")
+    response.delete_cookie(key=settings.auth.session_cookie_name, path="/")
     db.commit()
     return AuthLogoutResponse(signed_out=True)
 
@@ -721,7 +721,7 @@ def get_current_account_subscription(
     return SubscriptionRead(
         tier=subscription.tier,
         status=subscription.status,
-        paid_features_enforced=settings.paid_tier_enforced,
+        paid_features_enforced=settings.billing.paid_tier_enforced,
         current_period_ends_at=subscription.current_period_ends_at,
         quotas=[
             QuotaRead(
@@ -744,7 +744,7 @@ def begin_current_account_checkout(
 ) -> SubscriptionCheckoutRead:
     """Start provider-hosted paid-tier checkout once launch gates are enabled."""
     user = _require_authenticated_account(request=request, db=db, settings=settings)
-    if not settings.paid_tier_enabled:
+    if not settings.billing.paid_tier_enabled:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Paid upgrades are not available until launch review is complete",

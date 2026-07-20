@@ -143,12 +143,12 @@ def build_workos_auth_client(*, settings: Settings) -> WorkOSAuthClient | None:
     Returns:
         A configured client, or ``None`` when any credential is missing.
     """
-    if not settings.workos_enabled:
+    if not settings.auth.workos_enabled:
         return None
     return WorkOSAuthClient(
-        client_id=settings.workos_client_id,
-        api_key=settings.workos_api_key,
-        redirect_uri=settings.workos_redirect_uri,
+        client_id=settings.auth.workos_client_id,
+        api_key=settings.auth.workos_api_key,
+        redirect_uri=settings.auth.workos_redirect_uri,
     )
 
 

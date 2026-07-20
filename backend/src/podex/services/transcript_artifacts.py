@@ -120,7 +120,7 @@ class EncryptedFilesystemTranscriptArtifactStore:
         encryption_key: str,
     ) -> None:
         if not encryption_key:
-            raise ValueError("TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY must be configured")
+            raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
         self.root_path = root_path
         self.fernet = Fernet(encryption_key.encode("ascii"))
         self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
@@ -187,9 +187,9 @@ class EncryptedS3TranscriptArtifactStore:
         client: S3ObjectClient | None = None,
     ) -> None:
         if not bucket:
-            raise ValueError("TRANSCRIPT_ARTIFACT_S3_BUCKET must be configured")
+            raise ValueError("PODEX_TRANSCRIPTS__S3_BUCKET must be configured")
         if not encryption_key:
-            raise ValueError("TRANSCRIPT_ARTIFACT_ENCRYPTION_KEY must be configured")
+            raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
         self.bucket = bucket
         self.fernet = Fernet(encryption_key.encode("ascii"))
         self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
@@ -242,23 +242,23 @@ def build_transcript_artifact_store(
     settings: Settings,
 ) -> TranscriptArtifactStore | None:
     """Build the configured private artifact adapter when a key is supplied."""
-    if not settings.transcript_artifact_encryption_key:
+    if not settings.transcripts.encryption_key:
         return None
     backend = TranscriptArtifactStorageBackend(
-        settings.transcript_artifact_storage_backend,
+        settings.transcripts.storage_backend,
     )
     if backend is TranscriptArtifactStorageBackend.ENCRYPTED_S3:
         return EncryptedS3TranscriptArtifactStore(
-            bucket=settings.transcript_artifact_s3_bucket,
-            encryption_key=settings.transcript_artifact_encryption_key,
-            endpoint_url=settings.transcript_artifact_s3_endpoint_url,
-            region_name=settings.transcript_artifact_s3_region_name,
-            access_key_id=settings.transcript_artifact_s3_access_key_id,
-            secret_access_key=settings.transcript_artifact_s3_secret_access_key,
+            bucket=settings.transcripts.s3_bucket,
+            encryption_key=settings.transcripts.encryption_key,
+            endpoint_url=settings.transcripts.s3_endpoint_url,
+            region_name=settings.transcripts.s3_region_name,
+            access_key_id=settings.transcripts.s3_access_key_id,
+            secret_access_key=settings.transcripts.s3_secret_access_key,
         )
     return EncryptedFilesystemTranscriptArtifactStore(
-        root_path=settings.transcript_artifact_storage_path,
-        encryption_key=settings.transcript_artifact_encryption_key,
+        root_path=settings.transcripts.storage_path,
+        encryption_key=settings.transcripts.encryption_key,
     )
 
 

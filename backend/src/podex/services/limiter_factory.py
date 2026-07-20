@@ -2,10 +2,10 @@
 
 The application talks to a single :class:`~podex.services.limiter.RateLimiter`
 interface; this module hides which concrete backend gets wired in. When
-``rate_limit_redis_url`` is configured, requests share state through Redis so
-horizontal scaling and restarts don't leak budget. Otherwise we fall back to
-the in-process sliding-window implementation, which is what development, CI,
-and single-worker deployments actually need.
+``settings.rate_limit.redis_url`` is configured, requests share state through
+Redis so horizontal scaling and restarts don't leak budget. Otherwise we fall
+back to the in-process sliding-window implementation, which is what
+development, CI, and single-worker deployments actually need.
 """
 
 from __future__ import annotations
@@ -31,12 +31,12 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
 
     Selection rules:
 
-    * ``settings.rate_limit_redis_url`` is empty → return an in-memory
+    * ``settings.rate_limit.redis_url`` is empty → return an in-memory
       :class:`SlidingWindowRateLimiter`.
-    * ``settings.rate_limit_redis_url`` is set → return a
+    * ``settings.rate_limit.redis_url`` is set → return a
       :class:`~podex.services.redis_limiter.RedisSlidingWindowRateLimiter`
       pointed at that URL, with its shared key prefix taken from
-      ``settings.rate_limit_redis_prefix``.
+      ``settings.rate_limit.redis_prefix``.
 
     ``redis`` is imported lazily so environments that never opt into the
     shared store don't pay the import cost and don't require the extra to be
@@ -53,10 +53,10 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     Returns:
         RateLimiter: A ready-to-use limiter matching the configured backend.
     """
-    if not settings.rate_limit_redis_url:
+    if not settings.rate_limit.redis_url:
         return SlidingWindowRateLimiter(
-            max_requests=settings.rate_limit_max_requests,
-            window_seconds=settings.rate_limit_window_seconds,
+            max_requests=settings.rate_limit.max_requests,
+            window_seconds=settings.rate_limit.window_seconds,
         )
 
     import redis
@@ -64,13 +64,13 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
     client = redis.Redis.from_url(
-        settings.rate_limit_redis_url,
+        settings.rate_limit.redis_url,
         socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
         socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
     )
     return RedisSlidingWindowRateLimiter(
         client,
-        max_requests=settings.rate_limit_max_requests,
-        window_seconds=settings.rate_limit_window_seconds,
-        key_prefix=settings.rate_limit_redis_prefix,
+        max_requests=settings.rate_limit.max_requests,
+        window_seconds=settings.rate_limit.window_seconds,
+        key_prefix=settings.rate_limit.redis_prefix,
     )
