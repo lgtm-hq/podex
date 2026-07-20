@@ -115,6 +115,32 @@ def _priority_for_confidence(*, confidence: float) -> ReviewPriority:
     return ReviewPriority.LOW
 
 
+def _phrase_in_tokens(*, phrase: str, segment: str) -> bool:
+    """Check whether a phrase appears as contiguous tokens in a segment.
+
+    Both inputs are expected to be pre-normalized via ``_normalize_value``
+    (lowercase, punctuation-stripped, whitespace-collapsed), so token-level
+    comparison avoids substring false positives such as ``it`` in ``italy``.
+
+    Args:
+        phrase: Normalized phrase to look for.
+        segment: Normalized segment text to search within.
+
+    Returns:
+        ``True`` when the phrase tokens appear contiguously and in order.
+    """
+    phrase_tokens = phrase.split()
+    segment_tokens = segment.split()
+    if not phrase_tokens or len(phrase_tokens) > len(segment_tokens):
+        return False
+
+    span = len(phrase_tokens)
+    return any(
+        segment_tokens[start : start + span] == phrase_tokens
+        for start in range(len(segment_tokens) - span + 1)
+    )
+
+
 def _segment_text(*, segment: dict[str, Any]) -> str | None:
     """Extract normalized text content from a transcript segment.
 
@@ -209,9 +235,12 @@ def _find_segment_context(
             continue
 
         score = 0
-        if normalized_title in normalized_segment:
+        if _phrase_in_tokens(phrase=normalized_title, segment=normalized_segment):
             score += 2
-        if normalized_creator is not None and normalized_creator in normalized_segment:
+        if normalized_creator is not None and _phrase_in_tokens(
+            phrase=normalized_creator,
+            segment=normalized_segment,
+        ):
             score += 1
 
         if score > best_score:

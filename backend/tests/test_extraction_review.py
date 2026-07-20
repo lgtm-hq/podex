@@ -16,7 +16,10 @@ from podex.models import (
     ReviewPriority,
 )
 from podex.models.media import MediaType
-from podex.services.extraction_review import persist_extracted_candidates
+from podex.services.extraction_review import (
+    _find_segment_context,
+    persist_extracted_candidates,
+)
 from podex.services.llm_extraction import ExtractedMedia
 from tests.conftest import seed_catalog_graph
 
@@ -129,6 +132,45 @@ def test_persist_is_replay_safe_and_records_update_provenance(
         .all()
     )
     assert_that(len(events)).is_greater_than(1)
+
+
+def test_segment_context_rejects_substring_title_matches() -> None:
+    """A short title must not match inside an unrelated longer word."""
+    item = ExtractedMedia(title="It", media_type=MediaType.BOOK, confidence=0.9)
+    segments = [{"text": "italy is beautiful", "start": 10}]
+
+    match = _find_segment_context(item=item, segments=segments)
+
+    assert_that(match.timestamp_seconds).is_none()
+    assert_that(match.context).is_none()
+
+
+def test_segment_context_matches_standalone_token_title() -> None:
+    """A short title matches when it appears as a standalone token."""
+    item = ExtractedMedia(title="It", media_type=MediaType.BOOK, confidence=0.9)
+    segments = [{"text": "we read it last night", "start": 12}]
+
+    match = _find_segment_context(item=item, segments=segments)
+
+    assert_that(match.timestamp_seconds).is_equal_to(12)
+    assert_that(match.context).contains("we read it last night")
+
+
+def test_segment_context_requires_contiguous_ordered_title_tokens() -> None:
+    """Multi-word titles match only contiguous, in-order token runs."""
+    item = ExtractedMedia(
+        title="War and Peace",
+        media_type=MediaType.BOOK,
+        confidence=0.9,
+    )
+    scattered = [{"text": "peace talks and the war effort", "start": 5}]
+    contiguous = [{"text": "reading war and peace tonight", "start": 7}]
+
+    scattered_match = _find_segment_context(item=item, segments=scattered)
+    contiguous_match = _find_segment_context(item=item, segments=contiguous)
+
+    assert_that(scattered_match.timestamp_seconds).is_none()
+    assert_that(contiguous_match.timestamp_seconds).is_equal_to(7)
 
 
 def test_persist_repeated_match_in_one_batch_creates_single_review_item(
