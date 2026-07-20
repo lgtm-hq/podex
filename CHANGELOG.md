@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.37.1] - 2026-07-20
+
+### Changed
+
+- **transcripts**: add env-gated R2 integration smoke for encrypted S3 store (#324)
+  (4c74684)
+
+### Fixed
+
+- **extraction**: resolve post-merge review findings in extraction_review (#327)
+  (0b7eb6e)
+
 ## [0.37.0] - 2026-07-20
 
 ### Added
