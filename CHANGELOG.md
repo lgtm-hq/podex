@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.38.0] - 2026-07-20
+
+### Added
+
+- **ops**: prepare backend for Neon managed Postgres (#330) (1abb55a)
+
+### Changed
+
+- **deps-dev**: update dependency lintro to 0.84.0 (minor) (#335) (3d545c9)
+
 ## [0.37.2] - 2026-07-20
 
 ### Fixed
