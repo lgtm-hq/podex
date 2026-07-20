@@ -251,6 +251,11 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         metadata: dict[str, Any] = {}
 
+        # Title (explicit contract for cross-source title verification)
+        titles = work.get("title", [])
+        if titles:
+            metadata["title"] = titles[0]
+
         # Authors
         authors = work.get("author", [])
         if authors:

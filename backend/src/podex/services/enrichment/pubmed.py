@@ -421,6 +421,10 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         metadata: dict[str, Any] = {}
 
+        # Title (explicit contract for cross-source title verification)
+        if article.get("title"):
+            metadata["title"] = article["title"]
+
         if article.get("authors"):
             metadata["authors"] = article["authors"]
         if article.get("journal"):
