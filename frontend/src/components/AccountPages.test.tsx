@@ -110,10 +110,22 @@ function mockRoutes(
   return fetchMock;
 }
 
-function mockAnonymous() {
+function mockAnonymous(workosEnabled = false) {
   vi.stubGlobal(
     "fetch",
     vi.fn((url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/status")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () =>
+            Promise.resolve({
+              status: "ok",
+              api: "v2",
+              workos_enabled: workosEnabled,
+            }),
+        } as unknown as Response);
+      }
       if (String(url).endsWith("/me")) {
         return Promise.resolve({
           ok: false,
@@ -153,6 +165,28 @@ describe("account pages", () => {
     fireEvent.click(screen.getByText("Email me a link"));
 
     expect(await screen.findByText(/Check your email/)).toBeDefined();
+  });
+
+  it("AccountShell keeps the email form primary when WorkOS is off", async () => {
+    mockAnonymous(false);
+
+    render(<AccountShell active="/account">{() => <p>body</p>}</AccountShell>);
+
+    expect(await screen.findByLabelText("Email address")).toBeDefined();
+    expect(screen.queryByRole("link", { name: "Sign in" })).toBeNull();
+  });
+
+  it("AccountShell offers hosted WorkOS sign-in when enabled", async () => {
+    mockAnonymous(true);
+
+    render(<AccountShell active="/account">{() => <p>body</p>}</AccountShell>);
+
+    const signIn = await screen.findByRole("link", { name: "Sign in" });
+    expect(signIn.getAttribute("href")).toContain("/auth/login");
+    expect(screen.queryByLabelText("Email address")).toBeNull();
+
+    fireEvent.click(screen.getByText("Use an email link instead"));
+    expect(await screen.findByLabelText("Email address")).toBeDefined();
   });
 
   it("AccountShell reports unavailable sign-in delivery", async () => {
@@ -215,10 +249,7 @@ describe("account pages", () => {
   });
 
   it("AccountSaved lists and removes saved media", async () => {
-    const fetchMock = mockRoutes(
-      { "/me/saves": SAVED, "/me": USER },
-      {},
-    );
+    const fetchMock = mockRoutes({ "/me/saves": SAVED, "/me": USER }, {});
 
     render(<AccountSaved />);
     expect(await screen.findByText("Dune")).toBeDefined();
