@@ -241,6 +241,9 @@ def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
 
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
+        assert_that(result.metadata["title"]).is_equal_to(
+            "Sleep and memory consolidation",
+        )
 
 
 def test_enricher_academic_path_and_apply() -> None:
@@ -313,6 +316,9 @@ def test_crossref_direct_doi_lookup() -> None:
 
     if result is not None:
         assert_that(result.confidence).is_greater_than(0.8)
+        assert_that(result.metadata["title"]).is_equal_to(
+            "Sleep and memory consolidation",
+        )
 
 
 def _swap_client_matrix(provider: Any, handler: Any) -> None:
@@ -436,6 +442,9 @@ def test_semantic_scholar_direct_paper_id() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.confidence).is_equal_to(1.0)
+        assert_that(result.metadata["title"]).is_equal_to(
+            "Sleep and memory consolidation",
+        )
 
 
 def test_pubmed_direct_pmid_fetch() -> None:
@@ -474,6 +483,7 @@ def test_pubmed_direct_pmid_fetch() -> None:
 
     if result is not None:
         assert_that(result.confidence).is_equal_to(1.0)
+        assert_that(result.metadata["title"]).is_equal_to("Direct fetch study")
 
 
 def test_apply_enrichment_fills_media_fields() -> None:
@@ -1840,3 +1850,269 @@ def test_provider_context_managers_close_clients() -> None:
         provider = factory()
         with provider:
             assert_that(provider).is_not_none()
+
+
+class _RaisingProvider:
+    """Provider double that always raises."""
+
+    def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
+        """Raise unconditionally."""
+        del media
+        raise RuntimeError("provider exploded")
+
+    def close(self) -> None:
+        """No-op close."""
+
+
+class _SlowProvider:
+    """Provider double that sleeps past the aggregate deadline."""
+
+    def __init__(self, result: EnrichmentResult, delay: float) -> None:
+        self.result = result
+        self.delay = delay
+
+    def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
+        """Sleep, then return the canned result."""
+        import time
+
+        del media
+        time.sleep(self.delay)
+        return self.result
+
+    def close(self) -> None:
+        """No-op close."""
+
+
+def _academic_with(providers: dict[EnrichmentSource, Any], **kwargs: Any) -> Any:
+    """Build an AcademicEnricher whose providers are replaced by doubles."""
+    enricher = AcademicEnricher(**kwargs)
+    for provider in enricher.providers.values():
+        provider.close()
+    enricher.providers = providers
+    return enricher
+
+
+def test_academic_fanout_isolates_provider_failures() -> None:
+    """A raising provider does not prevent other results from aggregating."""
+    good = EnrichmentResult(
+        source=EnrichmentSource.CROSSREF,
+        description="A sleep study.",
+        external_ids={"doi": "10.1000/example.doi"},
+        metadata={"title": "Sleep study"},
+        confidence=0.9,
+    )
+    enricher = _academic_with(
+        {
+            EnrichmentSource.CROSSREF: _StubProvider(good),
+            EnrichmentSource.PUBMED: _RaisingProvider(),
+        },
+    )
+
+    result = enricher.enrich_with_verification(
+        _media("Sleep study", MediaType.STUDY),
+    )
+
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+
+
+def test_academic_fanout_drops_slow_provider() -> None:
+    """A provider sleeping past the aggregate deadline is dropped."""
+    fast = EnrichmentResult(
+        source=EnrichmentSource.CROSSREF,
+        description="A sleep study.",
+        external_ids={"doi": "10.1000/example.doi"},
+        metadata={"title": "Sleep study"},
+        confidence=0.9,
+    )
+    slow = EnrichmentResult(
+        source=EnrichmentSource.SEMANTIC_SCHOLAR,
+        description="A sleep study.",
+        external_ids={"doi": "10.1000/example.doi"},
+        metadata={"title": "Sleep study"},
+        confidence=0.95,
+    )
+    enricher = _academic_with(
+        {
+            EnrichmentSource.CROSSREF: _StubProvider(fast),
+            EnrichmentSource.SEMANTIC_SCHOLAR: _SlowProvider(slow, delay=1.0),
+        },
+        aggregate_timeout_seconds=0.1,
+    )
+
+    result = enricher.enrich_with_verification(
+        _media("Sleep study", MediaType.STUDY),
+    )
+
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+
+
+def test_academic_title_verification_requires_explicit_titles() -> None:
+    """Results lacking provider titles never verify by assumption."""
+    a = EnrichmentResult(
+        source=EnrichmentSource.CROSSREF,
+        description="A sleep study. With details.",
+        confidence=0.8,
+    )
+    b = EnrichmentResult(
+        source=EnrichmentSource.SEMANTIC_SCHOLAR,
+        description="A sleep study. With more details.",
+        confidence=0.75,
+    )
+    enricher = _academic_with(
+        {
+            EnrichmentSource.CROSSREF: _StubProvider(a),
+            EnrichmentSource.SEMANTIC_SCHOLAR: _StubProvider(b),
+        },
+    )
+
+    verified = enricher._verify_by_title(
+        {
+            EnrichmentSource.CROSSREF: a,
+            EnrichmentSource.SEMANTIC_SCHOLAR: b,
+        },
+    )
+    assert_that(verified).is_empty()
+
+    result = enricher.enrich_with_verification(
+        _media("Sleep study", MediaType.STUDY),
+    )
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(len(result.verified_by)).is_equal_to(1)
+
+
+def test_academic_title_verification_needs_two_title_bearers() -> None:
+    """A single title-bearing result cannot title-verify a pair."""
+    titled = EnrichmentResult(
+        source=EnrichmentSource.CROSSREF,
+        metadata={"title": "Sleep study"},
+        confidence=0.8,
+    )
+    untitled = EnrichmentResult(
+        source=EnrichmentSource.SEMANTIC_SCHOLAR,
+        description="A sleep study.",
+        confidence=0.75,
+    )
+    enricher = _academic_with({})
+
+    verified = enricher._verify_by_title(
+        {
+            EnrichmentSource.CROSSREF: titled,
+            EnrichmentSource.SEMANTIC_SCHOLAR: untitled,
+        },
+    )
+
+    assert_that(verified).is_empty()
+
+
+def test_apply_external_ids_maps_columns_and_metadata() -> None:
+    """Column-backed keys hit columns; other keys land in metadata_json."""
+    from podex.services.media_enrichment import apply_external_ids
+
+    media = _media("Dune", MediaType.BOOK)
+    apply_external_ids(
+        media=media,
+        external_ids={
+            "imdb_id": "tt1",
+            "tmdb_id": "7",
+            "apple_podcasts_id": "ap1",
+            "isbn_13": "9780000000000",
+        },
+    )
+
+    assert_that(media.imdb_id).is_equal_to("tt1")
+    assert_that(media.tmdb_id).is_equal_to(7)
+    assert_that(media.metadata_json).is_equal_to(
+        {
+            "external_ids": {
+                "apple_podcasts_id": "ap1",
+                "isbn_13": "9780000000000",
+            },
+        },
+    )
+
+
+def test_apply_external_ids_preserves_existing_values() -> None:
+    """Existing column and metadata values are never overwritten."""
+    from podex.services.media_enrichment import apply_external_ids
+
+    media = _media("Dune", MediaType.BOOK)
+    media.imdb_id = "tt-existing"
+    media.metadata_json = {
+        "keep": "me",
+        "external_ids": {"apple_podcasts_id": "ap-existing"},
+    }
+    apply_external_ids(
+        media=media,
+        external_ids={
+            "imdb_id": "tt-new",
+            "apple_podcasts_id": "ap-new",
+            "isbn_10": "1111111111",
+        },
+    )
+
+    assert_that(media.imdb_id).is_equal_to("tt-existing")
+    assert_that(media.metadata_json).is_equal_to(
+        {
+            "keep": "me",
+            "external_ids": {
+                "apple_podcasts_id": "ap-existing",
+                "isbn_10": "1111111111",
+            },
+        },
+    )
+
+
+def test_apply_enrichment_persists_extra_external_ids() -> None:
+    """apply_enrichment keeps unmapped identifiers in metadata_json."""
+    result = EnrichmentResult(
+        source=EnrichmentSource.ITUNES,
+        external_ids={"apple_podcasts_id": "ap1", "isbn_13": "978"},
+        metadata={"genre": "Technology"},
+        confidence=0.9,
+    )
+    enricher = _enricher_with({})
+    media = _media("Podcast", MediaType.PODCAST)
+    enricher.apply_enrichment(media, result)
+    enricher.close()
+
+    assert_that(media.metadata_json or {}).contains_key("external_ids")
+    assert_that((media.metadata_json or {})["external_ids"]).is_equal_to(
+        {"apple_podcasts_id": "ap1", "isbn_13": "978"},
+    )
+    assert_that((media.metadata_json or {})["genre"]).is_equal_to("Technology")
+
+
+def test_apply_enrichment_records_single_source_verification() -> None:
+    """Ordinary results record their source as verification provenance."""
+    result = EnrichmentResult(
+        source=EnrichmentSource.OPEN_LIBRARY,
+        external_ids={"open_library_id": "OL1W"},
+        confidence=0.9,
+    )
+    enricher = _enricher_with({})
+    media = _media("Dune", MediaType.BOOK)
+    enricher.apply_enrichment(media, result)
+    enricher.close()
+
+    assert_that(media.verification_sources).is_equal_to(["open_library"])
+
+
+def test_apply_enrichment_preserves_existing_verification_sources() -> None:
+    """An existing verification_sources value is never overwritten."""
+    result = EnrichmentResult(
+        source=EnrichmentSource.OPEN_LIBRARY,
+        external_ids={"open_library_id": "OL1W"},
+        confidence=0.9,
+    )
+    enricher = _enricher_with({})
+    media = _media("Dune", MediaType.BOOK)
+    media.verification_sources = ["manual"]
+    enricher.apply_enrichment(media, result)
+    enricher.close()
+
+    assert_that(media.verification_sources).is_equal_to(["manual"])

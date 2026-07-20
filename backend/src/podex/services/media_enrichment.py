@@ -58,6 +58,57 @@ PROVIDER_PRIORITY: dict[str, list[EnrichmentSource]] = {
     "place": [],  # Wikipedia only
 }
 
+# External-ID keys persisted to dedicated Media columns (string-valued).
+# ``tmdb_id`` is handled separately because its column is an integer.
+_EXTERNAL_ID_COLUMNS: frozenset[str] = frozenset(
+    {
+        "imdb_id",
+        "google_books_id",
+        "open_library_id",
+        "wikipedia_id",
+        "doi",
+        "pubmed_id",
+        "semantic_scholar_id",
+    },
+)
+
+
+def apply_external_ids(
+    *,
+    media: Media,
+    external_ids: dict[str, str | int],
+) -> None:
+    """Persist provider-emitted external IDs onto a media item.
+
+    Keys with dedicated columns (imdb_id, tmdb_id, google_books_id,
+    open_library_id, wikipedia_id, doi, pubmed_id, semantic_scholar_id)
+    are written to those columns only when the column is currently falsy.
+    Every remaining key (e.g. apple_podcasts_id, isbn_13, pmc_id, arxiv_id)
+    is preserved in ``media.metadata_json["external_ids"]`` as a str->str
+    map, merged without overwriting existing entries.
+
+    Args:
+        media: The media item to update in place.
+        external_ids: Provider-emitted external identifiers.
+    """
+    extra_ids: dict[str, str] = {}
+    for key, value in external_ids.items():
+        if key == "tmdb_id":
+            if not media.tmdb_id:
+                media.tmdb_id = int(value) if isinstance(value, (int, str)) else None
+        elif key in _EXTERNAL_ID_COLUMNS:
+            if not getattr(media, key):
+                setattr(media, key, str(value))
+        else:
+            extra_ids[key] = str(value)
+
+    if extra_ids:
+        metadata = dict(media.metadata_json or {})
+        existing_ids = dict(metadata.get("external_ids") or {})
+        metadata["external_ids"] = {**extra_ids, **existing_ids}
+        media.metadata_json = metadata
+
+
 # Types that should use Wikipedia as a fallback
 WIKIPEDIA_FALLBACK_TYPES = {
     "book",
@@ -242,24 +293,8 @@ class MediaEnricher:
         if result.description and not media.description:
             media.description = result.description
 
-        # Update external IDs
-        for key, value in result.external_ids.items():
-            if key == "imdb_id" and not media.imdb_id:
-                media.imdb_id = str(value)
-            elif key == "tmdb_id" and not media.tmdb_id:
-                media.tmdb_id = int(value) if isinstance(value, (int, str)) else None
-            elif key == "google_books_id" and not media.google_books_id:
-                media.google_books_id = str(value)
-            elif key == "open_library_id" and not media.open_library_id:
-                media.open_library_id = str(value)
-            elif key == "wikipedia_id" and not media.wikipedia_id:
-                media.wikipedia_id = str(value)
-            elif key == "doi" and not media.doi:
-                media.doi = str(value)
-            elif key == "pubmed_id" and not media.pubmed_id:
-                media.pubmed_id = str(value)
-            elif key == "semantic_scholar_id" and not media.semantic_scholar_id:
-                media.semantic_scholar_id = str(value)
+        # Update external IDs (columns plus metadata_json fallback)
+        apply_external_ids(media=media, external_ids=result.external_ids)
 
         # Merge metadata
         if result.metadata:
@@ -275,10 +310,13 @@ class MediaEnricher:
         media.enrichment_source = result.source.value
         media.enrichment_confidence = result.confidence
 
-        # Handle VerifiedEnrichmentResult fields
+        # Handle VerifiedEnrichmentResult fields; ordinary results still
+        # record their source so the pending-enrichment filter is satisfied.
         if isinstance(result, VerifiedEnrichmentResult):
             media.verification_sources = [s.value for s in result.verified_by]
             media.doi_verified = result.doi_verified
+        elif media.verification_sources is None:
+            media.verification_sources = [result.source.value]
 
     def enrich_and_apply(
         self,
