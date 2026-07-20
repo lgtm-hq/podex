@@ -7,14 +7,15 @@ from podex.models import Media, MediaType
 from podex.services.academic_enrichment import AcademicEnricher
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from tests.enrichment.conftest import (
+    _academic_with,
     _CountingLimiter,
+    _media,
     _RaisingProvider,
     _SlowProvider,
     _StubProvider,
-    _academic_with,
-    _media,
     _swap_client_matrix,
 )
+
 
 def test_academic_enricher_degrades_gracefully() -> None:
     """With no upstream hits, academic verification yields None."""
@@ -34,6 +35,7 @@ def test_academic_enricher_degrades_gracefully() -> None:
 
     assert_that(result).is_none()
 
+
 def test_academic_enricher_doi_normalization() -> None:
     """DOI and title normalization behave as documented."""
     enricher = AcademicEnricher()
@@ -46,6 +48,7 @@ def test_academic_enricher_doi_normalization() -> None:
     assert_that(enricher.supports_media_type("study")).is_true()
     assert_that(enricher.supports_media_type("movie")).is_false()
     enricher.close()
+
 
 def test_academic_enricher_cross_validates_by_doi() -> None:
     """Two sources agreeing on a DOI produce a verified result."""
@@ -81,6 +84,7 @@ def test_academic_enricher_cross_validates_by_doi() -> None:
         assert_that(len(result.verified_by)).is_greater_than(1)
         assert_that(result.confidence).is_greater_than(0.8)
         assert_that(result.doi_verified).is_true()
+
 
 def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
     """PubMed search ids resolve through the XML fetch into a result."""
@@ -147,6 +151,7 @@ def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
             "Sleep and memory consolidation",
         )
 
+
 def test_crossref_direct_doi_lookup() -> None:
     """A known DOI fetches the work directly."""
     work = {
@@ -179,6 +184,7 @@ def test_crossref_direct_doi_lookup() -> None:
             "Sleep and memory consolidation",
         )
 
+
 def test_academic_verifies_by_title_without_dois() -> None:
     """Sources agreeing on title (no DOIs) still verify."""
     a = EnrichmentResult(
@@ -208,6 +214,7 @@ def test_academic_verifies_by_title_without_dois() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(len(result.verified_by)).is_greater_than(1)
+
 
 def test_semantic_scholar_direct_paper_id() -> None:
     """A stored semantic_scholar_id fetches the paper directly."""
@@ -244,6 +251,7 @@ def test_semantic_scholar_direct_paper_id() -> None:
         assert_that(result.metadata["title"]).is_equal_to(
             "Sleep and memory consolidation",
         )
+
 
 def test_pubmed_direct_pmid_fetch() -> None:
     """A stored pubmed_id skips search and fetches the article."""
@@ -284,6 +292,7 @@ def test_pubmed_direct_pmid_fetch() -> None:
         assert_that(result.confidence).is_equal_to(1.0)
         assert_that(result.metadata["title"]).is_equal_to("Direct fetch study")
 
+
 def test_crossref_search_with_author() -> None:
     """Author names flow into CrossRef search queries."""
     from podex.services.enrichment import CrossRefProvider
@@ -322,6 +331,7 @@ def test_crossref_search_with_author() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
+
 
 def test_pubmed_doi_search_path() -> None:
     """A media DOI resolves through the PubMed DOI search to an article."""
@@ -380,6 +390,7 @@ def test_pubmed_doi_search_path() -> None:
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
+
 def test_crossref_rich_work_parsing() -> None:
     """Print dates, subjects, and JATS abstracts parse into metadata."""
     from podex.services.enrichment import CrossRefProvider
@@ -423,6 +434,7 @@ def test_crossref_rich_work_parsing() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.description or "").does_not_contain("jats")
+
 
 def test_pubmed_rich_article_parse() -> None:
     """Mesh terms, PMC ids, months, and DOIs parse from article XML."""
@@ -475,6 +487,7 @@ def test_pubmed_rich_article_parse() -> None:
     if result is not None:
         assert_that(str(result.metadata)).contains("Sleep")
 
+
 def test_academic_single_source_with_doi_verification() -> None:
     """min_sources=1 accepts a single DOI-bearing source."""
     only = EnrichmentResult(
@@ -506,6 +519,7 @@ def test_academic_single_source_with_doi_verification() -> None:
     if lenient is not None:
         assert_that(str(lenient.external_ids)).contains("10.1000/solo")
 
+
 def test_crossref_doi_prefix_normalization_and_404() -> None:
     """Prefixed DOIs normalize; 404 falls back to search gracefully."""
     from podex.services.enrichment import CrossRefProvider
@@ -527,6 +541,7 @@ def test_crossref_doi_prefix_normalization_and_404() -> None:
 
     assert_that(result).is_none()
     assert_that(seen_paths[0]).contains("/works/10.1000/missing")
+
 
 def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
     """A media DOI tries the paper endpoint, then falls back to search."""
@@ -560,6 +575,7 @@ def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
     if result is not None:
         assert_that(result.confidence).is_greater_than(0.8)
 
+
 def test_pubmed_author_scoped_search() -> None:
     """Author names scope the PubMed query with the [Author] field."""
     from podex.services.enrichment import PubMedProvider
@@ -584,6 +600,7 @@ def test_pubmed_author_scoped_search() -> None:
 
     assert_that(result).is_none()
     assert_that(" ".join(seen_terms)).contains("[Author]")
+
 
 def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
     """Sparse payloads parse without optional fields."""
@@ -630,6 +647,7 @@ def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
 
     del ss_result, cr_result
 
+
 def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
     """PMID-based lookup and OMDB weak-match rejection both execute."""
     from podex.services.enrichment import OMDBProvider, SemanticScholarProvider
@@ -674,6 +692,7 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
 
     assert_that(weak).is_none()
 
+
 def test_crossref_doi_lookup_http_error() -> None:
     """Transport failures on the DOI endpoint degrade to search."""
     from podex.services.enrichment import CrossRefProvider
@@ -691,6 +710,7 @@ def test_crossref_doi_lookup_http_error() -> None:
     provider.close()
 
     assert_that(result).is_none()
+
 
 def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     """Unsupported types and title mismatches yield None."""
@@ -743,6 +763,7 @@ def test_pubmed_and_semantic_scholar_reject_paths() -> None:
     assert_that(ss.search_and_enrich(movie)).is_none()
     ss.close()
 
+
 def test_pubmed_doi_search_canonicalizes_prefixed_doi() -> None:
     """A prefixed DOI is canonicalized before the [doi] search term."""
     from podex.services.enrichment import PubMedProvider
@@ -763,6 +784,7 @@ def test_pubmed_doi_search_canonicalizes_prefixed_doi() -> None:
 
     assert_that(result).is_none()
     assert_that(seen_terms[0]).is_equal_to("10.1000/x[doi]")
+
 
 def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
     """A prefixed DOI is canonicalized before the DOI: paper lookup."""
@@ -786,6 +808,7 @@ def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
 
     assert_that(result).is_none()
     assert_that(seen_paths[0]).is_equal_to("/paper/DOI:10.1000/x")
+
 
 def test_pubmed_waits_before_every_request() -> None:
     """The esearch + esummary flow waits once per HTTP request."""
@@ -824,6 +847,7 @@ def test_pubmed_waits_before_every_request() -> None:
     assert_that(result).is_none()
     assert_that(len(requests_seen)).is_equal_to(2)
     assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
 
 def test_pubmed_structured_abstract_joins_sections() -> None:
     """Structured abstracts keep every AbstractText section."""
@@ -871,6 +895,7 @@ def test_pubmed_structured_abstract_joins_sections() -> None:
         assert_that(description).contains("BACKGROUND")
         assert_that(description).contains("CONCLUSIONS")
 
+
 def test_academic_fanout_isolates_provider_failures() -> None:
     """A raising provider does not prevent other results from aggregating."""
     good = EnrichmentResult(
@@ -894,6 +919,7 @@ def test_academic_fanout_isolates_provider_failures() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+
 
 def test_academic_fanout_drops_slow_provider() -> None:
     """A provider sleeping past the aggregate deadline is dropped."""
@@ -926,6 +952,7 @@ def test_academic_fanout_drops_slow_provider() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+
 
 def test_academic_title_verification_requires_explicit_titles() -> None:
     """Results lacking provider titles never verify by assumption."""
@@ -960,6 +987,7 @@ def test_academic_title_verification_requires_explicit_titles() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(len(result.verified_by)).is_equal_to(1)
+
 
 def test_academic_title_verification_needs_two_title_bearers() -> None:
     """A single title-bearing result cannot title-verify a pair."""

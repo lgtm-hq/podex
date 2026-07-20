@@ -10,11 +10,12 @@ from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from podex.services.media_enrichment import MediaEnricher
 from tests.enrichment.conftest import (
     _CountingLimiter,
-    _StubProvider,
     _enricher_with,
     _media,
+    _StubProvider,
     _swap_client_matrix,
 )
+
 
 def test_enricher_uses_priority_provider() -> None:
     """The first confident provider result wins for a book."""
@@ -38,6 +39,7 @@ def test_enricher_uses_priority_provider() -> None:
 
     assert_that(result).is_equal_to(hit)
 
+
 def test_enricher_falls_back_to_wikipedia() -> None:
     """When primaries miss, the Wikipedia fallback is consulted."""
     wiki_hit = EnrichmentResult(
@@ -58,6 +60,7 @@ def test_enricher_falls_back_to_wikipedia() -> None:
 
     assert_that(result).is_equal_to(wiki_hit)
 
+
 def test_enricher_rejects_low_confidence() -> None:
     """Sub-threshold results are discarded rather than returned."""
     weak = EnrichmentResult(
@@ -77,6 +80,7 @@ def test_enricher_rejects_low_confidence() -> None:
     enricher.close()
 
     assert_that(result).is_none()
+
 
 def test_enricher_academic_path_and_apply() -> None:
     """Study media route via the academic enricher; apply writes fields."""
@@ -120,6 +124,7 @@ def test_enricher_academic_path_and_apply() -> None:
     with enricher:
         pass
 
+
 def test_apply_enrichment_fills_media_fields() -> None:
     """apply_enrichment writes cover, description, ids, and provenance."""
     result = EnrichmentResult(
@@ -160,6 +165,7 @@ def test_apply_enrichment_fills_media_fields() -> None:
     assert_that(media.enrichment_confidence).is_equal_to(0.95)
     assert_that(media.enriched_at).is_not_none()
 
+
 def test_enricher_initializes_all_configured_providers() -> None:
     """API keys switch on their providers in the registry."""
     enricher = MediaEnricher(
@@ -173,6 +179,7 @@ def test_enricher_initializes_all_configured_providers() -> None:
     enricher.close()
 
     assert_that(len(names)).is_greater_than(5)
+
 
 def test_pipeline_apply_and_alias_helpers() -> None:
     """The pipeline's apply/merge/alias helpers cover every id branch."""
@@ -232,6 +239,7 @@ def test_pipeline_apply_and_alias_helpers() -> None:
     assert_that(aliases).contains("Dune Original")
     assert_that(aliases).contains("Der Wüstenplanet")
 
+
 def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
     """A 401 response log line never contains the api key value."""
     import logging as _logging
@@ -253,6 +261,7 @@ def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
     assert_that(result).is_none()
     assert_that(caplog.text).contains("HTTP 401")
     assert_that(caplog.text).does_not_contain("sekret-key")
+
 
 def test_provider_context_managers_close_clients() -> None:
     """Context-manager protocol closes every API-key provider."""
@@ -284,6 +293,7 @@ def test_provider_context_managers_close_clients() -> None:
             assert_that(provider).is_not_none()
         assert_that(client.is_closed).is_true()
 
+
 def test_apply_external_ids_maps_columns_and_metadata() -> None:
     """Column-backed keys hit columns; other keys land in metadata_json."""
     from podex.services.media_enrichment import apply_external_ids
@@ -309,6 +319,7 @@ def test_apply_external_ids_maps_columns_and_metadata() -> None:
             },
         },
     )
+
 
 def test_apply_external_ids_preserves_existing_values() -> None:
     """Existing column and metadata values are never overwritten."""
@@ -340,6 +351,7 @@ def test_apply_external_ids_preserves_existing_values() -> None:
         },
     )
 
+
 def test_apply_enrichment_persists_extra_external_ids() -> None:
     """apply_enrichment keeps unmapped identifiers in metadata_json."""
     result = EnrichmentResult(
@@ -359,6 +371,7 @@ def test_apply_enrichment_persists_extra_external_ids() -> None:
     )
     assert_that((media.metadata_json or {})["genre"]).is_equal_to("Technology")
 
+
 def test_apply_enrichment_records_single_source_verification() -> None:
     """Ordinary results record their source as verification provenance."""
     result = EnrichmentResult(
@@ -372,6 +385,7 @@ def test_apply_enrichment_records_single_source_verification() -> None:
     enricher.close()
 
     assert_that(media.verification_sources).is_equal_to(["open_library"])
+
 
 def test_apply_enrichment_preserves_existing_verification_sources() -> None:
     """An existing verification_sources value is never overwritten."""

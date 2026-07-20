@@ -9,6 +9,7 @@ from tests.enrichment.conftest import (
     _swap_client_matrix,
 )
 
+
 def test_omdb_series_path() -> None:
     """TV shows query OMDB with the series type."""
     from podex.services.enrichment import OMDBProvider
@@ -38,6 +39,7 @@ def test_omdb_series_path() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("tt9999999")
+
 
 def test_omdb_year_and_documentary_paths() -> None:
     """Documentaries and year-bearing media flow through OMDB search."""
@@ -70,6 +72,7 @@ def test_omdb_year_and_documentary_paths() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(str(result.external_ids)).contains("tt7777777")
+
 
 def test_omdb_falls_back_to_title_search_variants() -> None:
     """A miss on the exact title yields None (no variant retry exists)."""
@@ -107,6 +110,7 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
     assert_that(calls).is_length(1)
     assert_that(calls[0]).is_equal_to("Dune: Part One")
     assert_that(result).is_none()
+
 
 def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
     """OMDB imdb-id fetch and CrossRef year matching both execute."""
@@ -168,6 +172,7 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
     if boosted is not None:
         assert_that(boosted.confidence).is_greater_than(0.5)
 
+
 def test_omdb_waits_before_every_request() -> None:
     """A failed IMDB-ID lookup plus title search wait once per request."""
     from podex.services.enrichment import OMDBProvider
@@ -207,6 +212,7 @@ def test_omdb_waits_before_every_request() -> None:
     assert_that(result).is_not_none()
     assert_that(len(requests_seen)).is_equal_to(2)
     assert_that(limiter.waits).is_equal_to(len(requests_seen))
+
 
 def test_omdb_uses_https_base_url() -> None:
     """The OMDB base URL uses the https scheme (api key in query)."""

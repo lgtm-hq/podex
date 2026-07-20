@@ -6,6 +6,7 @@ from assertpy import assert_that
 from podex.models import Media, MediaType
 from tests.enrichment.conftest import _media, _swap_client_matrix
 
+
 def test_wikipedia_person_and_place_paths() -> None:
     """Person and place media types walk their variation flows."""
     from podex.services.enrichment import WikipediaProvider
@@ -66,6 +67,7 @@ def test_wikipedia_person_and_place_paths() -> None:
     if person is not None:
         assert_that(person.has_useful_data()).is_true()
     del place
+
 
 def test_wikipedia_variations_across_types() -> None:
     """Every media type's search-variation builder executes."""

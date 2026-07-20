@@ -10,6 +10,7 @@ from tests.enrichment.conftest import (
     _swap_client_matrix,
 )
 
+
 def test_tmdb_tv_show_path() -> None:
     """TV shows search the tv endpoint and parse air dates."""
     from podex.services.enrichment import TMDBProvider
@@ -62,6 +63,7 @@ def test_tmdb_tv_show_path() -> None:
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
 
+
 def test_tmdb_person_detail_failure_yields_none() -> None:
     """Person detail failures yield None (no search-doc fallback exists)."""
     from podex.services.enrichment import TMDBPersonProvider
@@ -91,6 +93,7 @@ def test_tmdb_person_detail_failure_yields_none() -> None:
     provider.close()
 
     assert_that(result).is_none()
+
 
 def test_tmdb_year_filter_and_missing_details() -> None:
     """Year-bearing media filter results; detail failures yield None."""
@@ -133,6 +136,7 @@ def test_tmdb_year_filter_and_missing_details() -> None:
 
     assert_that(result).is_none()
 
+
 def test_tmdb_person_by_known_id() -> None:
     """A stored tmdb id is ignored: the person provider always searches."""
     from podex.services.enrichment import TMDBPersonProvider
@@ -158,6 +162,7 @@ def test_tmdb_person_by_known_id() -> None:
     provider.close()
 
     assert_that(result).is_none()
+
 
 def test_tmdb_waits_before_every_request() -> None:
     """Search-with-year, search-without-year, and details each wait once."""
@@ -206,6 +211,7 @@ def test_tmdb_waits_before_every_request() -> None:
     assert_that(len(requests_seen)).is_equal_to(3)
     assert_that(limiter.waits).is_equal_to(len(requests_seen))
 
+
 def test_tmdb_direct_id_lookup_skips_search() -> None:
     """A stored tmdb_id fetches details directly without any search."""
     from podex.services.enrichment import TMDBProvider
@@ -241,6 +247,7 @@ def test_tmdb_direct_id_lookup_skips_search() -> None:
     if result is not None:
         assert_that(result.confidence).is_equal_to(1.0)
         assert_that(str(result.external_ids)).contains("438631")
+
 
 def test_tmdb_direct_id_404_falls_back_to_search() -> None:
     """A 404 on the stored tmdb_id falls back to title search."""

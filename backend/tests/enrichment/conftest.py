@@ -9,10 +9,12 @@ from podex.services.academic_enrichment import AcademicEnricher
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from podex.services.media_enrichment import MediaEnricher
 
+
 def _media(title: str, media_type: MediaType) -> Media:
     media = Media(type=media_type, title=title, author="Jane Doe")
     media.id = 1
     return media
+
 
 class _StubProvider:
     """Provider double returning a fixed result."""
@@ -35,6 +37,7 @@ class _StubProvider:
         """Record closure."""
         self.closed = True
 
+
 def _enricher_with(providers: dict[EnrichmentSource, Any]) -> MediaEnricher:
     enricher = MediaEnricher()
     for provider in enricher.providers.values():
@@ -43,11 +46,13 @@ def _enricher_with(providers: dict[EnrichmentSource, Any]) -> MediaEnricher:
     enricher.providers = providers
     return enricher
 
+
 def _swap_client_matrix(provider: Any, handler: Any) -> None:
     provider.client = httpx.Client(
         transport=httpx.MockTransport(handler),
         base_url="https://mock.invalid",
     )
+
 
 class _CountingLimiter:
     """Rate-limiter double counting wait_sync calls without sleeping."""
@@ -59,6 +64,7 @@ class _CountingLimiter:
         """Count the wait instead of sleeping."""
         self.waits += 1
 
+
 class _RaisingProvider:
     """Provider double that always raises."""
 
@@ -69,6 +75,7 @@ class _RaisingProvider:
 
     def close(self) -> None:
         """No-op close."""
+
 
 class _SlowProvider:
     """Provider double that sleeps past the aggregate deadline."""
@@ -87,6 +94,7 @@ class _SlowProvider:
 
     def close(self) -> None:
         """No-op close."""
+
 
 def _academic_with(providers: dict[EnrichmentSource, Any], **kwargs: Any) -> Any:
     """Build an AcademicEnricher whose providers are replaced by doubles."""

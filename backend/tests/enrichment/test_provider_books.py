@@ -6,6 +6,7 @@ from assertpy import assert_that
 from podex.models import MediaType
 from tests.enrichment.conftest import _media, _swap_client_matrix
 
+
 def test_google_books_isbn10_and_sparse_volume() -> None:
     """ISBN-10-only volumes without images still enrich."""
     from podex.services.enrichment import GoogleBooksProvider
@@ -36,6 +37,7 @@ def test_google_books_isbn10_and_sparse_volume() -> None:
     assert_that(result).is_not_none()
     if result is not None:
         assert_that(result.has_useful_data()).is_true()
+
 
 def test_google_books_second_item_selected_on_better_match() -> None:
     """Best-match selection scans beyond the first volume."""

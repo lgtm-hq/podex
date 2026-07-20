@@ -6,6 +6,7 @@ from assertpy import assert_that
 from podex.models import MediaType
 from tests.enrichment.conftest import _media, _swap_client_matrix
 
+
 def test_itunes_rejects_dissimilar_podcasts() -> None:
     """Results with unrelated names are rejected as matches."""
     from podex.services.enrichment import iTunesProvider
