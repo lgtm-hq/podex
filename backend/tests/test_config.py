@@ -165,7 +165,10 @@ def test_rate_limit_redis_url_defaults_to_disabled() -> None:
 def test_transcripts_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None:
     """Nested ``PODEX_TRANSCRIPTS__*`` env vars populate artifact storage."""
     monkeypatch.setenv("PODEX_TRANSCRIPTS__STORAGE_BACKEND", "encrypted_s3")
-    monkeypatch.setenv("PODEX_TRANSCRIPTS__STORAGE_PATH", "/tmp/podex-transcripts")
+    monkeypatch.setenv(
+        "PODEX_TRANSCRIPTS__STORAGE_PATH",
+        "./data/podex-transcripts-test",
+    )
     monkeypatch.setenv("PODEX_TRANSCRIPTS__ENCRYPTION_KEY", "fernet-key")
     monkeypatch.setenv("PODEX_TRANSCRIPTS__S3_BUCKET", "private-transcripts")
     monkeypatch.setenv("PODEX_TRANSCRIPTS__S3_ENDPOINT_URL", "https://r2.example")
@@ -177,7 +180,7 @@ def test_transcripts_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> 
 
     assert_that(settings.transcripts.storage_backend).is_equal_to("encrypted_s3")
     assert_that(settings.transcripts.storage_path).is_equal_to(
-        Path("/tmp/podex-transcripts"),
+        Path("./data/podex-transcripts-test"),
     )
     assert_that(settings.transcripts.encryption_key).is_equal_to("fernet-key")
     assert_that(settings.transcripts.s3_bucket).is_equal_to("private-transcripts")
