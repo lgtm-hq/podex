@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.40.1] - 2026-07-21
+
+### Changed
+
+- **enrichment**: settings-driven provider registry (#387) (20c8672)
+- **enrichment**: move Wikipedia signals and stop words into packaged TOML (#386)
+  (5cdfc65)
+
+### Fixed
+
+- **enrichment**: implement documented OMDB/TMDB fallback behaviors (#388) (5d4dc4c)
+
 ## [0.40.0] - 2026-07-21
 
 ### Changed
