@@ -9,6 +9,8 @@ from __future__ import annotations
 import re
 from difflib import SequenceMatcher
 
+from podex.services.enrichment.data import STOP_WORDS
+
 
 def generate_search_variations(title: str, author: str | None = None) -> list[str]:
     """Generate multiple search variations for a title.
@@ -152,53 +154,8 @@ def extract_key_words(title: str) -> str:
 
     Removes common words and returns significant terms.
     """
-    stop_words = {
-        "the",
-        "a",
-        "an",
-        "and",
-        "or",
-        "of",
-        "in",
-        "on",
-        "at",
-        "to",
-        "for",
-        "with",
-        "by",
-        "from",
-        "is",
-        "are",
-        "was",
-        "were",
-        "be",
-        "been",
-        "being",
-        "have",
-        "has",
-        "had",
-        "do",
-        "does",
-        "did",
-        "will",
-        "would",
-        "could",
-        "should",
-        "may",
-        "might",
-        "must",
-        "shall",
-        "can",
-        "that",
-        "this",
-        "these",
-        "those",
-        "it",
-        "its",
-    }
-
     words = re.findall(r"\b\w+\b", title.lower())
-    key_words = [w for w in words if w not in stop_words and len(w) > 2]
+    key_words = [w for w in words if w not in STOP_WORDS and len(w) > 2]
 
     # Return first 4 key words
     return " ".join(key_words[:4])
