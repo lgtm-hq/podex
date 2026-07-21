@@ -22,7 +22,7 @@ jobs:
   # Org ruleset (checks-podex): test / Aggregate Python Results
   test:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@6a96470c698addc35f81b5420e1e4114b35c5a03  # v0.59.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@ee8484ca71db3a2c2c33da6128bbf2330fcd7c88  # v0.59.2
     with:
       python-versions: '3.11,3.12,3.13,3.14'
       working-directory: backend
@@ -32,7 +32,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Compatibility'
       runner-image: ubuntu-24.04
-      tooling-ref: '6a96470c698addc35f81b5420e1e4114b35c5a03'  # v0.59.1
+      tooling-ref: 'ee8484ca71db3a2c2c33da6128bbf2330fcd7c88'  # v0.59.2
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -118,7 +118,7 @@ jobs:
   # reporting and the PR test summary comment.
   test-coverage:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@6a96470c698addc35f81b5420e1e4114b35c5a03  # v0.59.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@ee8484ca71db3a2c2c33da6128bbf2330fcd7c88  # v0.59.2
     with:
       python-version: '3.13'
       working-directory: backend
@@ -131,7 +131,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Coverage'
       runner-image: ubuntu-24.04
-      tooling-ref: '6a96470c698addc35f81b5420e1e4114b35c5a03'  # v0.59.1
+      tooling-ref: 'ee8484ca71db3a2c2c33da6128bbf2330fcd7c88'  # v0.59.2
       egress-policy: block
       egress-preset: quality
     permissions:

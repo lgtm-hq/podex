@@ -21,7 +21,7 @@ concurrency:
 jobs:
   frontend:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-node-custom.yml@6a96470c698addc35f81b5420e1e4114b35c5a03  # v0.59.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-node-custom.yml@ee8484ca71db3a2c2c33da6128bbf2330fcd7c88  # v0.59.2
     with:
       package-manager: bun
       working-directory: frontend
@@ -32,7 +32,7 @@ jobs:
       job-name: Frontend Checks
       node-version: '22'
       draft-pr-skip: true
-      tooling-ref: '6a96470c698addc35f81b5420e1e4114b35c5a03'  # v0.59.1
+      tooling-ref: 'ee8484ca71db3a2c2c33da6128bbf2330fcd7c88'  # v0.59.2
       # audit (not block) for now: no ready egress preset covers the node/bun
       # install registries. Tighten to block with an explicit allowlist later.
       egress-policy: audit
