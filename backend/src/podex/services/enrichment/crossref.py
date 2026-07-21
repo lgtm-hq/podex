@@ -8,6 +8,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -34,7 +35,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     BASE_URL = "https://api.crossref.org"
 
     source = EnrichmentSource.CROSSREF
-    SUPPORTED_TYPES = {"study", "article"}
+    SUPPORTED_TYPES = {MediaType.STUDY, MediaType.ARTICLE}
 
     def __init__(
         self,
@@ -55,9 +56,12 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if CrossRef supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search CrossRef and enrich media item.

@@ -7,7 +7,7 @@ from assertpy import assert_that
 
 from podex.models import Media, MediaType
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
-from podex.services.media_enrichment import MediaEnricher
+from podex.services.media_enrichment import PROVIDER_PRIORITY, MediaEnricher
 from tests.enrichment.conftest import (
     _CountingLimiter,
     _enricher_with,
@@ -15,6 +15,8 @@ from tests.enrichment.conftest import (
     _StubProvider,
     _swap_client,
 )
+
+INTENTIONAL_PROVIDER_PRIORITY_EXCLUSIONS: frozenset[MediaType] = frozenset()
 
 
 def test_enricher_uses_priority_provider() -> None:
@@ -38,6 +40,17 @@ def test_enricher_uses_priority_provider() -> None:
     enricher.close()
 
     assert_that(result).is_equal_to(hit)
+
+
+def test_provider_priority_exhaustively_covers_media_types() -> None:
+    """Every MediaType is either routed or intentionally excluded."""
+    missing = (
+        set(MediaType)
+        - set(PROVIDER_PRIORITY)
+        - set(INTENTIONAL_PROVIDER_PRIORITY_EXCLUSIONS)
+    )
+
+    assert_that(missing).is_empty()
 
 
 def test_enricher_falls_back_to_wikipedia() -> None:
