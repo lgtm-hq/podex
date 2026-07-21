@@ -20,18 +20,25 @@ cp .env.staging.example .env.staging
 
 Edit `.env.staging` and replace every `change-me-*` placeholder. The root
 `.env.staging.example` is the single source of truth for staging secrets and
-service wiring. Compose loads it into containers via `env_file` (required —
-the stack will not start without `.env.staging`).
+service wiring; the root `.env.example` is the complete inventory of backend
+`PODEX_` settings names. Compose loads `.env.staging` into containers via
+`env_file` (required — the stack will not start without `.env.staging`).
 
-| Variable | Read by | Purpose |
+| Variable/group | Read by | Purpose |
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | `db` | Postgres password |
-| `PODEX_DATABASE__URL` | `api` (Alembic + runtime) | SQLAlchemy connection string |
-| `PODEX_ENVIRONMENT` | `api` | Runtime environment label |
-| `PODEX_CORS_ORIGINS` | `api` | Allowed browser origins (JSON list) |
 | `API_PORT` / `FRONTEND_PORT` | compose | Host ports published for `api` / `frontend` |
 | `PUBLIC_API_URL` | `frontend` (build arg) | Base URL for SSR API fetches |
-| `PODEX_TRANSCRIPTS__*`, `MEILI_*`, `API_KEY`, `PODEX_AUTH__SMTP_*` | *(future)* | Reserved for pipeline/auth; unused on main |
+| `PODEX_APP_NAME`, `PODEX_ENVIRONMENT`, `PODEX_DEBUG`, `PODEX_API_V2_PREFIX`, `PODEX_CORS_ORIGINS`, `PODEX_PUBLIC_WEB_URL` | `api`, `scheduler` | Top-level app settings |
+| `PODEX_DATABASE__*` | `api`, `scheduler` (Alembic + runtime) | SQLAlchemy connection string and pool tuning |
+| `PODEX_RATE_LIMIT__*` | `api` | HTTP rate limiting and optional Redis store |
+| `PODEX_STATS_CACHE__*` | `api` | Aggregate/stats response cache |
+| `PODEX_TRANSCRIPTS__*` | `api`, `scheduler` | Encrypted transcript artifact storage |
+| `PODEX_AUTH__*` | `api` | Magic-link SMTP and WorkOS AuthKit settings |
+| `PODEX_BILLING__*` | `api` | Paid tier, Paddle checkout, and webhooks |
+| `PODEX_OBSERVABILITY__*` | `api`, `scheduler` | Sentry error tracking |
+| `PODEX_OPS_*` | `api` | Ops console API gate and alert thresholds |
+| `PODEX_SCHEDULER_*` | `scheduler` | Recurring scheduler intervals |
 
 `.env.staging` is git-ignored; never commit real secrets.
 
