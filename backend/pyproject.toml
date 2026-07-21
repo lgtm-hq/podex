@@ -60,6 +60,11 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/podex"]
 
+# Ensure enrichment TOML tables ship in the wheel (not only .py modules).
+[tool.hatch.build.targets.wheel.force-include]
+"src/podex/services/enrichment/data/wikipedia_signals.toml" = "podex/services/enrichment/data/wikipedia_signals.toml"
+"src/podex/services/enrichment/data/stop_words.toml" = "podex/services/enrichment/data/stop_words.toml"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config"]
