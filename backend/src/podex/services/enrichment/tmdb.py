@@ -26,9 +26,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# When a detail fetch fails, emit a search-document result at this fraction of
+# the match confidence so the fallback is clearly below the detail-path score.
+_DETAIL_FALLBACK_CONFIDENCE_FACTOR = 0.75
+
 
 class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich movies and TV shows from The Movie Database.
+
+    When a detail fetch fails after a confident search hit, a reduced-confidence
+    result is built from the search document
+    (``match_confidence * 0.75``) instead of returning ``None``.
 
     Args:
         api_key: TMDB API key.
@@ -129,7 +137,37 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                                 f"TMDB match for '{media.title}' using "
                                 f"query='{query}' type={search_type}"
                             )
-                            return self._build_result(details, search_type, confidence)
+                            return self._build_result(
+                                details,
+                                search_type,
+                                confidence,
+                            )
+
+                        search_doc = next(
+                            (
+                                result
+                                for result in search_results
+                                if result.get("id") == tmdb_id
+                            ),
+                            None,
+                        )
+                        if search_doc is not None:
+                            fallback_confidence = (
+                                confidence * _DETAIL_FALLBACK_CONFIDENCE_FACTOR
+                            )
+                            logger.debug(
+                                "TMDB detail fetch failed for '%s' (id=%s); "
+                                "falling back to search document "
+                                "(confidence=%.2f)",
+                                media.title,
+                                tmdb_id,
+                                fallback_confidence,
+                            )
+                            return self._build_result(
+                                search_doc,
+                                search_type,
+                                fallback_confidence,
+                            )
 
         logger.debug(f"No TMDB results for: {media.title}")
         return None
