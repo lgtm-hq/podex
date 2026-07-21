@@ -31,6 +31,161 @@ def test_default_settings() -> None:
     assert_that(settings.database.url).is_equal_to("sqlite:///./podex.db")
 
 
+def test_complete_nested_settings_load_from_env_mapping(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """A complete nested env mapping populates every settings domain."""
+    sample_env = {
+        "PODEX_APP_NAME": "podex-full",
+        "PODEX_ENVIRONMENT": "staging",
+        "PODEX_DEBUG": "true",
+        "PODEX_API_V2_PREFIX": "/api/test",
+        "PODEX_CORS_ORIGINS": '["https://app.example.com"]',
+        "PODEX_PUBLIC_WEB_URL": "https://app.example.com",
+        "PODEX_DATABASE__URL": "postgresql+psycopg://podex@db/podex",
+        "PODEX_DATABASE__POOL_SIZE": "9",
+        "PODEX_DATABASE__MAX_OVERFLOW": "3",
+        "PODEX_DATABASE__POOL_RECYCLE_SECONDS": "240",
+        "PODEX_RATE_LIMIT__ENABLED": "false",
+        "PODEX_RATE_LIMIT__MAX_REQUESTS": "42",
+        "PODEX_RATE_LIMIT__WINDOW_SECONDS": "12.5",
+        "PODEX_RATE_LIMIT__EXEMPT_PATHS": '["/health","/metrics"]',
+        "PODEX_RATE_LIMIT__REDIS_URL": "redis://redis:6379/2",
+        "PODEX_RATE_LIMIT__REDIS_PREFIX": "podex:full",
+        "PODEX_STATS_CACHE__TTL_SECONDS": "7.5",
+        "PODEX_TRANSCRIPTS__STORAGE_BACKEND": "encrypted_s3",
+        "PODEX_TRANSCRIPTS__STORAGE_PATH": "./data/full-model-transcripts",
+        "PODEX_TRANSCRIPTS__ENCRYPTION_KEY": "fernet-key",
+        "PODEX_TRANSCRIPTS__S3_BUCKET": "full-transcripts",
+        "PODEX_TRANSCRIPTS__S3_ENDPOINT_URL": "https://r2.example",
+        "PODEX_TRANSCRIPTS__S3_REGION_NAME": "auto",
+        "PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID": "access-key-id",
+        "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY": "secret-access-key",  # nosec B105
+        "PODEX_AUTH__MAGIC_LINK_TTL_MINUTES": "20",
+        "PODEX_AUTH__SESSION_TTL_DAYS": "60",
+        "PODEX_AUTH__SESSION_COOKIE_NAME": "podex_full_session",
+        "PODEX_AUTH__SESSION_COOKIE_SECURE": "false",
+        "PODEX_AUTH__SMTP_HOST": "smtp.example.com",
+        "PODEX_AUTH__SMTP_PORT": "2525",
+        "PODEX_AUTH__SMTP_USERNAME": "smtp-user",
+        "PODEX_AUTH__SMTP_PASSWORD": "smtp-password",  # nosec B105
+        "PODEX_AUTH__SMTP_FROM_EMAIL": "signin@example.com",
+        "PODEX_AUTH__SMTP_STARTTLS": "false",
+        "PODEX_AUTH__WORKOS_CLIENT_ID": "client_full",
+        "PODEX_AUTH__WORKOS_API_KEY": "sk_full",
+        "PODEX_AUTH__WORKOS_REDIRECT_URI": "https://app.example.com/callback",
+        "PODEX_BILLING__PAID_TIER_ENABLED": "true",
+        "PODEX_BILLING__PAID_TIER_ENFORCED": "true",
+        "PODEX_BILLING__PAID_API_REQUESTS_PER_MONTH": "1500",
+        "PODEX_BILLING__PAID_LLM_REQUESTS_PER_MONTH": "75",
+        "PODEX_BILLING__PROVIDER_NAME": "paddle",
+        "PODEX_BILLING__CHECKOUT_URL": "https://checkout.example.com",
+        "PODEX_BILLING__PADDLE_API_KEY": "pdl_full",
+        "PODEX_BILLING__PADDLE_WEBHOOK_SECRET": "whsec_full",  # nosec B105
+        "PODEX_BILLING__PADDLE_PRICE_ID": "pri_full",
+        "PODEX_BILLING__PADDLE_CHECKOUT_URL": "https://buy.example.com",
+        "PODEX_OBSERVABILITY__SENTRY_DSN": "https://key@sentry.example/1",
+        "PODEX_OBSERVABILITY__SENTRY_ENVIRONMENT": "staging",
+        "PODEX_OPS_API_KEY": "ops-key",
+        "PODEX_OPS_REVIEW_PENDING_ALERT_THRESHOLD": "12",
+        "PODEX_OPS_ALERT_DELIVERY_PENDING_THRESHOLD": "6",
+        "PODEX_SCHEDULER_TICK_SECONDS": "15",
+        "PODEX_SCHEDULER_DIGEST_INTERVAL_MINUTES": "120",
+        "PODEX_SCHEDULER_RETENTION_INTERVAL_MINUTES": "240",
+    }
+    for name, value in sample_env.items():
+        monkeypatch.setenv(name, value)
+
+    settings = Settings()
+
+    assert_that(settings.app_name).is_equal_to("podex-full")
+    assert_that(settings.environment).is_equal_to("staging")
+    assert_that(settings.debug).is_true()
+    assert_that(settings.api_v2_prefix).is_equal_to("/api/test")
+    assert_that(settings.cors_origins).is_equal_to(["https://app.example.com"])
+    assert_that(settings.public_web_url).is_equal_to("https://app.example.com")
+
+    assert_that(settings.database.url).is_equal_to(
+        "postgresql+psycopg://podex@db/podex",
+    )
+    assert_that(settings.database.pool_size).is_equal_to(9)
+    assert_that(settings.database.max_overflow).is_equal_to(3)
+    assert_that(settings.database.pool_recycle_seconds).is_equal_to(240)
+
+    assert_that(settings.rate_limit.enabled).is_false()
+    assert_that(settings.rate_limit.max_requests).is_equal_to(42)
+    assert_that(settings.rate_limit.window_seconds).is_equal_to(12.5)
+    assert_that(settings.rate_limit.exempt_paths).is_equal_to(
+        ["/health", "/metrics"],
+    )
+    assert_that(settings.rate_limit.redis_url).is_equal_to("redis://redis:6379/2")
+    assert_that(settings.rate_limit.redis_prefix).is_equal_to("podex:full")
+
+    assert_that(settings.stats_cache.ttl_seconds).is_equal_to(7.5)
+
+    assert_that(settings.transcripts.storage_backend).is_equal_to("encrypted_s3")
+    assert_that(settings.transcripts.storage_path).is_equal_to(
+        Path("./data/full-model-transcripts"),
+    )
+    assert_that(settings.transcripts.encryption_key).is_equal_to("fernet-key")
+    assert_that(settings.transcripts.s3_bucket).is_equal_to("full-transcripts")
+    assert_that(settings.transcripts.s3_endpoint_url).is_equal_to(
+        "https://r2.example",
+    )
+    assert_that(settings.transcripts.s3_region_name).is_equal_to("auto")
+    assert_that(settings.transcripts.s3_access_key_id).is_equal_to("access-key-id")
+    assert_that(settings.transcripts.s3_secret_access_key).is_equal_to(
+        "secret-access-key",
+    )
+
+    assert_that(settings.auth.magic_link_ttl_minutes).is_equal_to(20)
+    assert_that(settings.auth.session_ttl_days).is_equal_to(60)
+    assert_that(settings.auth.session_cookie_name).is_equal_to(
+        "podex_full_session",
+    )
+    assert_that(settings.auth.session_cookie_secure).is_false()
+    assert_that(settings.auth.smtp_host).is_equal_to("smtp.example.com")
+    assert_that(settings.auth.smtp_port).is_equal_to(2525)
+    assert_that(settings.auth.smtp_username).is_equal_to("smtp-user")
+    assert_that(settings.auth.smtp_password).is_equal_to("smtp-password")
+    assert_that(settings.auth.smtp_from_email).is_equal_to("signin@example.com")
+    assert_that(settings.auth.smtp_starttls).is_false()
+    assert_that(settings.auth.workos_client_id).is_equal_to("client_full")
+    assert_that(settings.auth.workos_api_key).is_equal_to("sk_full")
+    assert_that(settings.auth.workos_redirect_uri).is_equal_to(
+        "https://app.example.com/callback",
+    )
+    assert_that(settings.auth.workos_enabled).is_true()
+
+    assert_that(settings.billing.paid_tier_enabled).is_true()
+    assert_that(settings.billing.paid_tier_enforced).is_true()
+    assert_that(settings.billing.paid_api_requests_per_month).is_equal_to(1500)
+    assert_that(settings.billing.paid_llm_requests_per_month).is_equal_to(75)
+    assert_that(settings.billing.provider_name).is_equal_to("paddle")
+    assert_that(settings.billing.checkout_url).is_equal_to(
+        "https://checkout.example.com",
+    )
+    assert_that(settings.billing.paddle_api_key).is_equal_to("pdl_full")
+    assert_that(settings.billing.paddle_webhook_secret).is_equal_to("whsec_full")
+    assert_that(settings.billing.paddle_price_id).is_equal_to("pri_full")
+    assert_that(settings.billing.paddle_checkout_url).is_equal_to(
+        "https://buy.example.com",
+    )
+    assert_that(settings.billing.paddle_checkout_enabled).is_true()
+
+    assert_that(settings.observability.sentry_dsn).is_equal_to(
+        "https://key@sentry.example/1",
+    )
+    assert_that(settings.observability.sentry_environment).is_equal_to("staging")
+
+    assert_that(settings.ops_api_key).is_equal_to("ops-key")
+    assert_that(settings.ops_review_pending_alert_threshold).is_equal_to(12)
+    assert_that(settings.ops_alert_delivery_pending_threshold).is_equal_to(6)
+    assert_that(settings.scheduler_tick_seconds).is_equal_to(15)
+    assert_that(settings.scheduler_digest_interval_minutes).is_equal_to(120)
+    assert_that(settings.scheduler_retention_interval_minutes).is_equal_to(240)
+
+
 def test_database_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None:
     """Nested ``PODEX_DATABASE__*`` env vars populate ``settings.database``."""
     monkeypatch.setenv(

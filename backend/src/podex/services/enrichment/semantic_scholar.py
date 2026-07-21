@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -33,7 +34,7 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
     BASE_URL = "https://api.semanticscholar.org/graph/v1"
 
     source = EnrichmentSource.SEMANTIC_SCHOLAR
-    SUPPORTED_TYPES = {"study", "article"}
+    SUPPORTED_TYPES = {MediaType.STUDY, MediaType.ARTICLE}
 
     # Fields to request from the API
     PAPER_FIELDS = ",".join(
@@ -68,9 +69,12 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if Semantic Scholar supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Semantic Scholar and enrich media item.

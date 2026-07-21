@@ -11,6 +11,7 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING, Any
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentResult,
     EnrichmentSource,
@@ -44,7 +45,7 @@ class AcademicEnricher:
             provider fan-out; providers still running past it are dropped.
     """
 
-    SUPPORTED_TYPES = {"study", "article"}
+    SUPPORTED_TYPES = {MediaType.STUDY, MediaType.ARTICLE}
 
     def __init__(
         self,
@@ -59,9 +60,12 @@ class AcademicEnricher:
             EnrichmentSource.CROSSREF: CrossRefProvider(mailto=crossref_mailto),
         }
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if this enricher supports the given media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def enrich_with_verification(
         self,
