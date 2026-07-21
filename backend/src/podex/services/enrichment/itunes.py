@@ -27,6 +27,7 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     Rate limited to ~20 calls/minute.
 
     Args:
+        base_url: Override for the iTunes Search API root.
         requests_per_second: Rate limit (default 0.3 = ~18/min to stay under limit).
     """
 
@@ -36,10 +37,15 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     SUPPORTED_TYPES = {MediaType.PODCAST}
 
-    def __init__(self, requests_per_second: float = 0.3) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        requests_per_second: float = 0.3,
+    ) -> None:
         super().__init__(requests_per_second)
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             timeout=30.0,
         )
 

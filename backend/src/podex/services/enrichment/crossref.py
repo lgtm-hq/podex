@@ -29,6 +29,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     Args:
         mailto: Email address for polite pool (higher rate limits).
+        base_url: Override for the CrossRef API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -39,7 +40,9 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     def __init__(
         self,
+        *,
         mailto: str | None = None,
+        base_url: str | None = None,
         requests_per_second: float = 10.0,
     ) -> None:
         super().__init__(requests_per_second)
@@ -51,7 +54,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             user_agent += f" (mailto:{mailto})"
 
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             headers={"User-Agent": user_agent},
             timeout=30.0,
         )

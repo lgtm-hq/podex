@@ -29,23 +29,29 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     Args:
         api_key: Optional NCBI API key for higher rate limits.
+        base_url: E-utilities root; esearch/efetch/esummary paths are
+            derived from it.
         requests_per_second: Rate limit for API calls.
     """
 
-    SEARCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
-    FETCH_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
-    SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
+    BASE_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 
     source = EnrichmentSource.PUBMED
     SUPPORTED_TYPES = {MediaType.STUDY, MediaType.ARTICLE}
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
+        base_url: str | None = None,
         requests_per_second: float = 2.5,
     ) -> None:
         super().__init__(requests_per_second)
         self.api_key = api_key
+        root = (base_url or self.BASE_URL).rstrip("/")
+        self.SEARCH_URL = f"{root}/esearch.fcgi"
+        self.FETCH_URL = f"{root}/efetch.fcgi"
+        self.SUMMARY_URL = f"{root}/esummary.fcgi"
         self.client = httpx.Client(timeout=30.0)
 
     def supports_media_type(self, media_type: str | MediaType) -> bool:

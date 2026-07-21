@@ -52,7 +52,7 @@ def test_tmdb_tv_show_path() -> None:
             return httpx.Response(200, json=search_payload)
         return httpx.Response(200, json=detail_payload)
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     _swap_client(provider, handler)
     media = Media(type=MediaType.TV_SHOW, title="Example Show")
     media.id = 2
@@ -85,7 +85,7 @@ def test_tmdb_person_detail_failure_yields_none() -> None:
             return httpx.Response(200, json=search_payload)
         return httpx.Response(500, text="boom")
 
-    provider = TMDBPersonProvider("key")
+    provider = TMDBPersonProvider(api_key="key")
     _swap_client(provider, handler)
     result = provider.search_and_enrich(
         _media("Frank Herbert", MediaType.PERSON),
@@ -127,7 +127,7 @@ def test_tmdb_year_filter_and_missing_details() -> None:
             return httpx.Response(200, json=search_payload)
         return httpx.Response(500, text="down")
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
     media.id = 5
@@ -151,7 +151,7 @@ def test_tmdb_person_by_known_id() -> None:
         "known_for_department": "Writing",
         "popularity": 5.0,
     }
-    provider = TMDBPersonProvider("key")
+    provider = TMDBPersonProvider(api_key="key")
     _swap_client(
         provider,
         lambda request: httpx.Response(200, json=detail),
@@ -198,7 +198,7 @@ def test_tmdb_waits_before_every_request() -> None:
             },
         )
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     limiter = _CountingLimiter()
     provider.rate_limiter = limiter
     _swap_client(provider, handler)
@@ -233,7 +233,7 @@ def test_tmdb_direct_id_lookup_skips_search() -> None:
             return httpx.Response(200, json=detail_payload)
         return httpx.Response(404, text="not found")
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     provider.rate_limiter = _CountingLimiter()
     _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune")
@@ -261,7 +261,7 @@ def test_tmdb_direct_id_404_falls_back_to_search() -> None:
             return httpx.Response(200, json={"results": []})
         return httpx.Response(404, text="not found")
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     provider.rate_limiter = _CountingLimiter()
     _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune")

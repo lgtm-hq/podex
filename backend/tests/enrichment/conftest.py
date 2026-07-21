@@ -39,12 +39,7 @@ class _StubProvider:
 
 
 def _enricher_with(providers: dict[EnrichmentSource, Any]) -> MediaEnricher:
-    enricher = MediaEnricher()
-    for provider in enricher.providers.values():
-        provider.close()
-    enricher.academic_enricher.close()
-    enricher.providers = providers
-    return enricher
+    return MediaEnricher(providers=providers)
 
 
 def _swap_client(provider: Any, handler: Any) -> None:
@@ -97,9 +92,5 @@ class _SlowProvider:
 
 
 def _academic_with(providers: dict[EnrichmentSource, Any], **kwargs: Any) -> Any:
-    """Build an AcademicEnricher whose providers are replaced by doubles."""
-    enricher = AcademicEnricher(**kwargs)
-    for provider in enricher.providers.values():
-        provider.close()
-    enricher.providers = providers
-    return enricher
+    """Build an AcademicEnricher whose providers are the given doubles."""
+    return AcademicEnricher(providers=providers, **kwargs)

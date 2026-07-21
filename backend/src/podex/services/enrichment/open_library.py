@@ -28,6 +28,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
     """Enrich books from OpenLibrary (free, no API key).
 
     Args:
+        base_url: Override for the Open Library API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -38,8 +39,14 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
 
     SUPPORTED_TYPES = {MediaType.BOOK}
 
-    def __init__(self, requests_per_second: float = 1.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        requests_per_second: float = 1.0,
+    ) -> None:
         super().__init__(requests_per_second)
+        self.base_url = base_url or self.BASE_URL
         self.client = httpx.Client(
             timeout=30.0,
             follow_redirects=True,
@@ -121,7 +128,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 params["author"] = author
 
             response = self.client.get(
-                f"{self.BASE_URL}/search.json",
+                f"{self.base_url}/search.json",
                 params=params,
             )
             response.raise_for_status()
@@ -143,7 +150,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         """
         try:
             response = self.client.get(
-                f"{self.BASE_URL}/works/{work_id}.json",
+                f"{self.base_url}/works/{work_id}.json",
             )
             response.raise_for_status()
             result: dict[str, Any] = response.json()

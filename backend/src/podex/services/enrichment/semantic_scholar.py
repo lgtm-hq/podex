@@ -28,6 +28,7 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
 
     Args:
         api_key: Optional API key for higher rate limits.
+        base_url: Override for the Semantic Scholar API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -56,7 +57,9 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
+        base_url: str | None = None,
         requests_per_second: float = 10.0,
     ) -> None:
         super().__init__(requests_per_second)
@@ -64,7 +67,7 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
         if api_key:
             headers["x-api-key"] = api_key
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             headers=headers,
             timeout=30.0,
         )

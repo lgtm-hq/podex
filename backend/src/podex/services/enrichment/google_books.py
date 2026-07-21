@@ -26,6 +26,7 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
 
     Args:
         api_key: Optional Google API key for higher rate limits.
+        base_url: Override for the Google Books API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -37,7 +38,9 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
 
     def __init__(
         self,
+        *,
         api_key: str | None = None,
+        base_url: str | None = None,
         requests_per_second: float = 1.0,
     ) -> None:
         super().__init__(requests_per_second)
@@ -46,7 +49,7 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         if api_key:
             params["key"] = api_key
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             params=params,
             timeout=30.0,
         )

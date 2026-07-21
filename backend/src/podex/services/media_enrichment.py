@@ -7,9 +7,12 @@ based on media type (books, movies, TV shows, etc.).
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from podex.config import EnrichmentSettings, get_settings
 from podex.models.media import MediaType
 from podex.services.academic_enrichment import AcademicEnricher
 from podex.services.enrichment.base import (
@@ -18,10 +21,13 @@ from podex.services.enrichment.base import (
     EnrichmentSource,
     VerifiedEnrichmentResult,
 )
+from podex.services.enrichment.crossref import CrossRefProvider
 from podex.services.enrichment.google_books import GoogleBooksProvider
 from podex.services.enrichment.itunes import iTunesProvider
 from podex.services.enrichment.omdb import OMDBProvider
 from podex.services.enrichment.open_library import OpenLibraryProvider
+from podex.services.enrichment.pubmed import PubMedProvider
+from podex.services.enrichment.semantic_scholar import SemanticScholarProvider
 from podex.services.enrichment.tmdb import TMDBProvider
 from podex.services.enrichment.tmdb_person import TMDBPersonProvider
 from podex.services.enrichment.wikipedia import WikipediaProvider
@@ -52,6 +58,148 @@ PROVIDER_PRIORITY: dict[MediaType, list[EnrichmentSource]] = {
     ],
     MediaType.PLACE: [],  # Wikipedia only
 }
+
+_ACADEMIC_SOURCES: frozenset[EnrichmentSource] = frozenset(
+    {
+        EnrichmentSource.PUBMED,
+        EnrichmentSource.SEMANTIC_SCHOLAR,
+        EnrichmentSource.CROSSREF,
+    },
+)
+
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    """Declarative description of one enrichment provider.
+
+    The registry decides availability only; ``PROVIDER_PRIORITY`` alone
+    decides ordering.
+    """
+
+    source: EnrichmentSource
+    provider_class: type[Any]
+    settings_accessor: Callable[[EnrichmentSettings], Any]
+    requires_key: bool
+
+
+_PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
+    ProviderSpec(
+        EnrichmentSource.TMDB,
+        TMDBProvider,
+        lambda s: s.tmdb,
+        True,
+    ),
+    ProviderSpec(
+        EnrichmentSource.TMDB_PERSON,
+        TMDBPersonProvider,
+        lambda s: s.tmdb,
+        True,
+    ),
+    ProviderSpec(
+        EnrichmentSource.OMDB,
+        OMDBProvider,
+        lambda s: s.omdb,
+        True,
+    ),
+    ProviderSpec(
+        EnrichmentSource.GOOGLE_BOOKS,
+        GoogleBooksProvider,
+        lambda s: s.google_books,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.OPEN_LIBRARY,
+        OpenLibraryProvider,
+        lambda s: s.open_library,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.ITUNES,
+        iTunesProvider,
+        lambda s: s.itunes,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.WIKIPEDIA,
+        WikipediaProvider,
+        lambda s: s.wikipedia,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.PUBMED,
+        PubMedProvider,
+        lambda s: s.pubmed,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.SEMANTIC_SCHOLAR,
+        SemanticScholarProvider,
+        lambda s: s.semantic_scholar,
+        False,
+    ),
+    ProviderSpec(
+        EnrichmentSource.CROSSREF,
+        CrossRefProvider,
+        lambda s: s.crossref,
+        False,
+    ),
+)
+
+
+def _instantiate_provider(
+    spec: ProviderSpec,
+    provider_settings: Any,
+) -> EnrichmentProvider:
+    """Build one provider instance from its settings sub-model."""
+    kwargs: dict[str, Any] = {"base_url": provider_settings.base_url}
+    if hasattr(provider_settings, "mailto"):
+        if provider_settings.mailto:
+            kwargs["mailto"] = provider_settings.mailto
+    elif hasattr(provider_settings, "api_key") and provider_settings.api_key:
+        kwargs["api_key"] = provider_settings.api_key
+    return spec.provider_class(**kwargs)
+
+
+def _build_providers(
+    settings: EnrichmentSettings,
+) -> dict[EnrichmentSource, EnrichmentProvider]:
+    """Instantiate enabled providers from settings via the registry table."""
+    providers: dict[EnrichmentSource, EnrichmentProvider] = {}
+    for spec in _PROVIDER_SPECS:
+        provider_settings = spec.settings_accessor(settings)
+        if not provider_settings.enabled:
+            logger.debug("Provider %s disabled in settings, skipping", spec.source)
+            continue
+        if spec.requires_key and not getattr(provider_settings, "api_key", ""):
+            logger.debug(
+                "Provider %s requires an API key and none is configured, skipping",
+                spec.source,
+            )
+            continue
+        providers[spec.source] = _instantiate_provider(spec, provider_settings)
+        logger.info("%s provider initialized", spec.source.value)
+    return providers
+
+
+def _split_academic(
+    providers: dict[EnrichmentSource, EnrichmentProvider],
+) -> tuple[
+    dict[EnrichmentSource, EnrichmentProvider],
+    dict[EnrichmentSource, EnrichmentProvider],
+]:
+    """Partition providers into non-academic and academic maps."""
+    academic = {
+        source: provider
+        for source, provider in providers.items()
+        if source in _ACADEMIC_SOURCES
+    }
+    non_academic = {
+        source: provider
+        for source, provider in providers.items()
+        if source not in _ACADEMIC_SOURCES
+    }
+    return non_academic, academic
+
 
 # External-ID keys persisted to dedicated Media columns (string-valued).
 # ``tmdb_id`` is handled separately because its column is an integer.
@@ -108,60 +256,33 @@ class MediaEnricher:
     """Enrich media items with external data from multiple sources.
 
     Args:
-        tmdb_api_key: TMDB API key (required for movies/TV).
-        omdb_api_key: OMDB API key (optional, for IMDB data).
-        google_books_api_key: Google Books API key (optional).
-        ncbi_api_key: NCBI API key for PubMed (optional, higher rate limits).
-        crossref_mailto: Email for CrossRef polite pool (optional).
+        settings: Enrichment settings; defaults to ``get_settings().enrichment``.
+        providers: Injected provider map that bypasses the registry. Injected
+            providers are not closed by :meth:`close` (caller owns lifecycle).
     """
 
     def __init__(
         self,
-        tmdb_api_key: str | None = None,
-        omdb_api_key: str | None = None,
-        google_books_api_key: str | None = None,
-        ncbi_api_key: str | None = None,
-        crossref_mailto: str | None = None,
+        settings: EnrichmentSettings | None = None,
+        providers: dict[EnrichmentSource, EnrichmentProvider] | None = None,
     ) -> None:
-        self.providers: dict[EnrichmentSource, EnrichmentProvider] = {}
+        if providers is not None:
+            self._owns_providers = False
+            non_academic, academic = _split_academic(providers)
+            self.providers = non_academic
+            self.academic_enricher = AcademicEnricher(providers=academic)
+            self.academic_enricher._owns_providers = False
+            return
 
-        # Initialize providers based on available API keys
-        if tmdb_api_key:
-            self.providers[EnrichmentSource.TMDB] = TMDBProvider(tmdb_api_key)
-            logger.info("TMDB provider initialized")
-            self.providers[EnrichmentSource.TMDB_PERSON] = TMDBPersonProvider(
-                tmdb_api_key
-            )
-            logger.info("TMDB Person provider initialized")
-
-        if omdb_api_key:
-            self.providers[EnrichmentSource.OMDB] = OMDBProvider(omdb_api_key)
-            logger.info("OMDB provider initialized")
-
-        # Google Books works without API key, but rate limited
-        self.providers[EnrichmentSource.GOOGLE_BOOKS] = GoogleBooksProvider(
-            api_key=google_books_api_key,
-        )
-        logger.info("Google Books provider initialized")
-
-        # OpenLibrary is free and doesn't need an API key
-        self.providers[EnrichmentSource.OPEN_LIBRARY] = OpenLibraryProvider()
-        logger.info("OpenLibrary provider initialized")
-
-        # iTunes is free and doesn't need an API key (for podcasts)
-        self.providers[EnrichmentSource.ITUNES] = iTunesProvider()
-        logger.info("iTunes provider initialized")
-
-        # Academic enricher for studies and articles (multi-source verification)
-        self.academic_enricher = AcademicEnricher(
-            ncbi_api_key=ncbi_api_key,
-            crossref_mailto=crossref_mailto,
-        )
+        self._owns_providers = True
+        if settings is None:
+            settings = get_settings().enrichment
+        built = _build_providers(settings)
+        non_academic, academic = _split_academic(built)
+        self.providers = non_academic
+        self.academic_enricher = AcademicEnricher(providers=academic)
+        self.academic_enricher._owns_providers = False
         logger.info("Academic enricher initialized")
-
-        # Wikipedia as universal fallback (works for any media type)
-        self.providers[EnrichmentSource.WIKIPEDIA] = WikipediaProvider()
-        logger.info("Wikipedia provider initialized")
 
     def enrich(
         self,
@@ -325,10 +446,13 @@ class MediaEnricher:
         return [source.value for source in self.providers]
 
     def close(self) -> None:
-        """Close all provider HTTP clients."""
+        """Close provider HTTP clients owned by this enricher."""
+        if not self._owns_providers:
+            return
         for provider in self.providers.values():
             provider.close()
-        self.academic_enricher.close()
+        for provider in self.academic_enricher.providers.values():
+            provider.close()
 
     def __enter__(self) -> MediaEnricher:
         return self

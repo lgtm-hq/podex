@@ -176,6 +176,148 @@ class ObservabilitySettings(BaseModel):
     sentry_environment: str = "production"
 
 
+class TmdbEnrichmentSettings(BaseModel):
+    """TMDB (and TMDB Person) enrichment provider settings.
+
+    Nested under ``settings.enrichment.tmdb``. Environment grammar:
+    ``PODEX_ENRICHMENT__TMDB__API_KEY``, ``PODEX_ENRICHMENT__TMDB__ENABLED``,
+    ``PODEX_ENRICHMENT__TMDB__BASE_URL``.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://api.themoviedb.org/3"
+    api_key: str = ""
+
+
+class OmdbEnrichmentSettings(BaseModel):
+    """OMDB enrichment provider settings.
+
+    Nested under ``settings.enrichment.omdb``. Environment grammar:
+    ``PODEX_ENRICHMENT__OMDB__API_KEY``, etc.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://www.omdbapi.com"
+    api_key: str = ""
+
+
+class GoogleBooksEnrichmentSettings(BaseModel):
+    """Google Books enrichment provider settings.
+
+    Nested under ``settings.enrichment.google_books``. Environment grammar:
+    ``PODEX_ENRICHMENT__GOOGLE_BOOKS__API_KEY``, etc.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://www.googleapis.com/books/v1"
+    api_key: str = ""
+
+
+class OpenLibraryEnrichmentSettings(BaseModel):
+    """Open Library enrichment provider settings (no API key).
+
+    Nested under ``settings.enrichment.open_library``.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://openlibrary.org"
+
+
+class ItunesEnrichmentSettings(BaseModel):
+    """iTunes Search enrichment provider settings (no API key).
+
+    Nested under ``settings.enrichment.itunes``.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://itunes.apple.com"
+
+
+class WikipediaEnrichmentSettings(BaseModel):
+    """Wikipedia enrichment provider settings (no API key).
+
+    Nested under ``settings.enrichment.wikipedia``. ``base_url`` maps to
+    the MediaWiki API endpoint (``API_URL`` on the provider).
+    """
+
+    enabled: bool = True
+    base_url: str = "https://en.wikipedia.org/w/api.php"
+
+
+class PubmedEnrichmentSettings(BaseModel):
+    """PubMed/NCBI E-utilities enrichment provider settings.
+
+    Nested under ``settings.enrichment.pubmed``. Environment grammar:
+    ``PODEX_ENRICHMENT__PUBMED__API_KEY``, etc. ``base_url`` is the
+    E-utilities root; esearch/efetch/esummary paths are derived from it.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+    api_key: str = ""
+
+
+class SemanticScholarEnrichmentSettings(BaseModel):
+    """Semantic Scholar enrichment provider settings.
+
+    Nested under ``settings.enrichment.semantic_scholar``.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://api.semanticscholar.org/graph/v1"
+    api_key: str = ""
+
+
+class CrossrefEnrichmentSettings(BaseModel):
+    """CrossRef enrichment provider settings.
+
+    Nested under ``settings.enrichment.crossref``. Uses ``mailto`` (not
+    ``api_key``) for the polite pool. Environment grammar:
+    ``PODEX_ENRICHMENT__CROSSREF__MAILTO``, etc.
+    """
+
+    enabled: bool = True
+    base_url: str = "https://api.crossref.org"
+    mailto: str = ""
+
+
+class EnrichmentSettings(BaseModel):
+    """External media-enrichment provider configuration.
+
+    Nested under ``settings.enrichment``. Environment grammar:
+    ``PODEX_ENRICHMENT__TMDB__API_KEY``,
+    ``PODEX_ENRICHMENT__CROSSREF__MAILTO``, etc.
+
+    Empty keys preserve today's keyless-only provider set. TMDB Person
+    shares ``tmdb`` settings (same API key and base URL). Rate limits
+    remain hard-coded on each provider.
+    """
+
+    tmdb: TmdbEnrichmentSettings = Field(default_factory=TmdbEnrichmentSettings)
+    omdb: OmdbEnrichmentSettings = Field(default_factory=OmdbEnrichmentSettings)
+    google_books: GoogleBooksEnrichmentSettings = Field(
+        default_factory=GoogleBooksEnrichmentSettings,
+    )
+    open_library: OpenLibraryEnrichmentSettings = Field(
+        default_factory=OpenLibraryEnrichmentSettings,
+    )
+    itunes: ItunesEnrichmentSettings = Field(
+        default_factory=ItunesEnrichmentSettings,
+    )
+    wikipedia: WikipediaEnrichmentSettings = Field(
+        default_factory=WikipediaEnrichmentSettings,
+    )
+    pubmed: PubmedEnrichmentSettings = Field(
+        default_factory=PubmedEnrichmentSettings,
+    )
+    semantic_scholar: SemanticScholarEnrichmentSettings = Field(
+        default_factory=SemanticScholarEnrichmentSettings,
+    )
+    crossref: CrossrefEnrichmentSettings = Field(
+        default_factory=CrossrefEnrichmentSettings,
+    )
+
+
 class Settings(BaseSettings):
     """Runtime settings, overridable via ``PODEX_`` environment variables."""
 
@@ -203,6 +345,7 @@ class Settings(BaseSettings):
     observability: ObservabilitySettings = Field(
         default_factory=ObservabilitySettings,
     )
+    enrichment: EnrichmentSettings = Field(default_factory=EnrichmentSettings)
 
     # Ops console API. The ops surface stays disabled until a key is
     # configured by the deployment environment; requests must present it in

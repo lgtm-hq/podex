@@ -9,12 +9,7 @@ PRs, and the changelog record *what* changed.
 | Number | Title | Status | Date |
 | --- | --- | --- | --- |
 | [0001](./0001-nested-settings-models.md) | Nested settings models with hard cutover | accepted | 2026-07-20 |
-| 0002 | Enrichment provider registry | proposed | — |
-
-Number **0002** is reserved for the enrichment-registry epic
-(`0002-enrichment-provider-registry.md`). Its body file lands with the
-owning implementation PR; do not create a placeholder body ahead of that
-PR. Link the row when the file lands.
+| [0002](./0002-enrichment-provider-registry.md) | Enrichment provider registry | accepted | 2026-07-21 |
 
 ## Format
 
