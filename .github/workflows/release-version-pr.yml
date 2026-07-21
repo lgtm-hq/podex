@@ -21,8 +21,10 @@ jobs:
       # yamllint disable-line rule:line-length
       ecosystem-config: '{"python":{"pyproject":"backend/pyproject.toml","init":"backend/src/podex/__init__.py"}}'
       auto-merge: true
-      # Allow MAJOR bumps so the version file stays aligned with auto-tag.
-      max-bump: major
+      # Pre-1.0: clamp breaking changes to a minor bump. Auto-tag reads the
+      # version from the merged release commit, so no desync is possible.
+      # Raise to major deliberately when the project is ready to ship 1.0.
+      max-bump: minor
       # Patch releases auto-merge; minor/major need explicit review.
       auto-merge-patch-only: true
       tooling-ref: '6a96470c698addc35f81b5420e1e4114b35c5a03'  # v0.59.1
