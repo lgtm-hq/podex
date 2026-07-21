@@ -60,7 +60,7 @@ def test_complete_nested_settings_load_from_env_mapping(
         "PODEX_TRANSCRIPTS__S3_ENDPOINT_URL": "https://r2.example",
         "PODEX_TRANSCRIPTS__S3_REGION_NAME": "auto",
         "PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID": "access-key-id",
-        "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY": "secret-access-key",
+        "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY": "secret-access-key",  # nosec B105
         "PODEX_AUTH__MAGIC_LINK_TTL_MINUTES": "20",
         "PODEX_AUTH__SESSION_TTL_DAYS": "60",
         "PODEX_AUTH__SESSION_COOKIE_NAME": "podex_full_session",
@@ -68,7 +68,7 @@ def test_complete_nested_settings_load_from_env_mapping(
         "PODEX_AUTH__SMTP_HOST": "smtp.example.com",
         "PODEX_AUTH__SMTP_PORT": "2525",
         "PODEX_AUTH__SMTP_USERNAME": "smtp-user",
-        "PODEX_AUTH__SMTP_PASSWORD": "smtp-password",
+        "PODEX_AUTH__SMTP_PASSWORD": "smtp-password",  # nosec B105
         "PODEX_AUTH__SMTP_FROM_EMAIL": "signin@example.com",
         "PODEX_AUTH__SMTP_STARTTLS": "false",
         "PODEX_AUTH__WORKOS_CLIENT_ID": "client_full",
@@ -81,7 +81,7 @@ def test_complete_nested_settings_load_from_env_mapping(
         "PODEX_BILLING__PROVIDER_NAME": "paddle",
         "PODEX_BILLING__CHECKOUT_URL": "https://checkout.example.com",
         "PODEX_BILLING__PADDLE_API_KEY": "pdl_full",
-        "PODEX_BILLING__PADDLE_WEBHOOK_SECRET": "whsec_full",
+        "PODEX_BILLING__PADDLE_WEBHOOK_SECRET": "whsec_full",  # nosec B105
         "PODEX_BILLING__PADDLE_PRICE_ID": "pri_full",
         "PODEX_BILLING__PADDLE_CHECKOUT_URL": "https://buy.example.com",
         "PODEX_OBSERVABILITY__SENTRY_DSN": "https://key@sentry.example/1",
