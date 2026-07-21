@@ -2,11 +2,7 @@
 # Keys are MediaType string values (study, movie, tv_show, …).
 
 # Used for negative matching; album is not a Podex MediaType.
-album_category_patterns = [
-  '\d{4}.*album',
-  'album.*by',
-  'studio.*album',
-]
+album_category_patterns = ['\d{4}.*album', 'album.*by', 'studio.*album']
 
 [positive_signals]
 study = [
@@ -47,13 +43,7 @@ tv_show = [
   "network",
   "showrunner",
 ]
-documentary = [
-  "documentary",
-  "film",
-  "directed",
-  "footage",
-  "narrator",
-]
+documentary = ["documentary", "film", "directed", "footage", "narrator"]
 book = [
   "novel",
   "book",
@@ -65,15 +55,7 @@ book = [
   "pages",
   "isbn",
 ]
-person = [
-  "born",
-  "died",
-  "is a",
-  "was a",
-  "known for",
-  "career",
-  "biography",
-]
+person = ["born", "died", "is a", "was a", "known for", "career", "biography"]
 place = [
   "located",
   "city",
@@ -84,12 +66,7 @@ place = [
   "geography",
   "coordinates",
 ]
-podcast = [
-  "podcast",
-  "hosted by",
-  "episodes",
-  "audio",
-]
+podcast = ["podcast", "hosted by", "episodes", "audio"]
 
 [negative_signals]
 study = [
@@ -118,22 +95,8 @@ movie = [
   "tv series",
   "television series",
 ]
-tv_show = [
-  "album",
-  "song",
-  "novel",
-  "film",
-  "movie",
-  "video game",
-]
-book = [
-  "album",
-  "song",
-  "film",
-  "movie",
-  "tv series",
-  "video game",
-]
+tv_show = ["album", "song", "novel", "film", "movie", "video game"]
+book = ["album", "song", "film", "movie", "tv series", "video game"]
 person = [
   "album",
   "film",
@@ -143,13 +106,7 @@ person = [
   "is a town",
   "is a country",
 ]
-place = [
-  "is an album",
-  "is a film",
-  "is a novel",
-  "is a song",
-  "born",
-]
+place = ["is an album", "is a film", "is a novel", "is a song", "born"]
 
 [category_patterns]
 study = [
@@ -161,26 +118,12 @@ study = [
   'medical.*ethic',
   'scientific.*misconduct',
 ]
-movie = [
-  '\d{4}.*film',
-  'film.*by',
-  'english.*film',
-  'american.*film',
-]
+movie = ['\d{4}.*film', 'film.*by', 'english.*film', 'american.*film']
 tv_show = [
   'television.*series',
   'tv.*series',
   '\d{4}.*television',
   'american.*television',
 ]
-book = [
-  '\d{4}.*novel',
-  'book.*by',
-  'fiction',
-]
-person = [
-  'living.*people',
-  '\d{4}.*birth',
-  '\d{4}.*death',
-  'people.*from',
-]
+book = ['\d{4}.*novel', 'book.*by', 'fiction']
+person = ['living.*people', '\d{4}.*birth', '\d{4}.*death', 'people.*from']
