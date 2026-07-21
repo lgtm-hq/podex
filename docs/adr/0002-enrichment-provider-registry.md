@@ -23,33 +23,40 @@ cleared the path for this change.
 
 ## Decision
 
-1. **Declarative registry table**, private to `media_enrichment.py`: a
-   frozen `ProviderSpec` per source (source, provider class, settings
-   accessor, `requires_key`). No decorator self-registration, no entry
+1. **Availability-only registry table**, private to
+   `media_enrichment.py`: a frozen `ProviderSpec` per source (source,
+   provider class, settings accessor, `requires_key`). The table
+   decides which providers exist for this process (enabled + key
+   present when required). No decorator self-registration, no entry
    points, no plugin loader. New provider = one spec line + one
    settings sub-model.
-2. **Availability vs ordering stay separate.** The registry decides
-   which providers are built (enabled + key present when required).
-   `PROVIDER_PRIORITY` alone decides try-order per `MediaType`.
-3. **Clean-break constructor:**
+2. **`PROVIDER_PRIORITY` owns ordering.** Try-order per `MediaType`
+   stays exclusively in `PROVIDER_PRIORITY`. The registry never sorts
+   or reorders providers.
+3. **Registry owns all provider instances; AcademicEnricher is
+   injected.** PubMed / Semantic Scholar / CrossRef are built by the
+   same table as every other source and handed to
+   `AcademicEnricher(providers=...)`. AcademicEnricher keeps only
+   orchestration (`aggregate_timeout_seconds`, verification). One
+   ownership path: when `MediaEnricher` builds from the registry it
+   closes both its map and the academic map once.
+4. **Clean-break constructor:**
    `MediaEnricher(settings=None, providers=None)`. `settings=None`
-   reads `get_settings().enrichment`. `providers=` bypasses the
-   registry for tests and does not transfer ownership (injected clients
-   are not closed). The five key kwargs are deleted.
-4. **Settings-driven keys and base URLs** under
+   reads `get_settings().enrichment`. The five key kwargs are deleted;
+   all call sites migrate in the same change.
+5. **Injected providers are not closed.** `providers=` bypasses the
+   registry for tests and does not transfer ownership — mirrors the
+   pipeline's `owns_enricher` pattern.
+6. **Settings-driven keys and base URLs** under
    `PODEX_ENRICHMENT__<PROVIDER>__*`. One small BaseModel per provider
    (`enabled`, `base_url`, and `api_key` or CrossRef `mailto`). TMDB
    Person shares `settings.enrichment.tmdb`. No rate-limit settings —
    per-API limits remain hard-coded on providers.
-5. **Conservative defaults:** empty keys / default env → byte-identical
+7. **Conservative defaults:** empty keys / default env → byte-identical
    to today's keyless set (Google Books, Open Library, iTunes,
    Wikipedia, plus academic PubMed / Semantic Scholar / CrossRef).
    `requires_key=True` only for TMDB, TMDB Person, and OMDB. SPOTIFY
    remains an intentional registry exclusion (no provider class).
-6. **Single ownership path:** the registry builds academic providers
-   too; `AcademicEnricher(providers=...)` is orchestration-only.
-   `MediaEnricher` owns lifecycle when it builds from the registry and
-   closes both its map and the academic map once.
 
 Deliberate non-choices: plugin/entry-point discovery; dual-read of the
 old key kwargs; exposing rate limits via env; registering SPOTIFY
