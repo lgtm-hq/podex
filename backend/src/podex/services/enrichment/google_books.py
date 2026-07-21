@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -32,7 +33,7 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
 
     source = EnrichmentSource.GOOGLE_BOOKS
 
-    SUPPORTED_TYPES = {"book"}
+    SUPPORTED_TYPES = {MediaType.BOOK}
 
     def __init__(
         self,
@@ -50,9 +51,12 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if Google Books supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Google Books and enrich media item.

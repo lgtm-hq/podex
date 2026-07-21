@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 import httpx
 
 if TYPE_CHECKING:
-    from podex.models.media import Media
+    from podex.models.media import Media, MediaType
 
 #: Prefixes stripped from DOI values, matched case-insensitively.
 _DOI_PREFIXES = (
@@ -174,7 +174,7 @@ class EnrichmentProvider(ABC):
         ...
 
     @abstractmethod
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if this provider supports the given media type.
 
         Args:

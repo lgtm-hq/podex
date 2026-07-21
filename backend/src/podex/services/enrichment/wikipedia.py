@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -32,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 
 # Type indicators - positive signals that a Wikipedia article matches the expected type
-TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
-    "study": [
+TYPE_POSITIVE_SIGNALS: dict[MediaType, list[str]] = {
+    MediaType.STUDY: [
         "study",
         "experiment",
         "research",
@@ -49,7 +50,7 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "published",
         "journal",
     ],
-    "movie": [
+    MediaType.MOVIE: [
         "film",
         "movie",
         "directed by",
@@ -60,7 +61,7 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "cinema",
         "released",
     ],
-    "tv_show": [
+    MediaType.TV_SHOW: [
         "television",
         "tv series",
         "sitcom",
@@ -71,14 +72,14 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "network",
         "showrunner",
     ],
-    "documentary": [
+    MediaType.DOCUMENTARY: [
         "documentary",
         "film",
         "directed",
         "footage",
         "narrator",
     ],
-    "book": [
+    MediaType.BOOK: [
         "novel",
         "book",
         "author",
@@ -89,7 +90,7 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "pages",
         "isbn",
     ],
-    "person": [
+    MediaType.PERSON: [
         "born",
         "died",
         "is a",
@@ -98,7 +99,7 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "career",
         "biography",
     ],
-    "place": [
+    MediaType.PLACE: [
         "located",
         "city",
         "town",
@@ -108,7 +109,7 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
         "geography",
         "coordinates",
     ],
-    "podcast": [
+    MediaType.PODCAST: [
         "podcast",
         "hosted by",
         "episodes",
@@ -117,8 +118,8 @@ TYPE_POSITIVE_SIGNALS: dict[str, list[str]] = {
 }
 
 # Type indicators - negative signals that a Wikipedia article is NOT the expected type
-TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
-    "study": [
+TYPE_NEGATIVE_SIGNALS: dict[MediaType, list[str]] = {
+    MediaType.STUDY: [
         "album",
         "song",
         "band",
@@ -135,7 +136,7 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
         "ep",
         "soundtrack",
     ],
-    "movie": [
+    MediaType.MOVIE: [
         "album",
         "song",
         "novel",
@@ -144,7 +145,7 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
         "tv series",
         "television series",
     ],
-    "tv_show": [
+    MediaType.TV_SHOW: [
         "album",
         "song",
         "novel",
@@ -152,7 +153,7 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
         "movie",
         "video game",
     ],
-    "book": [
+    MediaType.BOOK: [
         "album",
         "song",
         "film",
@@ -160,7 +161,7 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
         "tv series",
         "video game",
     ],
-    "person": [
+    MediaType.PERSON: [
         "album",
         "film",
         "novel",
@@ -169,7 +170,7 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
         "is a town",
         "is a country",
     ],
-    "place": [
+    MediaType.PLACE: [
         "is an album",
         "is a film",
         "is a novel",
@@ -179,8 +180,8 @@ TYPE_NEGATIVE_SIGNALS: dict[str, list[str]] = {
 }
 
 # Category patterns that indicate article type
-CATEGORY_TYPE_PATTERNS: dict[str, list[str]] = {
-    "study": [
+CATEGORY_TYPE_PATTERNS: dict[MediaType, list[str]] = {
+    MediaType.STUDY: [
         r"medical.*stud",
         r"clinical.*trial",
         r"experiment",
@@ -189,35 +190,37 @@ CATEGORY_TYPE_PATTERNS: dict[str, list[str]] = {
         r"medical.*ethic",
         r"scientific.*misconduct",
     ],
-    "movie": [
+    MediaType.MOVIE: [
         r"\d{4}.*film",
         r"film.*by",
         r"english.*film",
         r"american.*film",
     ],
-    "tv_show": [
+    MediaType.TV_SHOW: [
         r"television.*series",
         r"tv.*series",
         r"\d{4}.*television",
         r"american.*television",
     ],
-    "book": [
+    MediaType.BOOK: [
         r"\d{4}.*novel",
         r"book.*by",
         r"fiction",
     ],
-    "person": [
+    MediaType.PERSON: [
         r"living.*people",
         r"\d{4}.*birth",
         r"\d{4}.*death",
         r"people.*from",
     ],
-    "album": [  # Used for negative matching
-        r"\d{4}.*album",
-        r"album.*by",
-        r"studio.*album",
-    ],
 }
+
+# Used for negative matching; album is not a Podex MediaType.
+ALBUM_CATEGORY_PATTERNS = [
+    r"\d{4}.*album",
+    r"album.*by",
+    r"studio.*album",
+]
 
 
 class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
@@ -238,16 +241,15 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
     source = EnrichmentSource.WIKIPEDIA
 
     SUPPORTED_TYPES = {
-        "book",
-        "movie",
-        "documentary",
-        "tv_show",
-        "study",
-        "podcast",
-        "article",
-        "standup_special",
-        "person",
-        "place",
+        MediaType.BOOK,
+        MediaType.MOVIE,
+        MediaType.DOCUMENTARY,
+        MediaType.TV_SHOW,
+        MediaType.STUDY,
+        MediaType.PODCAST,
+        MediaType.ARTICLE,
+        MediaType.PERSON,
+        MediaType.PLACE,
     }
 
     def __init__(self, requests_per_second: float = 5.0) -> None:
@@ -259,9 +261,12 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             },
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Wikipedia supports all media types."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Wikipedia and enrich media item with type validation.
@@ -276,7 +281,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             return None
 
         # For studies, try specific search queries first
-        if media.type in ("study", "article"):
+        if media.type in (MediaType.STUDY, MediaType.ARTICLE):
             result = self._search_for_study(media)
             if result:
                 return result
@@ -396,7 +401,10 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                     # Good candidate - fetch and validate
                     self.rate_limiter.wait_sync()
                     page_data = self._get_page_details(page_id)
-                    if page_data and self._validate_page_type(page_data, "study"):
+                    if page_data and self._validate_page_type(
+                        page_data,
+                        MediaType.STUDY,
+                    ):
                         confidence = min(0.85 + (signal_count * 0.02), 0.95)
                         logger.info(
                             f"Found study match for '{media.title}': {result_title}"
@@ -410,7 +418,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
         variations = []
         title = media.title
 
-        if media.type == "study":
+        if media.type == MediaType.STUDY:
             variations.extend(
                 [
                     f"{title} study",
@@ -419,22 +427,22 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                     f"{title} research",
                 ]
             )
-        elif media.type == "movie":
+        elif media.type == MediaType.MOVIE:
             variations.append(f"{title} film")
             if media.year:
                 variations.append(f"{title} {media.year} film")
-        elif media.type == "tv_show":
+        elif media.type == MediaType.TV_SHOW:
             variations.extend(
                 [
                     f"{title} TV series",
                     f"{title} television series",
                 ]
             )
-        elif media.type == "book":
+        elif media.type == MediaType.BOOK:
             variations.append(f"{title} novel")
             if media.author:
                 variations.append(f"{title} {media.author} book")
-        elif media.type == "documentary":
+        elif media.type == MediaType.DOCUMENTARY:
             variations.extend(
                 [
                     f"{title} documentary",
@@ -506,7 +514,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
 
             # Special case: check result title for type indicators
             result_title_lower = result_title.lower()
-            if media.type == "study" and any(
+            if media.type == MediaType.STUDY and any(
                 x in result_title_lower
                 for x in ["(album)", "(song)", "(single)", "(ep)"]
             ):
@@ -532,7 +540,11 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
 
         return None
 
-    def _validate_page_type(self, page: dict[str, Any], expected_type: str) -> bool:
+    def _validate_page_type(
+        self,
+        page: dict[str, Any],
+        expected_type: MediaType,
+    ) -> bool:
         """Validate that a Wikipedia page matches the expected media type.
 
         Args:
@@ -551,10 +563,9 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
         cat_text = " ".join(cat_titles)
 
         # Check for negative category patterns (wrong type)
-        if expected_type == "study":
+        if expected_type == MediaType.STUDY:
             # Reject if it's clearly an album, song, or film
-            album_patterns = CATEGORY_TYPE_PATTERNS.get("album", [])
-            for pattern in album_patterns:
+            for pattern in ALBUM_CATEGORY_PATTERNS:
                 if re.search(pattern, cat_text):
                     logger.debug(f"Rejecting: matched album pattern '{pattern}'")
                     return False
