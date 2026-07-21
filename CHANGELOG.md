@@ -22,7 +22,7 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
-## [1.0.0] - 2026-07-20
+## [0.40.0] - 2026-07-21
 
 ### Changed
 
