@@ -99,27 +99,91 @@ def test_complete_nested_settings_load_from_env_mapping(
     settings = Settings()
 
     assert_that(settings.app_name).is_equal_to("podex-full")
+    assert_that(settings.environment).is_equal_to("staging")
+    assert_that(settings.debug).is_true()
+    assert_that(settings.api_v2_prefix).is_equal_to("/api/test")
+    assert_that(settings.cors_origins).is_equal_to(["https://app.example.com"])
     assert_that(settings.public_web_url).is_equal_to("https://app.example.com")
+
     assert_that(settings.database.url).is_equal_to(
         "postgresql+psycopg://podex@db/podex",
     )
     assert_that(settings.database.pool_size).is_equal_to(9)
+    assert_that(settings.database.max_overflow).is_equal_to(3)
+    assert_that(settings.database.pool_recycle_seconds).is_equal_to(240)
+
     assert_that(settings.rate_limit.enabled).is_false()
+    assert_that(settings.rate_limit.max_requests).is_equal_to(42)
+    assert_that(settings.rate_limit.window_seconds).is_equal_to(12.5)
     assert_that(settings.rate_limit.exempt_paths).is_equal_to(
         ["/health", "/metrics"],
     )
+    assert_that(settings.rate_limit.redis_url).is_equal_to("redis://redis:6379/2")
+    assert_that(settings.rate_limit.redis_prefix).is_equal_to("podex:full")
+
     assert_that(settings.stats_cache.ttl_seconds).is_equal_to(7.5)
+
+    assert_that(settings.transcripts.storage_backend).is_equal_to("encrypted_s3")
     assert_that(settings.transcripts.storage_path).is_equal_to(
         Path("./data/full-model-transcripts"),
     )
+    assert_that(settings.transcripts.encryption_key).is_equal_to("fernet-key")
     assert_that(settings.transcripts.s3_bucket).is_equal_to("full-transcripts")
+    assert_that(settings.transcripts.s3_endpoint_url).is_equal_to(
+        "https://r2.example",
+    )
+    assert_that(settings.transcripts.s3_region_name).is_equal_to("auto")
+    assert_that(settings.transcripts.s3_access_key_id).is_equal_to("access-key-id")
+    assert_that(settings.transcripts.s3_secret_access_key).is_equal_to(
+        "secret-access-key",
+    )
+
+    assert_that(settings.auth.magic_link_ttl_minutes).is_equal_to(20)
+    assert_that(settings.auth.session_ttl_days).is_equal_to(60)
+    assert_that(settings.auth.session_cookie_name).is_equal_to(
+        "podex_full_session",
+    )
+    assert_that(settings.auth.session_cookie_secure).is_false()
+    assert_that(settings.auth.smtp_host).is_equal_to("smtp.example.com")
     assert_that(settings.auth.smtp_port).is_equal_to(2525)
+    assert_that(settings.auth.smtp_username).is_equal_to("smtp-user")
+    assert_that(settings.auth.smtp_password).is_equal_to("smtp-password")
+    assert_that(settings.auth.smtp_from_email).is_equal_to("signin@example.com")
+    assert_that(settings.auth.smtp_starttls).is_false()
+    assert_that(settings.auth.workos_client_id).is_equal_to("client_full")
+    assert_that(settings.auth.workos_api_key).is_equal_to("sk_full")
+    assert_that(settings.auth.workos_redirect_uri).is_equal_to(
+        "https://app.example.com/callback",
+    )
     assert_that(settings.auth.workos_enabled).is_true()
+
+    assert_that(settings.billing.paid_tier_enabled).is_true()
+    assert_that(settings.billing.paid_tier_enforced).is_true()
     assert_that(settings.billing.paid_api_requests_per_month).is_equal_to(1500)
+    assert_that(settings.billing.paid_llm_requests_per_month).is_equal_to(75)
+    assert_that(settings.billing.provider_name).is_equal_to("paddle")
+    assert_that(settings.billing.checkout_url).is_equal_to(
+        "https://checkout.example.com",
+    )
+    assert_that(settings.billing.paddle_api_key).is_equal_to("pdl_full")
+    assert_that(settings.billing.paddle_webhook_secret).is_equal_to("whsec_full")
+    assert_that(settings.billing.paddle_price_id).is_equal_to("pri_full")
+    assert_that(settings.billing.paddle_checkout_url).is_equal_to(
+        "https://buy.example.com",
+    )
     assert_that(settings.billing.paddle_checkout_enabled).is_true()
+
+    assert_that(settings.observability.sentry_dsn).is_equal_to(
+        "https://key@sentry.example/1",
+    )
     assert_that(settings.observability.sentry_environment).is_equal_to("staging")
+
+    assert_that(settings.ops_api_key).is_equal_to("ops-key")
     assert_that(settings.ops_review_pending_alert_threshold).is_equal_to(12)
+    assert_that(settings.ops_alert_delivery_pending_threshold).is_equal_to(6)
+    assert_that(settings.scheduler_tick_seconds).is_equal_to(15)
     assert_that(settings.scheduler_digest_interval_minutes).is_equal_to(120)
+    assert_that(settings.scheduler_retention_interval_minutes).is_equal_to(240)
 
 
 def test_database_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None:
