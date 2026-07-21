@@ -18,9 +18,6 @@ from podex.services.enrichment.base import (
     VerifiedEnrichmentResult,
     canonicalize_doi,
 )
-from podex.services.enrichment.crossref import CrossRefProvider
-from podex.services.enrichment.pubmed import PubMedProvider
-from podex.services.enrichment.semantic_scholar import SemanticScholarProvider
 
 if TYPE_CHECKING:
     from podex.models.media import Media
@@ -38,9 +35,11 @@ class AcademicEnricher:
     cross-validates results using DOI as canonical identifier,
     and requires 2+ source confirmation for high-confidence enrichment.
 
+    Providers are injected (typically by ``MediaEnricher``'s registry).
+    Bare construction with no providers degrades to no-op enrichment.
+
     Args:
-        ncbi_api_key: Optional NCBI API key for PubMed (higher rate limits).
-        crossref_mailto: Optional email for CrossRef polite pool.
+        providers: Map of academic enrichment providers to query.
         aggregate_timeout_seconds: Aggregate deadline for the concurrent
             provider fan-out; providers still running past it are dropped.
     """
@@ -49,16 +48,12 @@ class AcademicEnricher:
 
     def __init__(
         self,
-        ncbi_api_key: str | None = None,
-        crossref_mailto: str | None = None,
+        providers: dict[EnrichmentSource, Any] | None = None,
         aggregate_timeout_seconds: float = DEFAULT_AGGREGATE_TIMEOUT_SECONDS,
     ) -> None:
+        self.providers = dict(providers or {})
         self.aggregate_timeout_seconds = aggregate_timeout_seconds
-        self.providers = {
-            EnrichmentSource.PUBMED: PubMedProvider(api_key=ncbi_api_key),
-            EnrichmentSource.SEMANTIC_SCHOLAR: SemanticScholarProvider(),
-            EnrichmentSource.CROSSREF: CrossRefProvider(mailto=crossref_mailto),
-        }
+        self._owns_providers = True
 
     def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if this enricher supports the given media type."""
@@ -404,7 +399,9 @@ class AcademicEnricher:
         )
 
     def close(self) -> None:
-        """Close all provider HTTP clients."""
+        """Close provider HTTP clients owned by this enricher."""
+        if not self._owns_providers:
+            return
         for provider in self.providers.values():
             provider.close()
 

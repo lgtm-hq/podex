@@ -181,17 +181,30 @@ def test_apply_enrichment_fills_media_fields() -> None:
 
 def test_enricher_initializes_all_configured_providers() -> None:
     """API keys switch on their providers in the registry."""
-    enricher = MediaEnricher(
-        tmdb_api_key="k1",
-        omdb_api_key="k2",
-        google_books_api_key="k3",
-        ncbi_api_key="k4",
-        crossref_mailto="ops@example.com",
+    from podex.config import (
+        CrossrefEnrichmentSettings,
+        EnrichmentSettings,
+        GoogleBooksEnrichmentSettings,
+        OmdbEnrichmentSettings,
+        PubmedEnrichmentSettings,
+        TmdbEnrichmentSettings,
     )
+
+    settings = EnrichmentSettings(
+        tmdb=TmdbEnrichmentSettings(api_key="k1"),
+        omdb=OmdbEnrichmentSettings(api_key="k2"),
+        google_books=GoogleBooksEnrichmentSettings(api_key="k3"),
+        pubmed=PubmedEnrichmentSettings(api_key="k4"),
+        crossref=CrossrefEnrichmentSettings(mailto="ops@example.com"),
+    )
+    enricher = MediaEnricher(settings=settings)
     names = enricher.get_available_providers()
+    academic_names = list(enricher.academic_enricher.providers)
     enricher.close()
 
     assert_that(len(names)).is_greater_than(5)
+    assert_that(names).contains("tmdb").contains("omdb").contains("google_books")
+    assert_that(academic_names).contains(EnrichmentSource.PUBMED)
 
 
 def test_pipeline_apply_and_alias_helpers() -> None:
@@ -259,7 +272,7 @@ def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
 
     from podex.services.enrichment import OMDBProvider
 
-    provider = OMDBProvider("sekret-key")
+    provider = OMDBProvider(api_key="sekret-key")
     provider.rate_limiter = _CountingLimiter()
     _swap_client(
         provider,
@@ -292,11 +305,11 @@ def test_provider_context_managers_close_clients() -> None:
     factories: tuple[Any, ...] = (
         lambda: CrossRefProvider(),
         lambda: GoogleBooksProvider(),
-        lambda: OMDBProvider("key"),
+        lambda: OMDBProvider(api_key="key"),
         lambda: PubMedProvider(),
         lambda: SemanticScholarProvider(),
-        lambda: TMDBProvider("key"),
-        lambda: TMDBPersonProvider("key"),
+        lambda: TMDBProvider(api_key="key"),
+        lambda: TMDBPersonProvider(api_key="key"),
         lambda: iTunesProvider(),
     )
     for factory in factories:

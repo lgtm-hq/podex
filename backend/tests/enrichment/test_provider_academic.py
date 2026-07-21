@@ -67,13 +67,12 @@ def test_academic_enricher_cross_validates_by_doi() -> None:
         metadata={"title": "Sleep study"},
         confidence=0.85,
     )
-    enricher = AcademicEnricher()
-    for provider in enricher.providers.values():
-        provider.close()
-    enricher.providers = {
-        EnrichmentSource.CROSSREF: _StubProvider(agree_a),
-        EnrichmentSource.SEMANTIC_SCHOLAR: _StubProvider(agree_b),
-    }
+    enricher = _academic_with(
+        {
+            EnrichmentSource.CROSSREF: _StubProvider(agree_a),
+            EnrichmentSource.SEMANTIC_SCHOLAR: _StubProvider(agree_b),
+        },
+    )
 
     result = enricher.enrich_with_verification(
         _media("Sleep study", MediaType.STUDY),
@@ -497,10 +496,9 @@ def test_academic_single_source_with_doi_verification() -> None:
         metadata={"title": "Solo study"},
         confidence=0.9,
     )
-    enricher = AcademicEnricher()
-    for provider in enricher.providers.values():
-        provider.close()
-    enricher.providers = {EnrichmentSource.CROSSREF: _StubProvider(only)}
+    enricher = _academic_with(
+        {EnrichmentSource.CROSSREF: _StubProvider(only)},
+    )
 
     strict = enricher.enrich_with_verification(
         _media("Solo study", MediaType.STUDY),
@@ -680,7 +678,7 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
         "imdbRating": "5.0",
         "imdbVotes": "10",
     }
-    omdb = OMDBProvider("key")
+    omdb = OMDBProvider(api_key="key")
     _swap_client(
         omdb,
         lambda request: httpx.Response(200, json=weak_payload),

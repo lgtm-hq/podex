@@ -32,6 +32,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     Args:
         api_key: TMDB API key.
+        base_url: Override for the TMDB API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -47,11 +48,17 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         "standup_special",
     }
 
-    def __init__(self, api_key: str, requests_per_second: float = 3.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        requests_per_second: float = 3.0,
+    ) -> None:
         super().__init__(requests_per_second)
         self.api_key = api_key
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             params={"api_key": api_key},
             timeout=30.0,
         )

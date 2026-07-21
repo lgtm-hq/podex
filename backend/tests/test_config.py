@@ -12,6 +12,7 @@ from podex.config import (
     AuthSettings,
     BillingSettings,
     DatabaseSettings,
+    EnrichmentSettings,
     ObservabilitySettings,
     RateLimitSettings,
     Settings,
@@ -86,6 +87,30 @@ def test_complete_nested_settings_load_from_env_mapping(
         "PODEX_BILLING__PADDLE_CHECKOUT_URL": "https://buy.example.com",
         "PODEX_OBSERVABILITY__SENTRY_DSN": "https://key@sentry.example/1",
         "PODEX_OBSERVABILITY__SENTRY_ENVIRONMENT": "staging",
+        "PODEX_ENRICHMENT__TMDB__ENABLED": "true",
+        "PODEX_ENRICHMENT__TMDB__BASE_URL": "https://tmdb.example/3",
+        "PODEX_ENRICHMENT__TMDB__API_KEY": "tmdb-key",
+        "PODEX_ENRICHMENT__OMDB__ENABLED": "false",
+        "PODEX_ENRICHMENT__OMDB__BASE_URL": "https://omdb.example",
+        "PODEX_ENRICHMENT__OMDB__API_KEY": "omdb-key",
+        "PODEX_ENRICHMENT__GOOGLE_BOOKS__ENABLED": "true",
+        "PODEX_ENRICHMENT__GOOGLE_BOOKS__BASE_URL": "https://books.example/v1",
+        "PODEX_ENRICHMENT__GOOGLE_BOOKS__API_KEY": "books-key",
+        "PODEX_ENRICHMENT__OPEN_LIBRARY__ENABLED": "true",
+        "PODEX_ENRICHMENT__OPEN_LIBRARY__BASE_URL": "https://ol.example",
+        "PODEX_ENRICHMENT__ITUNES__ENABLED": "true",
+        "PODEX_ENRICHMENT__ITUNES__BASE_URL": "https://itunes.example",
+        "PODEX_ENRICHMENT__WIKIPEDIA__ENABLED": "true",
+        "PODEX_ENRICHMENT__WIKIPEDIA__BASE_URL": "https://wiki.example/w/api.php",
+        "PODEX_ENRICHMENT__PUBMED__ENABLED": "true",
+        "PODEX_ENRICHMENT__PUBMED__BASE_URL": "https://pubmed.example/eutils",
+        "PODEX_ENRICHMENT__PUBMED__API_KEY": "ncbi-key",
+        "PODEX_ENRICHMENT__SEMANTIC_SCHOLAR__ENABLED": "true",
+        "PODEX_ENRICHMENT__SEMANTIC_SCHOLAR__BASE_URL": "https://s2.example/graph/v1",
+        "PODEX_ENRICHMENT__SEMANTIC_SCHOLAR__API_KEY": "s2-key",
+        "PODEX_ENRICHMENT__CROSSREF__ENABLED": "true",
+        "PODEX_ENRICHMENT__CROSSREF__BASE_URL": "https://crossref.example",
+        "PODEX_ENRICHMENT__CROSSREF__MAILTO": "ops@example.com",
         "PODEX_OPS_API_KEY": "ops-key",
         "PODEX_OPS_REVIEW_PENDING_ALERT_THRESHOLD": "12",
         "PODEX_OPS_ALERT_DELIVERY_PENDING_THRESHOLD": "6",
@@ -177,6 +202,43 @@ def test_complete_nested_settings_load_from_env_mapping(
         "https://key@sentry.example/1",
     )
     assert_that(settings.observability.sentry_environment).is_equal_to("staging")
+
+    assert_that(settings.enrichment).is_instance_of(EnrichmentSettings)
+    assert_that(settings.enrichment.tmdb.enabled).is_true()
+    assert_that(settings.enrichment.tmdb.base_url).is_equal_to(
+        "https://tmdb.example/3",
+    )
+    assert_that(settings.enrichment.tmdb.api_key).is_equal_to("tmdb-key")
+    assert_that(settings.enrichment.omdb.enabled).is_false()
+    assert_that(settings.enrichment.omdb.base_url).is_equal_to(
+        "https://omdb.example",
+    )
+    assert_that(settings.enrichment.omdb.api_key).is_equal_to("omdb-key")
+    assert_that(settings.enrichment.google_books.api_key).is_equal_to("books-key")
+    assert_that(settings.enrichment.google_books.base_url).is_equal_to(
+        "https://books.example/v1",
+    )
+    assert_that(settings.enrichment.open_library.base_url).is_equal_to(
+        "https://ol.example",
+    )
+    assert_that(settings.enrichment.itunes.base_url).is_equal_to(
+        "https://itunes.example",
+    )
+    assert_that(settings.enrichment.wikipedia.base_url).is_equal_to(
+        "https://wiki.example/w/api.php",
+    )
+    assert_that(settings.enrichment.pubmed.api_key).is_equal_to("ncbi-key")
+    assert_that(settings.enrichment.pubmed.base_url).is_equal_to(
+        "https://pubmed.example/eutils",
+    )
+    assert_that(settings.enrichment.semantic_scholar.api_key).is_equal_to("s2-key")
+    assert_that(settings.enrichment.semantic_scholar.base_url).is_equal_to(
+        "https://s2.example/graph/v1",
+    )
+    assert_that(settings.enrichment.crossref.mailto).is_equal_to("ops@example.com")
+    assert_that(settings.enrichment.crossref.base_url).is_equal_to(
+        "https://crossref.example",
+    )
 
     assert_that(settings.ops_api_key).is_equal_to("ops-key")
     assert_that(settings.ops_review_pending_alert_threshold).is_equal_to(12)

@@ -31,6 +31,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     Args:
         api_key: OMDB API key.
+        base_url: Override for the OMDB API root.
         requests_per_second: Rate limit for API calls.
     """
 
@@ -45,11 +46,17 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         "standup_special",
     }
 
-    def __init__(self, api_key: str, requests_per_second: float = 2.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        requests_per_second: float = 2.0,
+    ) -> None:
         super().__init__(requests_per_second)
         self.api_key = api_key
         self.client = httpx.Client(
-            base_url=self.BASE_URL,
+            base_url=base_url or self.BASE_URL,
             timeout=30.0,
         )
 

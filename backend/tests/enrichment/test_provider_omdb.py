@@ -26,7 +26,7 @@ def test_omdb_series_path() -> None:
         "imdbVotes": "5,000",
         "totalSeasons": "3",
     }
-    provider = OMDBProvider("key")
+    provider = OMDBProvider(api_key="key")
     _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
@@ -55,7 +55,7 @@ def test_omdb_year_and_documentary_paths() -> None:
         "imdbRating": "7.5",
         "imdbVotes": "1,000",
     }
-    provider = OMDBProvider("key")
+    provider = OMDBProvider(api_key="key")
     _swap_client(
         provider,
         lambda request: httpx.Response(200, json=payload),
@@ -100,7 +100,7 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
             },
         )
 
-    provider = OMDBProvider("key")
+    provider = OMDBProvider(api_key="key")
     _swap_client(provider, handler)
     result = provider.search_and_enrich(
         Media(type=MediaType.MOVIE, title="Dune: Part One"),
@@ -125,7 +125,7 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
         "imdbRating": "8.0",
         "imdbVotes": "1",
     }
-    omdb = OMDBProvider("key")
+    omdb = OMDBProvider(api_key="key")
     _swap_client(
         omdb,
         lambda request: httpx.Response(200, json=omdb_payload),
@@ -199,7 +199,7 @@ def test_omdb_waits_before_every_request() -> None:
             },
         )
 
-    provider = OMDBProvider("key")
+    provider = OMDBProvider(api_key="key")
     limiter = _CountingLimiter()
     provider.rate_limiter = limiter
     _swap_client(provider, handler)

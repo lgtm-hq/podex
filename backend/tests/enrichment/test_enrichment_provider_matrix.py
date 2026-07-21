@@ -39,15 +39,15 @@ _EMPTY_RESPONSES: dict[str, dict[str, Any]] = {
 _PROVIDERS: list[tuple[str, Any, MediaType]] = [
     ("google_books", lambda: GoogleBooksProvider(), MediaType.BOOK),
     ("itunes", lambda: iTunesProvider(), MediaType.PODCAST),
-    ("omdb", lambda: OMDBProvider("key"), MediaType.MOVIE),
+    ("omdb", lambda: OMDBProvider(api_key="key"), MediaType.MOVIE),
     ("crossref", lambda: CrossRefProvider(), MediaType.ARTICLE),
     (
         "semantic_scholar",
         lambda: SemanticScholarProvider(),
         MediaType.STUDY,
     ),
-    ("tmdb", lambda: TMDBProvider("key"), MediaType.MOVIE),
-    ("tmdb_person", lambda: TMDBPersonProvider("key"), MediaType.PERSON),
+    ("tmdb", lambda: TMDBProvider(api_key="key"), MediaType.MOVIE),
+    ("tmdb_person", lambda: TMDBPersonProvider(api_key="key"), MediaType.PERSON),
 ]
 
 
@@ -216,7 +216,7 @@ def test_omdb_happy_path() -> None:
         "Awards": "Won 6 Oscars",
         "BoxOffice": "$108,327,830",
     }
-    provider = OMDBProvider("key")
+    provider = OMDBProvider(api_key="key")
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
 
     result = provider.search_and_enrich(_media("Dune", MediaType.MOVIE))
@@ -271,7 +271,7 @@ def test_tmdb_happy_path() -> None:
             return httpx.Response(200, json=search_payload)
         return httpx.Response(200, json=detail_payload)
 
-    provider = TMDBProvider("key")
+    provider = TMDBProvider(api_key="key")
     _swap_client(provider, handler)
     result = provider.search_and_enrich(_media("Dune", MediaType.MOVIE))
     provider.close()
@@ -312,7 +312,7 @@ def test_tmdb_person_happy_path() -> None:
             return httpx.Response(200, json=search_payload)
         return httpx.Response(200, json=detail_payload)
 
-    provider = TMDBPersonProvider("key")
+    provider = TMDBPersonProvider(api_key="key")
     _swap_client(provider, handler)
     result = provider.search_and_enrich(
         _media("Frank Herbert", MediaType.PERSON),

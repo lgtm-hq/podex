@@ -48,6 +48,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
     to prevent incorrect matches (e.g., albums matching study searches).
 
     Args:
+        base_url: Override for the MediaWiki API endpoint (``API_URL``).
         requests_per_second: Rate limit for API calls.
     """
 
@@ -67,8 +68,15 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
         MediaType.PLACE,
     }
 
-    def __init__(self, requests_per_second: float = 5.0) -> None:
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        requests_per_second: float = 5.0,
+    ) -> None:
         super().__init__(requests_per_second)
+        if base_url is not None:
+            self.API_URL = base_url
         self.client = httpx.Client(
             timeout=30.0,
             headers={
