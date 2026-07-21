@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -36,7 +37,7 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
 
     source = EnrichmentSource.TMDB_PERSON
 
-    SUPPORTED_TYPES = {"person", "standup_special"}
+    SUPPORTED_TYPES = {MediaType.PERSON, "standup_special"}
 
     def __init__(self, api_key: str, requests_per_second: float = 3.0) -> None:
         super().__init__(requests_per_second)
@@ -47,7 +48,7 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if TMDB Person supports this media type."""
         return media_type in self.SUPPORTED_TYPES
 

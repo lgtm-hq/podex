@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -39,7 +40,12 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     source = EnrichmentSource.TMDB
 
-    SUPPORTED_TYPES = {"movie", "tv_show", "documentary", "standup_special"}
+    SUPPORTED_TYPES = {
+        MediaType.MOVIE,
+        MediaType.TV_SHOW,
+        MediaType.DOCUMENTARY,
+        "standup_special",
+    }
 
     def __init__(self, api_key: str, requests_per_second: float = 3.0) -> None:
         super().__init__(requests_per_second)
@@ -50,7 +56,7 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if TMDB supports this media type."""
         return media_type in self.SUPPORTED_TYPES
 
@@ -69,7 +75,9 @@ class TMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             return None
 
         # Determine primary search type (TV shows try TV first, others try movie first)
-        search_types = ["tv", "movie"] if media.type == "tv_show" else ["movie", "tv"]
+        search_types = (
+            ["tv", "movie"] if media.type == MediaType.TV_SHOW else ["movie", "tv"]
+        )
 
         # Direct lookup by stored TMDB ID before any title search
         if media.tmdb_id:

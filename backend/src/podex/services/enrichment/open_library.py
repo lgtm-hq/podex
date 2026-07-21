@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -35,7 +36,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
 
     source = EnrichmentSource.OPEN_LIBRARY
 
-    SUPPORTED_TYPES = {"book"}
+    SUPPORTED_TYPES = {MediaType.BOOK}
 
     def __init__(self, requests_per_second: float = 1.0) -> None:
         super().__init__(requests_per_second)
@@ -44,9 +45,12 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             follow_redirects=True,
         )
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if OpenLibrary supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search OpenLibrary and enrich media item.

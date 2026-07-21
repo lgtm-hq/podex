@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from podex.models.media import MediaType
 from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
@@ -36,7 +37,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     SUMMARY_URL = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi"
 
     source = EnrichmentSource.PUBMED
-    SUPPORTED_TYPES = {"study", "article"}
+    SUPPORTED_TYPES = {MediaType.STUDY, MediaType.ARTICLE}
 
     def __init__(
         self,
@@ -47,9 +48,12 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         self.api_key = api_key
         self.client = httpx.Client(timeout=30.0)
 
-    def supports_media_type(self, media_type: str) -> bool:
+    def supports_media_type(self, media_type: str | MediaType) -> bool:
         """Check if PubMed supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        try:
+            return MediaType(media_type) in self.SUPPORTED_TYPES
+        except ValueError:
+            return False
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search PubMed and enrich media item.

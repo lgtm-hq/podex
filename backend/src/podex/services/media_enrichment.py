@@ -10,6 +10,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from podex.models.media import MediaType
 from podex.services.academic_enrichment import AcademicEnricher
 from podex.services.enrichment.base import (
     EnrichmentProvider,
@@ -32,30 +33,24 @@ logger = logging.getLogger(__name__)
 
 
 # Provider priority by media type (Wikipedia is a universal fallback, added separately)
-PROVIDER_PRIORITY: dict[str, list[EnrichmentSource]] = {
-    "book": [EnrichmentSource.GOOGLE_BOOKS, EnrichmentSource.OPEN_LIBRARY],
-    "movie": [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
-    "tv_show": [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
-    "documentary": [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
-    # standup_special: TMDB first (show titles), then TMDB_PERSON (comedian names)
-    "standup_special": [
-        EnrichmentSource.TMDB,
-        EnrichmentSource.OMDB,
-        EnrichmentSource.TMDB_PERSON,
-    ],
-    "podcast": [EnrichmentSource.ITUNES],
-    "person": [EnrichmentSource.TMDB_PERSON],
+PROVIDER_PRIORITY: dict[MediaType, list[EnrichmentSource]] = {
+    MediaType.BOOK: [EnrichmentSource.GOOGLE_BOOKS, EnrichmentSource.OPEN_LIBRARY],
+    MediaType.MOVIE: [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
+    MediaType.TV_SHOW: [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
+    MediaType.DOCUMENTARY: [EnrichmentSource.TMDB, EnrichmentSource.OMDB],
+    MediaType.PODCAST: [EnrichmentSource.ITUNES],
+    MediaType.PERSON: [EnrichmentSource.TMDB_PERSON],
     # Academic types use multi-source verification via AcademicEnricher
-    "study": [
+    MediaType.STUDY: [
         EnrichmentSource.PUBMED,
         EnrichmentSource.SEMANTIC_SCHOLAR,
         EnrichmentSource.CROSSREF,
     ],
-    "article": [
+    MediaType.ARTICLE: [
         EnrichmentSource.SEMANTIC_SCHOLAR,
         EnrichmentSource.CROSSREF,
     ],
-    "place": [],  # Wikipedia only
+    MediaType.PLACE: [],  # Wikipedia only
 }
 
 # External-ID keys persisted to dedicated Media columns (string-valued).
@@ -107,21 +102,6 @@ def apply_external_ids(
         existing_ids = dict(metadata.get("external_ids") or {})
         metadata["external_ids"] = {**extra_ids, **existing_ids}
         media.metadata_json = metadata
-
-
-# Types that should use Wikipedia as a fallback
-WIKIPEDIA_FALLBACK_TYPES = {
-    "book",
-    "movie",
-    "tv_show",
-    "documentary",
-    "standup_special",
-    "podcast",
-    "person",
-    "study",
-    "article",
-    "place",
-}
 
 
 class MediaEnricher:
@@ -206,7 +186,7 @@ class MediaEnricher:
         result: EnrichmentResult | None = None
 
         # Use academic enricher for studies and articles
-        if media.type in ("study", "article"):
+        if media.type in (MediaType.STUDY, MediaType.ARTICLE):
             try:
                 result = self.academic_enricher.enrich_with_verification(media)
                 if result and result.confidence >= min_confidence:
@@ -254,7 +234,7 @@ class MediaEnricher:
         if (
             result is None
             and use_wikipedia_fallback
-            and media.type in WIKIPEDIA_FALLBACK_TYPES
+            and media.type in PROVIDER_PRIORITY
         ):
             wikipedia = self.providers.get(EnrichmentSource.WIKIPEDIA)
             if wikipedia:
