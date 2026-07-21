@@ -20,12 +20,23 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# When a detail fetch fails, emit a search-document result at this fraction of
+# the match confidence so the fallback is clearly below the detail-path score.
+_DETAIL_FALLBACK_CONFIDENCE_FACTOR = 0.75
+
 
 class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich people from TMDB Person API.
 
     Also used as fallback for standup_special when the title
     appears to be a person's name rather than a show title.
+
+    When ``media.tmdb_id`` is set, fetches ``/person/{id}`` directly at
+    confidence 1.0 (mirroring :class:`TMDBProvider`), falling back to name
+    search when unset or on failure. When a detail fetch fails after a
+    confident search hit, a reduced-confidence result is built from the
+    search document (``match_confidence * 0.75``) instead of returning
+    ``None``.
 
     Args:
         api_key: TMDB API key.
@@ -71,7 +82,12 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         if not self.supports_media_type(media.type):
             return None
 
-        self.rate_limiter.wait_sync()
+        # Direct lookup by stored TMDB ID before any name search
+        if media.tmdb_id:
+            self.rate_limiter.wait_sync()
+            details = self._get_person_details(media.tmdb_id)
+            if details:
+                return self._build_result(details, confidence=1.0)
 
         # For standup_special, check if title looks like a person name
         # (no colons, parentheses, or typical show title patterns)
@@ -80,27 +96,40 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         ):
             return None
 
-        # Search for person
+        self.rate_limiter.wait_sync()
         results = self._search_person(media.title)
 
         if not results:
             logger.debug(f"No TMDB person results for: {media.title}")
             return None
 
-        # Find best match
         best_match = self._find_best_match(results, media)
         if not best_match:
             return None
 
         person_id, confidence = best_match
+        search_doc = next(
+            (person for person in results if person.get("id") == person_id),
+            None,
+        )
 
-        # Fetch full details
         self.rate_limiter.wait_sync()
         details = self._get_person_details(person_id)
-        if not details:
-            return None
+        if details:
+            return self._build_result(details, confidence)
 
-        return self._build_result(details, confidence)
+        if search_doc is not None:
+            fallback_confidence = confidence * _DETAIL_FALLBACK_CONFIDENCE_FACTOR
+            logger.debug(
+                "TMDB person detail fetch failed for '%s' (id=%s); "
+                "falling back to search document (confidence=%.2f)",
+                media.title,
+                person_id,
+                fallback_confidence,
+            )
+            return self._build_result(search_doc, fallback_confidence)
+
+        return None
 
     def _looks_like_person_name(self, title: str) -> bool:
         """Check if a title looks like a person's name.

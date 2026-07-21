@@ -19,6 +19,7 @@ from podex.services.enrichment.base import (
     EnrichmentSource,
     describe_http_error,
 )
+from podex.services.enrichment.search_utils import generate_search_variations
 
 if TYPE_CHECKING:
     from podex.models.media import Media
@@ -67,8 +68,9 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search OMDB and enrich media item.
 
-        If media already has an IMDB ID, use it directly.
-        Otherwise, search by title.
+        If media already has an IMDB ID, use it directly. Otherwise search by
+        title, retrying stripped-title variants (subtitle removal, article
+        stripping, etc.) when the exact title misses.
 
         Args:
             media: The media item to enrich.
@@ -85,19 +87,45 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             if data and data.get("Response") == "True":
                 return self._build_result(data, confidence=1.0)
 
-        # Otherwise search by title
         omdb_type = self._get_omdb_type(media.type)
-        data = self._search_by_title(media.title, media.year, omdb_type)
+        for title_variant in generate_search_variations(media.title):
+            data = self._search_by_title(title_variant, media.year, omdb_type)
+            if not data or data.get("Response") != "True":
+                continue
 
-        if not data or data.get("Response") != "True":
-            logger.debug(f"No OMDB results for: {media.title}")
-            return None
+            result = self._result_from_title_hit(
+                media=media,
+                data=data,
+                title_variant=title_variant,
+            )
+            if result is not None:
+                if title_variant != media.title:
+                    logger.debug(
+                        "OMDB match for '%s' via title variant '%s'",
+                        media.title,
+                        title_variant,
+                    )
+                return result
 
-        # Calculate confidence based on title match
+        logger.debug(f"No OMDB results for: {media.title}")
+        return None
+
+    def _result_from_title_hit(
+        self,
+        *,
+        media: Media,
+        data: dict[str, Any],
+        title_variant: str,
+    ) -> EnrichmentResult | None:
+        """Score a title-search hit; return a result when confidence clears 0.7."""
         result_title = data.get("Title", "")
-        confidence = self._calculate_title_similarity(media.title, result_title)
+        # Score against both the original title and the query variant so a
+        # stripped-subtitle hit (e.g. "Dune" for "Dune: Part One") is accepted.
+        confidence = max(
+            self._calculate_title_similarity(media.title, result_title),
+            self._calculate_title_similarity(title_variant, result_title),
+        )
 
-        # Boost confidence if year matches
         result_year = data.get("Year", "")
         if media.year and result_year:
             try:

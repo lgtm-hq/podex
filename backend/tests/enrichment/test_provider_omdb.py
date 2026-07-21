@@ -75,7 +75,7 @@ def test_omdb_year_and_documentary_paths() -> None:
 
 
 def test_omdb_falls_back_to_title_search_variants() -> None:
-    """A miss on the exact title yields None (no variant retry exists)."""
+    """A miss on the exact title retries stripped-title variants."""
     from podex.services.enrichment import OMDBProvider
 
     calls: list[str] = []
@@ -101,14 +101,43 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
         )
 
     provider = OMDBProvider(api_key="key")
+    limiter = _CountingLimiter()
+    provider.rate_limiter = limiter
     _swap_client(provider, handler)
     result = provider.search_and_enrich(
         Media(type=MediaType.MOVIE, title="Dune: Part One"),
     )
     provider.close()
 
-    assert_that(calls).is_length(1)
-    assert_that(calls[0]).is_equal_to("Dune: Part One")
+    assert_that(calls).is_equal_to(["Dune: Part One", "Dune"])
+    assert_that(limiter.waits).is_equal_to(len(calls))
+    assert_that(result).is_not_none()
+    if result is not None:
+        assert_that(result.description).is_equal_to("Found on retry.")
+        assert_that(result.confidence).is_greater_than_or_equal_to(0.7)
+
+
+def test_omdb_title_variant_retry_misses_when_all_variants_fail() -> None:
+    """All title variants missing yields None."""
+    from podex.services.enrichment import OMDBProvider
+
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url.params.get("t", "")))
+        return httpx.Response(
+            200,
+            json={"Response": "False", "Error": "Movie not found!"},
+        )
+
+    provider = OMDBProvider(api_key="key")
+    _swap_client(provider, handler)
+    result = provider.search_and_enrich(
+        Media(type=MediaType.MOVIE, title="Dune: Part One"),
+    )
+    provider.close()
+
+    assert_that(calls).contains("Dune: Part One", "Dune")
     assert_that(result).is_none()
 
 
