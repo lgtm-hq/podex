@@ -12,6 +12,11 @@
       "matchPackageNames": ["typescript", "@astrojs/check", "@astrojs/language-server"],
       "groupName": "TypeScript and Astro tooling",
       "groupSlug": "typescript-astro-tooling"
+    },
+    {
+      "description": "Hold js-yaml major: Astro still imports the CJS default export removed in v5",
+      "matchPackageNames": ["js-yaml"],
+      "allowedVersions": "<5"
     }
   ]
 }
