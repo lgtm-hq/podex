@@ -1282,7 +1282,7 @@ requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "boto3", specifier = ">=1.43.14" },
-    { name = "cryptography", specifier = ">=48.0.0" },
+    { name = "cryptography", specifier = ">=50.0.0" },
     { name = "email-validator", specifier = ">=2.0.0" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "feedparser", specifier = ">=6.0" },
