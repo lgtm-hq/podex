@@ -22,6 +22,38 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.0] - 2026-08-26
+
+### Added
+
+- add org AI review via lgtm-ci reusable (a6b3576)
+
+### Changed
+
+- **deps**: update react monorepo (#414) (b5bc05b)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.11.33 (patch) (#408) (f8cb936)
+- **deps**: update python:3.14-slim-bookworm docker digest to 23c5939 (#413) (a31bac0)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.63.1 (minor) (#404) (16cfa6f)
+- **deps-dev**: update dependency lintro to 0.91.31 (patch) (#405) (0000867)
+- **deps**: lock file maintenance (#407) (7e8bc84)
+- **deps**: update dependency happy-dom to 20.11.1 (patch) (#406) (a90587c)
+- **deps**: update dependency cryptography to 50.0.0 (major) [security] (#410) (5dd57d3)
+- **deps-dev**: update dependency lintro to 0.91.19 (patch) (#403) (3f0f9ca)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.11.32 (patch) (#402) (79c2a19)
+- **deps-dev**: update dependency lintro to 0.91.11 (patch) (#401) (fea9f6d)
+- **deps-dev**: update dependency lintro to 0.91.8 (patch) (#400) (08d9996)
+- **deps-dev**: update dependency lintro to 0.91.6 (patch) (#399) (dfdc041)
+- **deps-dev**: update dependency lintro to 0.91.4 (patch) (#398) (46f85f1)
+- **deps-dev**: update dependency lintro to 0.91.2 (patch) (#397) (5ea299c)
+- **deps**: update all major dependencies (major) (#396) (40d8592)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.59.2 (patch) (#383) (3670cdd)
+- **deps**: update all major dependencies (major) (#384) (6e1e714)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.11.31 (patch) (#395) (16e482b)
+- **deps**: update dependency happy-dom to 20.11.0 (minor) (#393) (dc48d0b)
+- **deps-dev**: update dependency lintro to 0.91.1 (minor) (#394) (9970db4)
+- **deps-dev**: update dependency lintro to 0.90.0 (minor) (#392) (386b74d)
+- **ops**: move staging deployment stack to podex-ops (#391) (891b339)
+
 ## [0.40.1] - 2026-07-21
 
 ### Changed
