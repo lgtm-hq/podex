@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: builder — resolve dependencies with uv into /app/.venv
 # -----------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52 AS builder
+FROM python:3.14-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63 AS builder
 
 # Copy the uv static binaries in from the official uv image (no apt install).
 # hadolint ignore=DL3022
@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Python + non-root user, no build tooling
 # -----------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm@sha256:23c59390fc717bf09f9336908199a0ae75d9c4264bf296123f94ad772fea3b52 AS runtime
+FROM python:3.14-slim-bookworm@sha256:416f0db2a2b561945630cef9877a7ea0581b27449eb9fd9df42f03e1b74b5b63 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
