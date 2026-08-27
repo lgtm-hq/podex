@@ -31,10 +31,10 @@
     "@types/node": "26.1.1",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.5",
-    "@vitest/coverage-v8": "4.1.10",
+    "@vitest/coverage-v8": "4.1.11",
     "happy-dom": "20.11.6",
     "openapi-typescript": "7.13.0",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "overrides": {
     "js-yaml": "4.3.1",
