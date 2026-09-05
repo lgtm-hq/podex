@@ -36,7 +36,7 @@ jobs:
   backend:
     name: 🐳 Backend Image
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
     permissions:
       contents: read
       packages: write
@@ -44,7 +44,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: 'c14fbb654af2fc59c4abd7435e85a269a57057fc' # v0.69.2
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4
       context: backend
       file: backend/Dockerfile
       image-name: lgtm-hq/podex-backend
@@ -126,7 +126,7 @@ jobs:
   frontend:
     name: 🎨 Frontend Image
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
     permissions:
       contents: read
       packages: write
@@ -134,7 +134,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: 'c14fbb654af2fc59c4abd7435e85a269a57057fc' # v0.69.2
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4
       context: frontend
       file: frontend/Dockerfile
       image-name: lgtm-hq/podex-frontend
@@ -196,3 +196,21 @@ jobs:
         tuf-repo-cdn.sigstore.dev:443
         timestamp.sigstore.dev:443
         registry.npmjs.org:443
+
+  # Main-only: one deduplicated `fix(ci): main workflow failed: docker-ci` issue;
+  # repeat failures comment on the open issue instead of filing new ones
+  # (#447). While that issue is open, treat main as red. Tag runs are not
+  # gated here: the notifier only files for the default branch and would
+  # skip with a green exit on a tag ref.
+  notify-failure:
+    needs: [backend, frontend]
+    if: failure() && github.ref == 'refs/heads/main'
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      workflow-key: docker-ci
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4

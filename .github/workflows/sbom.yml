@@ -1,42 +1,83 @@
 ---
 name: Security - SBOM Generation
-# Generate an SBOM for the podex monorepo on main and on-demand.
+# Generate an SBOM for the podex monorepo on main, on release tags
+# (attached to the GitHub Release), and on-demand.
 # Syft directory scan at repo root covers both backend (uv.lock,
 # pyproject.toml) and frontend (bun.lock, package.json) ecosystems.
 
 "on":
   push:
     branches: [main]
+    tags: ['v*.*.*']
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
   group: sbom-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  # Never cancel main/tag runs: a cancelled tag run leaves the release
+  # without its SBOM asset.
+  cancel-in-progress: >-
+    ${{ github.ref != 'refs/heads/main'
+    && !startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   sbom:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
     with:
+      job-name: '📋 SBOM & Supply Chain'
       target: .
       target-type: dir
       sbom-format: cyclonedx-json
       scan-vulnerabilities: true
       create-attestation: true
-      tooling-ref: 'c14fbb654af2fc59c4abd7435e85a269a57057fc' # v0.69.2
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4
       egress-policy: block
       egress-preset: sbom
     permissions:
-      # write: reusable-sbom declares if-gated release-asset jobs with
-      # contents: write; GitHub validates every called job's permissions at
-      # startup regardless of if-conditions, so the caller must grant write
-      # even though report mode only reads (matches turbo-themes caller).
-      contents: write
+      # read: generation, scan, and attestation only read the repo; the
+      # release-asset upload lives in reusable-sbom-release-upload.yml
+      # (lgtm-ci#770), the only job in this path needing contents: write.
+      contents: read
       # write: upload Grype SARIF findings when upload-sarif is enabled
       security-events: write
       # write: OIDC token for SBOM attestation signing (create-attestation)
       id-token: write
       # write: publish SBOM build attestations
       attestations: write
+
+  # Attach the SBOM produced above to the GitHub Release that
+  # release-auto-tag created for this tag (#451).
+  sbom-release-upload:
+    needs: sbom
+    if: startsWith(github.ref, 'refs/tags/v')
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom-release-upload.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
+    with:
+      artifact-name: sbom
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4
+      egress-policy: block
+    permissions:
+      # write: `gh release upload` onto the existing release
+      contents: write
+
+  # Main-only: one deduplicated `fix(ci): main workflow failed: sbom` issue;
+  # repeat failures comment on the open issue instead of filing new ones
+  # (#447). While that issue is open, treat main as red. Tag runs are not
+  # gated here: the notifier only files for the default branch and would
+  # skip with a green exit on a tag ref.
+  # always() is required: sbom-release-upload is skipped on main, and a
+  # dependent of a skipped job is itself skipped unless its `if` opts out.
+  notify-failure:
+    needs: [sbom, sbom-release-upload]
+    if: always() && failure() && github.ref == 'refs/heads/main'
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      workflow-key: sbom
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4

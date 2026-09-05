@@ -1127,7 +1127,7 @@ wheels = [
 
 [[package]]
 name = "lintro"
-version = "0.135.1"
+version = "0.147.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1143,9 +1143,9 @@ dependencies = [
     { name = "tabulate" },
     { name = "watchdog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2f/c9/e8c4eb1aab353a4e14028961ea4e0704db08f99dec0659240b886dadb49c/lintro-0.135.1.tar.gz", hash = "sha256:fc7f37e6c034c87aa6c6d2991d2f60211593cca35f7aad9c0e6cc45902eef732", size = 3674894, upload-time = "2026-08-28T19:13:20.631Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/65/a7/07c81a64989906365f041c8b830b056d33b7f4f71962686b540e5d38cadb/lintro-0.147.1.tar.gz", hash = "sha256:0fd415462d857733ee9af6dd3f6eaa90e5557c6c41554fe4de524cf2935e43a2", size = 4005990, upload-time = "2026-09-05T20:14:58.768Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0a/38/4df89953ed51fdf7936bd9ade6dc11546246db089828ab41ef8cba90a39c/lintro-0.135.1-py3-none-any.whl", hash = "sha256:9c1b4fb3e05950997ae7142e88390c37adf0e57ccae180e0fd9fbe6a56ae098e", size = 1460025, upload-time = "2026-08-28T19:13:18.82Z" },
+    { url = "https://files.pythonhosted.org/packages/97/29/a150b3aa9e3cc7f679ad9b6f392c6219ccfaa086a85a8f5402570a545844/lintro-0.147.1-py3-none-any.whl", hash = "sha256:96a1bed9ad541b9758bdeba8ef8dc3b232a9d448ecc1bf7cd5caf78524b6726f", size = 1591487, upload-time = "2026-09-05T20:14:56.766Z" },
 ]
 
 [[package]]
@@ -1425,7 +1425,7 @@ wheels = [
 
 [[package]]
 name = "podex"
-version = "0.41.0"
+version = "0.41.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -1489,7 +1489,7 @@ dev = [
     { name = "assertpy", specifier = ">=1.1" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.26" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "lintro", specifier = "==0.135.1" },
+    { name = "lintro", specifier = "==0.147.1" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },

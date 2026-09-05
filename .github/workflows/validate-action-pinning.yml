@@ -5,8 +5,17 @@ name: Quality Check - Action Pinning Validation
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
+      # Manifest globs: keep in lockstep with codeql.yml and frontend-ci.yml (see #460).
       - '.github/workflows/**'
       - '.github/actions/**'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
   merge_group:
   workflow_dispatch:
 
@@ -19,9 +28,10 @@ concurrency:
 jobs:
   validate:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-validate-action-pinning.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-validate-action-pinning.yml@f57b4d014f82d7f5996c7b339f1b2ca681780921  # v0.69.4
     with:
-      tooling-ref: 'c14fbb654af2fc59c4abd7435e85a269a57057fc' # v0.69.2
+      job-name: '📌 Validate Action Pinning'
+      tooling-ref: 'f57b4d014f82d7f5996c7b339f1b2ca681780921' # v0.69.4
       egress-policy: block
       egress-preset: github-tooling
     permissions:

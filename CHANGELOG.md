@@ -22,6 +22,43 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.1] - 2026-09-05
+
+### Changed
+
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.69.4 (patch) (#438) (0f19b88)
+- **ci**: close caller-side lgtm-ci bootstrap gaps (#455) (9413e46)
+- **deps-dev**: update dependency lintro to 0.147.0 (minor) (#456) (f07da72)
+- **deps**: update oven/bun docker tag to 1.4.2 (patch) (#443) (8b75cec)
+- **deps**: update step-security/harden-runner action to v2.21.1 (patch) (#444)
+  (994ee93)
+- **deps**: update dependency fast-uri to 4.1.4 (patch) (#437) (04f727b)
+- **deps**: update dependency @types/node to 26.4.1 (minor) (#415) (6e08463)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.69.2 (minor) (#416) (fca9e30)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.12.10 (patch) (#436) (e8b8e28)
+- **deps**: update dependency js-yaml to 4.3.2 (patch) (#435) (1bb0cd4)
+- **deps**: update docker/dockerfile docker tag to 1.27 (minor) (#417) (7ff0592)
+- **deps**: update dependency @testing-library/react to 16.3.3 (patch) (#434) (3df0628)
+- **deps**: update node.js to 24.20.0 (minor) (#418) (1c8bfbd)
+- **deps**: update python:3.14-slim-bookworm docker digest to 9ab8d9c (#433) (1db1528)
+- **deps**: update oven/bun docker tag to 1.4.1 (minor) (#432) (80d00a2)
+- **deps-dev**: update dependency lintro to 0.135.1 (patch) (#431) (337e390)
+- **deps-dev**: update dependency lintro to 0.135.0 (minor) (#430) (766de81)
+- **deps-dev**: update dependency lintro to 0.132.0 (minor) (#429) (c76a1e8)
+- **deps-dev**: update dependency lintro to 0.131.5 (minor) (#428) (fb0bc6a)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.12.7 (patch) (#427) (a4e9c08)
+- **deps**: update test-tools to 4.1.11 (patch) (#426) (28be7c6)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.12.6 (patch) (#425) (48edc34)
+- **deps**: update dependency happy-dom to 20.11.6 (patch) (#424) (ea93a58)
+- **deps**: update dependency fast-uri to 4.1.3 (patch) (#423) (1385e97)
+- **deps**: update dependency @types/react-dom to 19.2.5 (patch) (#422) (3669931)
+- **deps**: update python:3.14-slim-bookworm docker digest to 416f0db (#421) (44600a3)
+- **deps**: update github-actions (e0fff4e)
+
+### Fixed
+
+- **ci**: fire required checks on dependency-manifest PRs (#461) (171b4cf)
+
 ## [0.41.0] - 2026-08-26
 
 ### Added
