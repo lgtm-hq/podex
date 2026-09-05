@@ -5,6 +5,7 @@ name: Security - CodeQL Code Scanning
   push:
     branches: [main]
     paths:
+      # Manifest globs: keep in lockstep with the other two callers (see #460).
       - '**.py'
       - 'pyproject.toml'
       - 'backend/pyproject.toml'
