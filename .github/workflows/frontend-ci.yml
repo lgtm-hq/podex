@@ -4,24 +4,9 @@ name: CI - Frontend
 "on":
   push:
     branches: [main]
-    paths:
-      # Manifest globs: keep in lockstep with the other two callers (see #460).
-      - 'frontend/**'
-      - 'backend/pyproject.toml'
-      - 'backend/uv.lock'
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
-      - '.github/workflows/frontend-ci.yml'
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - 'frontend/**'
-      - 'backend/pyproject.toml'
-      - 'backend/uv.lock'
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
-      - '.github/workflows/frontend-ci.yml'
   merge_group:
   workflow_dispatch:
 
