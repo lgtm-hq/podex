@@ -24,6 +24,7 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-codeql.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
     with:
+      job-name: '🔬 CodeQL Analysis'
       languages: python
       build-mode: none
       config-file: .github/codeql/codeql-config.yml
@@ -50,3 +51,19 @@ jobs:
     permissions:
       contents: read
       security-events: write
+
+  # Main-only: one deduplicated `fix(ci): main workflow failed: codeql` issue;
+  # repeat failures comment on the open issue instead of filing new ones
+  # (#447). While that issue is open, treat main as red.
+  notify-failure:
+    needs: [codeql]
+    if: failure() && github.ref == 'refs/heads/main'
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@c14fbb654af2fc59c4abd7435e85a269a57057fc  # v0.69.2
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      workflow-key: codeql
+      tooling-ref: 'c14fbb654af2fc59c4abd7435e85a269a57057fc' # v0.69.2
