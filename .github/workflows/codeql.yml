@@ -4,10 +4,25 @@ name: Security - CodeQL Code Scanning
 "on":
   push:
     branches: [main]
-    paths: ['**.py', 'pyproject.toml', '.github/**']
+    paths:
+      # Manifest globs: keep in lockstep with the other two callers (see #460).
+      - '**.py'
+      - 'pyproject.toml'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
+      - '.github/**'
   pull_request:
     branches: [main]
-    paths: ['**.py', 'pyproject.toml', '.github/**']
+    paths:
+      - '**.py'
+      - 'pyproject.toml'
+      - 'backend/pyproject.toml'
+      - 'backend/uv.lock'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
+      - '.github/**'
   merge_group:
   schedule:
     - cron: '0 5 * * 1'
