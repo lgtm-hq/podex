@@ -62,13 +62,16 @@ jobs:
       # write: `gh release upload` onto the existing release
       contents: write
 
-  # Main-only: one deduplicated `fix(ci): main workflow failed: sbom` issue;
-  # repeat failures comment on the open issue instead of filing new ones
-  # (#447). While that issue is open, treat main as red.
+  # Main and version tags: one deduplicated `fix(ci): main workflow failed:
+  # sbom` issue; repeat failures comment on the open issue instead of filing
+  # new ones (#447). While that issue is open, treat main as red.
+  # always() is required: sbom-release-upload is skipped on main, and a
+  # dependent of a skipped job is itself skipped unless its `if` opts out.
   notify-failure:
     needs: [sbom, sbom-release-upload]
     if: >-
-      failure()
+      always()
+      && failure()
       && (github.ref == 'refs/heads/main'
       || startsWith(github.ref, 'refs/tags/v'))
     # yamllint disable-line rule:line-length

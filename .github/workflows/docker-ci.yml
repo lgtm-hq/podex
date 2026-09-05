@@ -197,9 +197,9 @@ jobs:
         timestamp.sigstore.dev:443
         registry.npmjs.org:443
 
-  # Main-only: one deduplicated `fix(ci): main workflow failed: docker-ci` issue;
-  # repeat failures comment on the open issue instead of filing new ones
-  # (#447). While that issue is open, treat main as red.
+  # Main and version tags: one deduplicated `fix(ci): main workflow failed:
+  # docker-ci` issue; repeat failures comment on the open issue instead of
+  # filing new ones (#447). While that issue is open, treat main as red.
   notify-failure:
     needs: [backend, frontend]
     if: >-
