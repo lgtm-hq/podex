@@ -37,8 +37,8 @@ jobs:
       egress-preset: sbom
     permissions:
       # read: generation, scan, and attestation only read the repo; the
-      # release-asset upload lives in reusable-sbom-release-upload.yml
-      # (lgtm-ci#770), the only job in this path needing contents: write.
+      # release-asset upload lives in the inline sbom-release-upload job
+      # below (lgtm-ci#935), the only job in this path needing contents: write.
       contents: read
       # write: upload Grype SARIF findings when upload-sarif is enabled
       security-events: write
@@ -49,18 +49,59 @@ jobs:
 
   # Attach the SBOM produced above to the GitHub Release that
   # release-auto-tag created for this tag (#451).
+  #
+  # Inline rather than lgtm-ci's reusable-sbom-release-upload.yml: that
+  # reusable never checks out the caller repo and does not set GH_REPO, so
+  # `gh release upload` dies with "not a git repository" on every tag run
+  # (lgtm-ci#935; broke v0.41.1 and v0.41.2; still present at v0.69.5).
+  # Switch back to the reusable once the fix is released and the pin is
+  # bumped.
   sbom-release-upload:
+    name: Upload SBOM release assets
     needs: sbom
     if: startsWith(github.ref, 'refs/tags/v')
-    # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom-release-upload.yml@8a6b1f553f1a0400a70db8910094073ce803cc4d  # v0.69.5
-    with:
-      artifact-name: sbom
-      tooling-ref: '8a6b1f553f1a0400a70db8910094073ce803cc4d' # v0.69.5
-      egress-policy: block
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
-      # write: `gh release upload` onto the existing release
+      # write: `gh release upload --clobber` onto the existing release
       contents: write
+    steps:
+      - name: Harden runner
+        # Pinned to SHA for supply chain security
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            uploads.github.com:443
+            pipelines.actions.githubusercontent.com:443
+      - name: Checkout upload script
+        # Pinned to SHA for supply chain security
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          sparse-checkout: |
+            .github/scripts/
+          sparse-checkout-cone-mode: true
+          persist-credentials: false
+      - name: Download SBOM artifact
+        # Pinned to SHA for supply chain security
+        # yamllint disable-line rule:line-length
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sbom
+          path: sbom-artifact
+      - name: Upload SBOM to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          SBOM_ARTIFACT_DIR: sbom-artifact
+        run: bash .github/scripts/upload-sbom-release-assets.sh
 
   # Main-only: one deduplicated `fix(ci): main workflow failed: sbom` issue;
   # repeat failures comment on the open issue instead of filing new ones
