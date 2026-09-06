@@ -36,6 +36,7 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Changed
 
+- **deps-dev**: update dependency lintro to 0.147.1 (patch) (#458) (ddd4307)
 - **deps**: update dependency lgtm-hq/lgtm-ci to v0.69.4 (patch) (#438) (0f19b88)
 - **ci**: close caller-side lgtm-ci bootstrap gaps (#455) (9413e46)
 - **deps-dev**: update dependency lintro to 0.147.0 (minor) (#456) (f07da72)
