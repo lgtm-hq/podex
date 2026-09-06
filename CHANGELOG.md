@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.3] - 2026-09-06
+
+### Changed
+
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.69.5 (patch) (#470) (328a732)
+- **deps**: update dependency @types/react-dom to 19.2.7 (patch) (#469) (712a6b2)
+- **deps**: update dependency @types/react-dom to 19.2.6 (patch) (#468) (86ca82b)
+- **deps-dev**: update dependency lintro to 0.147.3 (patch) (#467) (150f179)
+- **release**: version 0.41.1 (#463) (b61b55e)
+- **deps**: update astral-sh/setup-uv action to v10.0.1 (major) (#459) (7c2eebb)
+
+### Fixed
+
+- **ci**: inline the SBOM release-asset upload (#471) (96731e7)
+
 ## [0.41.2] - 2026-09-05
 
 ### Changed
