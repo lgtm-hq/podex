@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.2] - 2026-09-05
+
+### Changed
+
+- **deps**: update dependency happy-dom to 20.13.2 (minor) (#457) (087e02b)
+
+### Fixed
+
+- **ci**: restore unconditional required-check callers (#464) (501ae70)
+
 ## [0.41.1] - 2026-09-05
 
 ### Changed
