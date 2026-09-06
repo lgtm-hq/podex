@@ -37,8 +37,8 @@ jobs:
       egress-preset: sbom
     permissions:
       # read: generation, scan, and attestation only read the repo; the
-      # release-asset upload lives in reusable-sbom-release-upload.yml
-      # (lgtm-ci#770), the only job in this path needing contents: write.
+      # release-asset upload lives in the inline sbom-release-upload job
+      # below (lgtm-ci#935), the only job in this path needing contents: write.
       contents: read
       # write: upload Grype SARIF findings when upload-sarif is enabled
       security-events: write
