@@ -4,18 +4,6 @@ name: Quality Check - Action Pinning Validation
 "on":
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      # Manifest globs: keep in lockstep with codeql.yml and frontend-ci.yml (see #460).
-      - '.github/workflows/**'
-      - '.github/actions/**'
-      - 'backend/pyproject.toml'
-      - 'backend/uv.lock'
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
-      - 'backend/pyproject.toml'
-      - 'backend/uv.lock'
-      - 'frontend/package.json'
-      - 'frontend/bun.lock'
   merge_group:
   workflow_dispatch:
 
