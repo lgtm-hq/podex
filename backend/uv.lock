@@ -1154,7 +1154,7 @@ wheels = [
 
 [[package]]
 name = "lintro"
-version = "0.147.3"
+version = "0.147.4"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1170,9 +1170,9 @@ dependencies = [
     { name = "tabulate" },
     { name = "watchdog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c7/b5/efd797eb39340a891c1cd63fd927f551bd7295fe8773b99fa25315c105de/lintro-0.147.3.tar.gz", hash = "sha256:8bf8ce9c49acfd2933b268847fd74a68808bae0f1af58a1038b987576084c05e", size = 4024871, upload-time = "2026-09-06T06:37:10.301Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/3a/1d/83049d29e3321b2983869e5fd0f9917f9d9d3abdc89e2d0261fc44c39eaa/lintro-0.147.4.tar.gz", hash = "sha256:fe96f7d041157d672e9a6c110ba8fd595690cdddae0824bd5d525304d3d40556", size = 4026559, upload-time = "2026-09-07T07:53:54.955Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/29/1d/8ab6da89342289a19ef88d1bca8d5028cd0fd46ca752dc8125b2aba3e7f5/lintro-0.147.3-py3-none-any.whl", hash = "sha256:5791b9f673191a17a661ac8c38c52f6a4b1fd8a58441e4143b0413d8de391ee0", size = 1594556, upload-time = "2026-09-06T06:37:08.435Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/7e/6ca67419ebb0f88c915f22913136b7e4ed551be4351c76576c4855399b1e/lintro-0.147.4-py3-none-any.whl", hash = "sha256:021adaa8adffeddfa7df4715ce880f48315aa0a6ab55a009a2d6275c210445b2", size = 1594553, upload-time = "2026-09-07T07:53:53.132Z" },
 ]
 
 [[package]]
@@ -1516,7 +1516,7 @@ dev = [
     { name = "assertpy", specifier = ">=1.1" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.26" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "lintro", specifier = "==0.147.3" },
+    { name = "lintro", specifier = "==0.147.4" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=6.0" },
