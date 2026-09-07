@@ -24,7 +24,7 @@ concurrency:
 jobs:
   sbom:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@8a6b1f553f1a0400a70db8910094073ce803cc4d  # v0.69.5
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@f8f58587e4c324f6f0c9b3b4f59cfc93aa7d5d0f  # v0.69.6
     with:
       job-name: '📋 SBOM & Supply Chain'
       target: .
@@ -32,7 +32,7 @@ jobs:
       sbom-format: cyclonedx-json
       scan-vulnerabilities: true
       create-attestation: true
-      tooling-ref: '8a6b1f553f1a0400a70db8910094073ce803cc4d' # v0.69.5
+      tooling-ref: 'f8f58587e4c324f6f0c9b3b4f59cfc93aa7d5d0f' # v0.69.6
       egress-policy: block
       egress-preset: sbom
     permissions:
@@ -114,11 +114,11 @@ jobs:
     needs: [sbom, sbom-release-upload]
     if: always() && failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@8a6b1f553f1a0400a70db8910094073ce803cc4d  # v0.69.5
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@f8f58587e4c324f6f0c9b3b4f59cfc93aa7d5d0f  # v0.69.6
     permissions:
       actions: read
       contents: read
       issues: write
     with:
       workflow-key: sbom
-      tooling-ref: '8a6b1f553f1a0400a70db8910094073ce803cc4d' # v0.69.5
+      tooling-ref: 'f8f58587e4c324f6f0c9b3b4f59cfc93aa7d5d0f' # v0.69.6
