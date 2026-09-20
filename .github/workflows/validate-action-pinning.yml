@@ -19,7 +19,7 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-validate-action-pinning.yml@d32388495d571a0ee13383bacc732765bf4e9e7d  # v0.74.6
     with:
       job-name: '📌 Validate Action Pinning'
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       egress-policy: block
       egress-preset: github-tooling
     permissions:

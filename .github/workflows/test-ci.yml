@@ -32,7 +32,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Compatibility'
       runner-image: ubuntu-24.04
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -132,7 +132,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Coverage'
       runner-image: ubuntu-24.04
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -154,4 +154,4 @@ jobs:
       issues: write
     with:
       workflow-key: test-ci
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6

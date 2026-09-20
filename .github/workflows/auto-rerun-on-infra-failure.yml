@@ -41,7 +41,7 @@ jobs:
       actions: write # rerun failed jobs and read failed-job logs
       contents: read # repository context for the tooling checkout
     with:
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       # run id/attempt are numbers in the event payload; format() passes them
       # as the strings the reusable workflow inputs expect.
       run-id: ${{ format('{0}', github.event.workflow_run.id) }}

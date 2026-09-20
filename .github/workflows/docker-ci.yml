@@ -44,7 +44,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       context: backend
       file: backend/Dockerfile
       image-name: lgtm-hq/podex-backend
@@ -134,7 +134,7 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       context: frontend
       file: frontend/Dockerfile
       image-name: lgtm-hq/podex-frontend
@@ -213,4 +213,4 @@ jobs:
       issues: write
     with:
       workflow-key: docker-ci
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6

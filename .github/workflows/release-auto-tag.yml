@@ -22,7 +22,7 @@ jobs:
       # version-source/version-file needed for the backend/ monorepo layout.
       # Podex ships GitHub Releases (Docker images to GHCR on tag), not PyPI.
       create-release: true
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       egress-policy: block
       egress-preset: github-tooling
     secrets:

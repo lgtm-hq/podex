@@ -29,7 +29,7 @@ jobs:
       max-bump: minor
       # Patch releases auto-merge; minor/major need explicit review.
       auto-merge-patch-only: true
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       egress-policy: block
       egress-preset: pypi
       # The reusable's version-pr job hardens with this raw input before the

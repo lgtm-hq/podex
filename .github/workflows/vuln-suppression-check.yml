@@ -22,7 +22,7 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-vuln-suppression-check.yml@d32388495d571a0ee13383bacc732765bf4e9e7d  # v0.74.6
     with:
       job-name: '🔍 Check Vulnerability Suppressions'
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       workflow-file: vuln-suppression-check.yml
       runner-image: ubuntu-24.04
       egress-policy: block

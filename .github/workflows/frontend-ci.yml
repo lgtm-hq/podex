@@ -30,7 +30,7 @@ jobs:
       job-name: '🎨 Frontend Checks'
       node-version: '22'
       draft-pr-skip: true
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
       # The reusable's default allowlist already covers the node/bun install
       # registries (registry.npmjs.org, bun.sh); no caller override needed.
       egress-policy: block
@@ -53,4 +53,4 @@ jobs:
       issues: write
     with:
       workflow-key: frontend-ci
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d' # v0.74.6
+      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
