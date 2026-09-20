@@ -5,8 +5,8 @@ name: AI Review
 # pinned published lintro and posts as lintro-review[bot].
 #
 # Provider and transport resolve inside the reusable
-# (input → vars.LINTRO_AI_*). Model and max-cost are input-only
-# on reusable v0.67.0, so this caller forwards the repository
+# (input → vars.LINTRO_AI_*). Model and max-cost are optional inputs
+# on reusable v0.74.6, so this caller forwards the repository
 # variables.
 #
 # Per-PR concurrency and INCOMPLETE coverage-at-HEAD gating
