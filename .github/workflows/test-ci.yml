@@ -22,7 +22,7 @@ jobs:
   # Org ruleset (checks-podex): test / Aggregate Python Results
   test:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@d32388495d571a0ee13383bacc732765bf4e9e7d  # v0.74.6
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@234e84901ae4ac14f2d44f02fad517d95712cec3  # v0.75.0
     with:
       python-versions: '3.11,3.12,3.13,3.14'
       working-directory: backend
@@ -32,7 +32,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Compatibility'
       runner-image: ubuntu-24.04
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
+      tooling-ref: '234e84901ae4ac14f2d44f02fad517d95712cec3' # v0.75.0
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -119,7 +119,7 @@ jobs:
   # reporting and the PR test summary comment.
   test-coverage:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@d32388495d571a0ee13383bacc732765bf4e9e7d  # v0.74.6
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@234e84901ae4ac14f2d44f02fad517d95712cec3  # v0.75.0
     with:
       python-version: '3.13'
       working-directory: backend
@@ -132,7 +132,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Coverage'
       runner-image: ubuntu-24.04
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
+      tooling-ref: '234e84901ae4ac14f2d44f02fad517d95712cec3' # v0.75.0
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -147,11 +147,11 @@ jobs:
     needs: [test, test-postgres-migrations, test-coverage]
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@d32388495d571a0ee13383bacc732765bf4e9e7d  # v0.74.6
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@234e84901ae4ac14f2d44f02fad517d95712cec3  # v0.75.0
     permissions:
       actions: read
       contents: read
       issues: write
     with:
       workflow-key: test-ci
-      tooling-ref: 'd32388495d571a0ee13383bacc732765bf4e9e7d'  # v0.74.6
+      tooling-ref: '234e84901ae4ac14f2d44f02fad517d95712cec3' # v0.75.0
