@@ -60,7 +60,7 @@ jobs:
     name: Upload SBOM release assets
     needs: sbom
     if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       # write: `gh release upload --clobber` onto the existing release

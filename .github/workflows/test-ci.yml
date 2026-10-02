@@ -47,7 +47,7 @@ jobs:
   # reusable-test-python has no service-container support.
   test-postgres-migrations:
     name: 🐘 Postgres Migration Replay
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     if: >-
       github.event_name != 'pull_request'
       || github.event.pull_request.draft == false
