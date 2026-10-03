@@ -44,13 +44,26 @@ RUN bun run build
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Node LTS, non-root
 # -----------------------------------------------------------------------------
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runtime
+FROM node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS runtime
 
 WORKDIR /app
 
 ENV HOST=0.0.0.0 \
     PORT=4321 \
     NODE_ENV=production
+
+# slim-trixie snapshot ships libpcre2-8-0 10.46-1~deb13u2 and
+# libssl3t64 3.5.7-1~deb13u2. CVE-2026-103111 / CVE-2026-84782 are
+# fixed in the trixie-security versions pinned below.
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install \
+        --no-install-recommends --only-upgrade -y \
+        libpcre2-8-0=10.46-1~deb13u3 \
+        libssl3t64=3.5.7-1~deb13u3 \
+    && dpkg-query -W -f='${Version}' libpcre2-8-0 | grep -qx '10.46-1~deb13u3' \
+    && dpkg-query -W -f='${Version}' libssl3t64 | grep -qx '3.5.7-1~deb13u3' \
+    && rm -rf /var/lib/apt/lists/*
 
 # `node:*-slim` ships a UID 1000 `node` user out of the box; use it directly.
 # Copy the built bundle and node_modules the adapter needs at runtime.
