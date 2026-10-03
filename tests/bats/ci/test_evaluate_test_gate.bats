@@ -80,6 +80,7 @@ assert_outputs() {
   TEST_RESULT=neutral run bash "${SCRIPT}"
   [ "${status}" -eq 1 ]
   [[ "${output}" == *"unexpected result: 'neutral'"* ]]
+  assert_outputs failure false
 }
 
 @test "fails when a required variable is unset" {

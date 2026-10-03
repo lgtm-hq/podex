@@ -172,6 +172,8 @@ jobs:
     needs: [test, test-coverage, test-postgres-migrations, test-shell]
     if: always() && !cancelled()
     runs-on: ubuntu-24.04
+    # No token scopes needed: podex is public, so the sparse checkout below
+    # reads the gate script anonymously. Grant contents: read if that changes.
     permissions: {}
     outputs:
       result: ${{ steps.gate.outputs.result }}
