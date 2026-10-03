@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Changed
 
+- **deps**: update test-tools to 5.0.3 (patch) (#554) (ffed3fd)
 - **deps**: update ghcr.io/astral-sh/uv docker tag to 0.12.22 (patch) (#549) (0133026)
 - **deps**: update python:3.14-slim-bookworm docker digest to c8137f4 (#548) (0badd83)
 - **deps**: update docker/dockerfile:1.27 docker digest to 4edf897 (#547) (03096fc)
