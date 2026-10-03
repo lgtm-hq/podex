@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: builder — resolve dependencies with uv into /app/.venv
 # -----------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88 AS builder
+FROM python:3.14-slim-trixie@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS builder
 
 # Copy the uv static binaries in from the official uv image (no apt install).
 # hadolint ignore=DL3022
@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Python + non-root user, no build tooling
 # -----------------------------------------------------------------------------
-FROM python:3.14-slim-bookworm@sha256:c8137f4c460908c8763f281c8f22c431eb5c538514ba9553fc3a89c06b7cfb88 AS runtime
+FROM python:3.14-slim-trixie@sha256:0741d101873c12ab927e6f8653feb8862b9bd58771177acb1b885b95141f91b4 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -72,6 +72,14 @@ RUN groupadd --system --gid 1001 podex \
 # never installs packages at runtime, and the bundled pip trips the tag-publish
 # Trivy gate whenever it lags a fixable CVE (#220).
 RUN python -m pip uninstall --yes pip
+
+# slim-trixie snapshot ships libpcre2-8-0 10.46-1~deb13u2; CVE-2026-103111
+# is fixed in 10.46-1~deb13u3 from trixie-security. Upgrade without an
+# exact version pin so the next security revision still builds, then
+# assert the known-fixed floor.
+COPY scripts/upgrade-min-debs.sh /tmp/upgrade-min-debs.sh
+RUN /tmp/upgrade-min-debs.sh libpcre2-8-0=10.46-1~deb13u3 \
+    && rm -f /tmp/upgrade-min-debs.sh
 
 WORKDIR /app
 

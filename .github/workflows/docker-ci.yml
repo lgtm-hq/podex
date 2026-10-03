@@ -121,6 +121,8 @@ jobs:
         timestamp.sigstore.dev:443
         pypi.org:443
         files.pythonhosted.org:443
+        deb.debian.org:80
+        deb.debian.org:443
 
   # Org ruleset (checks-podex): suggested add — docker-frontend / 🎨 Frontend
   frontend:
@@ -196,6 +198,8 @@ jobs:
         tuf-repo-cdn.sigstore.dev:443
         timestamp.sigstore.dev:443
         registry.npmjs.org:443
+        deb.debian.org:80
+        deb.debian.org:443
 
   # Main-only: one deduplicated `fix(ci): main workflow failed: docker-ci` issue;
   # repeat failures comment on the open issue instead of filing new ones
