@@ -5,57 +5,85 @@
 # Debian ships fixes — Renovate base-image digest bumps re-run the scan and
 # will fail if an entry stops matching a fixed package. Never list a CVE that
 # has a fixed version available; fix the image instead.
+#
+# Every entry carries `exp:2026-11-02` (30-day time box): after that date the
+# entry stops applying and must be re-verified and renewed or removed.
+#
+# Last re-verified 2026-10-03: both images (backend/Dockerfile on
+# python:3.14-slim-bookworm, frontend/Dockerfile on node:24.21.0-bookworm-slim,
+# current pinned digests) built locally and scanned with trivy 0.75.0
+# (CRITICAL,HIGH, no ignore file). Every CVE below was reported with an empty
+# FixedVersion (Debian status affected / fix_deferred / will_not_fix), i.e. no
+# fixed bookworm package exists. Upstream tracking for each entry:
+# https://security-tracker.debian.org/tracker/<CVE-ID>.
+#
+# Runtime context for the exploitability notes: the containers run only the
+# podex Python app (backend) or `node` serving the Astro SSR build (frontend).
+# Neither invokes perl, gzip, mount/nsenter/util-linux tools, systemd, or
+# ncurses programs, and neither runs as a privileged/login environment.
 
-# zlib1g — integer overflow in zipOpenNewFileInZip4_64 (contrib/minizip; not
-# shipped as a runtime code path for this app).
-CVE-2023-45853
+# zlib1g — integer overflow in minizip zipOpenNewFileInZip4_64 (Debian:
+# will_not_fix). minizip (contrib) is not used by Python/Node zlib bindings;
+# unreachable.
+CVE-2023-45853 exp:2026-11-02
 
-# libsqlite3-0 — SQLite integer overflow.
-CVE-2025-7458
+# libsqlite3-0 (backend) — SQLite integer overflow (Debian: affected). Python's
+# sqlite3 module is only used when DATABASE_URL is sqlite (local default);
+# podex never executes attacker-supplied SQL, so the overflow trigger is not
+# reachable.
+CVE-2025-7458 exp:2026-11-02
 
-# perl-base — perl core / Archive-Tar / IO-Compress issues; perl-base is an
-# essential dpkg dependency in bookworm and cannot be removed from slim images.
-CVE-2026-8376
-CVE-2026-13221
-CVE-2026-42496
-CVE-2026-42497
-CVE-2026-48962
-CVE-2026-57432
-CVE-2026-9538
+# perl-base — perl core regex/pack issues and Archive-Tar / IO-Compress /
+# Storable bugs (Debian: affected / fix_deferred). perl-base is an essential
+# dpkg dependency in bookworm and cannot be removed from slim images; the app
+# never runs perl, so none of these are reachable.
+CVE-2026-8376 exp:2026-11-02
+CVE-2026-13221 exp:2026-11-02
+CVE-2026-42496 exp:2026-11-02
+CVE-2026-42497 exp:2026-11-02
+CVE-2026-48962 exp:2026-11-02
+CVE-2026-57432 exp:2026-11-02
+CVE-2026-57433 exp:2026-11-02
+CVE-2026-9538 exp:2026-11-02
 
-# ncurses (ncurses-base/ncurses-bin/libtinfo6) — buffer overflow.
-CVE-2025-69720
+# ncurses (ncurses-base/ncurses-bin/libtinfo6/libncursesw6) — buffer overflow
+# (Debian: affected). No terminal UI runs in the containers; unreachable.
+CVE-2025-69720 exp:2026-11-02
 
-# gzip — no fixed version.
-CVE-2026-41992
+# gzip — LZH decompression buffer overflow (Debian: fix_deferred). The app
+# never invokes the gzip binary on untrusted input; unreachable.
+CVE-2026-41992 exp:2026-11-02
 
-# libacl1 — no fixed version.
-CVE-2026-54369
+# libacl1 — symlink traversal via libacl functions (Debian: fix_deferred).
+# Exploitation needs a privileged process manipulating ACLs on
+# attacker-controlled paths; the app does not use ACL APIs.
+CVE-2026-54369 exp:2026-11-02
 
-# Added 2026-10-03 security sweep — all CRITICAL/HIGH with no fixed Debian
-# 12 (bookworm) package on the latest python:3.14-slim-bookworm /
-# node:24-bookworm-slim digests (trivy FixedVersion empty).
+# libpcre2-8-0 — out-of-bounds write via crafted regex (Debian: affected).
+# Python `re` and V8 irregexp do not use PCRE2; only base-image CLI tools link
+# it and they are never fed untrusted patterns.
+CVE-2026-103111 exp:2026-11-02
 
-# libpcre2-8-0 — no fixed version.
-CVE-2026-103111
+# libsqlite3-0 (backend) — FTS5 corrupt-record handling (Debian:
+# fix_deferred). podex does not create or query FTS5 tables; unreachable.
+CVE-2026-11822 exp:2026-11-02
+CVE-2026-11824 exp:2026-11-02
 
-# libsqlite3-0 — FTS5 handling of corrupt records; no fixed version.
-CVE-2026-11822
-CVE-2026-11824
+# libudev1 / libsystemd0 — systemd-homed local privilege escalation (Debian:
+# fix_deferred). No systemd/homed runs in the containers; unreachable.
+CVE-2026-16742 exp:2026-11-02
 
-# libudev1 — no fixed version.
-CVE-2026-16742
+# util-linux family (util-linux, util-linux-extra, mount, bsdutils, libblkid1,
+# libmount1, libsmartcols1, libuuid1) — mount / nsenter / X-mount issues
+# (Debian: affected). Require running mount or nsenter with privileges; the
+# containers never do. Unreachable.
+CVE-2026-53613 exp:2026-11-02
+CVE-2026-76642 exp:2026-11-02
+CVE-2026-78408 exp:2026-11-02
+CVE-2026-78409 exp:2026-11-02
+CVE-2026-78410 exp:2026-11-02
 
-# util-linux-extra — no fixed version.
-CVE-2026-53613
-CVE-2026-76642
-CVE-2026-78408
-CVE-2026-78409
-CVE-2026-78410
-
-# perl-base — signed integer overflow; essential dpkg dependency, no fixed
-# version in bookworm.
-CVE-2026-57433
-
-# openssl — no fixed version.
-CVE-2026-84782
+# openssl / libssl3 (backend) — information disclosure via DTLS handshake
+# retransmission (Debian: affected). podex only uses TLS over TCP (HTTPS
+# clients, Postgres); DTLS is never used, so the path is unreachable.
+CVE-2026-84782 exp:2026-11-02
