@@ -54,16 +54,21 @@ ENV HOST=0.0.0.0 \
 
 # slim-trixie snapshot ships libpcre2-8-0 10.46-1~deb13u2 and
 # libssl3t64 3.5.7-1~deb13u2. CVE-2026-103111 / CVE-2026-84782 are
-# fixed in the trixie-security versions pinned below.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install \
-        --no-install-recommends --only-upgrade -y \
+# fixed in trixie-security. Upgrade without exact version pins so the
+# next security revision still builds, then assert the known-fixed
+# floors. The runtime CMD is `node ./dist/server/entry.mjs` and never
+# calls npm/npx/corepack, so drop those bundles and their HIGH CVEs.
+COPY scripts/upgrade-min-debs.sh /tmp/upgrade-min-debs.sh
+RUN /tmp/upgrade-min-debs.sh \
         libpcre2-8-0=10.46-1~deb13u3 \
         libssl3t64=3.5.7-1~deb13u3 \
-    && dpkg-query -W -f='${Version}' libpcre2-8-0 | grep -qx '10.46-1~deb13u3' \
-    && dpkg-query -W -f='${Version}' libssl3t64 | grep -qx '3.5.7-1~deb13u3' \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -f /tmp/upgrade-min-debs.sh \
+    && rm -rf \
+        /usr/local/lib/node_modules/npm \
+        /usr/local/lib/node_modules/corepack \
+        /usr/local/bin/npm \
+        /usr/local/bin/npx \
+        /usr/local/bin/corepack
 
 # `node:*-slim` ships a UID 1000 `node` user out of the box; use it directly.
 # Copy the built bundle and node_modules the adapter needs at runtime.

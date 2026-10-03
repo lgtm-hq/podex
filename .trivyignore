@@ -13,34 +13,34 @@
 #
 # Last re-verified 2026-10-03: both images (backend/Dockerfile on
 # python:3.14-slim-trixie, frontend/Dockerfile on node:24.21.0-trixie-slim,
-# current pinned digests, plus the pinned libpcre2-8-0 10.46-1~deb13u3
-# upgrade from trixie-security) built locally and scanned with trivy
+# current pinned digests, plus the min-version libpcre2-8-0 / libssl3t64
+# upgrades from trixie-security) built locally and scanned with trivy
 # (CRITICAL,HIGH, no ignore file). Every CVE below was reported with an
-# empty FixedVersion (Debian status affected / fix_deferred / will_not_fix).
+# empty FixedVersion (Debian status affected / no-dsa / will_not_fix).
 # Upstream tracking for each entry:
 # https://security-tracker.debian.org/tracker/<CVE-ID>.
 #
 # Runtime context for the exploitability notes: the containers run only the
 # podex Python app (backend) or `node` serving the Astro SSR build (frontend).
-# Neither invokes perl, mount/nsenter/util-linux tools, systemd, or
-# ncurses programs, and neither runs as a privileged/login environment.
+# Neither invokes perl, mount/nsenter/util-linux tools, systemd, or the
+# ncurses infocmp CLI, and neither runs as a privileged/login environment.
 
 # perl-base — Archive-Tar / related bugs (Debian: fix_deferred). perl-base
 # is an essential dpkg dependency in trixie and cannot be removed from slim
 # images; the app never runs perl, so this is not reachable.
 CVE-2026-9538 exp:2026-11-02
 
-# ncurses (ncurses-base/ncurses-bin/libtinfo6/libncursesw6) — buffer overflow
-# (Debian: affected). No terminal UI runs in the containers; unreachable.
+# ncurses — stack overflow in the infocmp CLI (analyze_string in
+# progs/infocmp.c; Debian: no-dsa). Containers never run infocmp.
 CVE-2025-69720 exp:2026-11-02
 
-# libacl1 — symlink traversal via libacl functions (Debian: fix_deferred).
+# libacl1 — symlink traversal via libacl functions (Debian: no-dsa).
 # Exploitation needs a privileged process manipulating ACLs on
 # attacker-controlled paths; the app does not use ACL APIs.
 CVE-2026-54369 exp:2026-11-02
 
 # libudev1 / libsystemd0 — systemd-homed local privilege escalation (Debian:
-# fix_deferred). No systemd/homed runs in the containers; unreachable.
+# no-dsa). No systemd/homed runs in the containers; unreachable.
 CVE-2026-16742 exp:2026-11-02
 
 # util-linux family (util-linux, util-linux-extra, mount, bsdutils, libblkid1,

@@ -74,14 +74,12 @@ RUN groupadd --system --gid 1001 podex \
 RUN python -m pip uninstall --yes pip
 
 # slim-trixie snapshot ships libpcre2-8-0 10.46-1~deb13u2; CVE-2026-103111
-# is fixed in 10.46-1~deb13u3 from trixie-security.
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-RUN apt-get update \
-    && DEBIAN_FRONTEND=noninteractive apt-get install \
-        --no-install-recommends --only-upgrade -y \
-        libpcre2-8-0=10.46-1~deb13u3 \
-    && dpkg-query -W -f='${Version}' libpcre2-8-0 | grep -qx '10.46-1~deb13u3' \
-    && rm -rf /var/lib/apt/lists/*
+# is fixed in 10.46-1~deb13u3 from trixie-security. Upgrade without an
+# exact version pin so the next security revision still builds, then
+# assert the known-fixed floor.
+COPY scripts/upgrade-min-debs.sh /tmp/upgrade-min-debs.sh
+RUN /tmp/upgrade-min-debs.sh libpcre2-8-0=10.46-1~deb13u3 \
+    && rm -f /tmp/upgrade-min-debs.sh
 
 WORKDIR /app
 
