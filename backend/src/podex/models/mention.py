@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, func
+from sqlalchemy import DateTime, Float, ForeignKey, Index, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
@@ -38,7 +38,7 @@ class Mention(Base):
     )
     timestamp_seconds: Mapped[int | None] = mapped_column(default=None)
     context: Mapped[str | None] = mapped_column(String(2000), default=None)
-    confidence: Mapped[float | None] = mapped_column(default=None)
+    confidence: Mapped[float | None] = mapped_column(Float, default=None)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
