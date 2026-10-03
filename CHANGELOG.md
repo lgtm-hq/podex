@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.5] - 2026-10-03
+
+### Fixed
+
+- **ci**: add a combined required test gate (#552) (92f59e9)
+
 ## [0.41.4] - 2026-10-03
 
 ### Changed
