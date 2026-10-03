@@ -21,6 +21,13 @@ bun install
 bun run test
 ```
 
+CI shell scripts (`.github/scripts/`) have [BATS](https://github.com/bats-core/bats-core)
+tests under `tests/bats/`:
+
+```bash
+bats --recursive tests/bats
+```
+
 The frontend API types (`src/lib/types.gen.ts`) are generated from the backend
 OpenAPI schema (`frontend/openapi.json`). After changing an API route or schema,
 regenerate both and commit the result (`bun run check` fails on drift):
@@ -54,7 +61,9 @@ Do not invoke the underlying tools (ruff, black, mypy, eslint, etc.) directly.
 
 - Branch from `main`; one focused change per PR.
 - PR titles must follow Conventional Commits (validated in CI).
-- All required checks must pass before merge.
+- All required checks must pass before merge. `test-suite / 🧪 Test Suite`
+  is the combined test gate: it fails if the Python matrix, coverage,
+  Postgres migration replay or shell tests fail.
 - Address review feedback (human and automated) before requesting merge.
 
 ## Architecture Decision Records
