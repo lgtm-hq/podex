@@ -44,13 +44,31 @@ RUN bun run build
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Node LTS, non-root
 # -----------------------------------------------------------------------------
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS runtime
+FROM node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe AS runtime
 
 WORKDIR /app
 
 ENV HOST=0.0.0.0 \
     PORT=4321 \
     NODE_ENV=production
+
+# slim-trixie snapshot ships libpcre2-8-0 10.46-1~deb13u2 and
+# libssl3t64 3.5.7-1~deb13u2. CVE-2026-103111 / CVE-2026-84782 are
+# fixed in trixie-security. Upgrade without exact version pins so the
+# next security revision still builds, then assert the known-fixed
+# floors. The runtime CMD is `node ./dist/server/entry.mjs` and never
+# calls npm/npx/corepack, so drop those bundles and their HIGH CVEs.
+COPY scripts/upgrade-min-debs.sh /tmp/upgrade-min-debs.sh
+RUN /tmp/upgrade-min-debs.sh \
+        libpcre2-8-0=10.46-1~deb13u3 \
+        libssl3t64=3.5.7-1~deb13u3 \
+    && rm -f /tmp/upgrade-min-debs.sh \
+    && rm -rf \
+        /usr/local/lib/node_modules/npm \
+        /usr/local/lib/node_modules/corepack \
+        /usr/local/bin/npm \
+        /usr/local/bin/npx \
+        /usr/local/bin/corepack
 
 # `node:*-slim` ships a UID 1000 `node` user out of the box; use it directly.
 # Copy the built bundle and node_modules the adapter needs at runtime.

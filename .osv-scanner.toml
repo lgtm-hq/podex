@@ -1,2 +1,7 @@
 # OSV-Scanner configuration for podex.
 # Add suppressions here only when upstream fixes are unavailable and risk is accepted.
+
+[[IgnoredVulns]]
+id = "GHSA-ch52-4w7c-c8xp"
+ignoreUntil = 2026-11-02
+reason = """http-cache-semantics@4.2.0 (transitive via astro@7.3.5, frontend/bun.lock). No fix available: GHSA-ch52-4w7c-c8xp / CVE-2026-93748 lists first_patched_version = none; npm latest is 4.2.0 (only 4.2.0-beta.x prereleases beyond it). Present at runtime but unreachable: the frontend Dockerfile copies node_modules into the runtime image, and astro imports this package in dist/assets/build/remote.js, but podex has no astro:assets imports or remote-image configuration (output:\"server\" with the node adapter, no image remotePatterns/domains). The shared-cache max-stale path is never exercised. Tracking: https://github.com/kornelski/http-cache-semantics/issues/56 and https://github.com/advisories/GHSA-ch52-4w7c-c8xp."""
