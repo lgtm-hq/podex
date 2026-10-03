@@ -39,6 +39,9 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-auto-rerun-on-infra-failure.yml@22bb159287eb23a812d533090615525eccb839ac  # v0.75.1
     permissions:
       actions: write # rerun failed jobs and read failed-job logs
+      # Check-run annotations, for the runner-acquisition signature. The
+      # reusable requests this; omitting it fails every run at startup.
+      checks: read
       contents: read # repository context for the tooling checkout
     with:
       tooling-ref: '22bb159287eb23a812d533090615525eccb839ac' # v0.75.1
