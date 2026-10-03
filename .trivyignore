@@ -26,11 +26,36 @@ CVE-2026-9538
 # ncurses (ncurses-base/ncurses-bin/libtinfo6) — buffer overflow.
 CVE-2025-69720
 
-# util-linux / libblkid / libuuid1 / mount — integer overflow in dos.c.
-CVE-2026-53615
-
 # gzip — no fixed version.
 CVE-2026-41992
 
 # libacl1 — no fixed version.
 CVE-2026-54369
+
+# Added 2026-10-03 security sweep — all CRITICAL/HIGH with no fixed Debian
+# 12 (bookworm) package on the latest python:3.14-slim-bookworm /
+# node:24-bookworm-slim digests (trivy FixedVersion empty).
+
+# libpcre2-8-0 — no fixed version.
+CVE-2026-103111
+
+# libsqlite3-0 — FTS5 handling of corrupt records; no fixed version.
+CVE-2026-11822
+CVE-2026-11824
+
+# libudev1 — no fixed version.
+CVE-2026-16742
+
+# util-linux-extra — no fixed version.
+CVE-2026-53613
+CVE-2026-76642
+CVE-2026-78408
+CVE-2026-78409
+CVE-2026-78410
+
+# perl-base — signed integer overflow; essential dpkg dependency, no fixed
+# version in bookworm.
+CVE-2026-57433
+
+# openssl — no fixed version.
+CVE-2026-84782
