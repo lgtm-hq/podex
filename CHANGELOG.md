@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.6] - 2026-10-04
+
+### Changed
+
+- **deps-dev**: update dependency lintro to 0.171.3 (patch) (#567) (18a2903)
+- **deps**: update python:3.14-slim-trixie docker digest to c3e521d (#566) (5b96c0e)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.12.23 (patch) (#563) (c175c99)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.75.1 (minor) (#540) (e4daf45)
+- **deps-dev**: update dependency lintro to 0.171.2 (patch) (#559) (9036f8a)
+
+### Fixed
+
+- **ci**: grant checks:read so auto-rerun can start (#564) (b193870)
+
 ## [0.41.5] - 2026-10-03
 
 ### Fixed
