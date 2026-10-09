@@ -24,7 +24,7 @@ jobs:
   # combined gate over every test job (#550).
   test:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@e10242e81ebb34ceb796efeff39ba9824178f46e  # v0.75.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@d1a4cbe278d60e631d95800f449d25e174140ea1  # v0.77.4
     with:
       python-versions: '3.11,3.12,3.13,3.14'
       working-directory: backend
@@ -34,7 +34,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Compatibility'
       runner-image: ubuntu-24.04
-      tooling-ref: 'e10242e81ebb34ceb796efeff39ba9824178f46e' # v0.75.2
+      tooling-ref: 'd1a4cbe278d60e631d95800f449d25e174140ea1' # v0.77.4
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -121,7 +121,7 @@ jobs:
   # reporting and the PR test summary comment.
   test-coverage:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@e10242e81ebb34ceb796efeff39ba9824178f46e  # v0.75.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@d1a4cbe278d60e631d95800f449d25e174140ea1  # v0.77.4
     with:
       python-version: '3.13'
       working-directory: backend
@@ -134,7 +134,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Coverage'
       runner-image: ubuntu-24.04
-      tooling-ref: 'e10242e81ebb34ceb796efeff39ba9824178f46e' # v0.75.2
+      tooling-ref: 'd1a4cbe278d60e631d95800f449d25e174140ea1' # v0.77.4
       egress-policy: block
       egress-preset: quality
     permissions:
@@ -145,7 +145,7 @@ jobs:
   # BATS tests for CI shell scripts under .github/scripts (#550).
   test-shell:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-shell.yml@e10242e81ebb34ceb796efeff39ba9824178f46e  # v0.75.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-shell.yml@d1a4cbe278d60e631d95800f449d25e174140ea1  # v0.77.4
     with:
       job-name: '🐚 Shell Tests'
       test-path: tests/bats
@@ -153,7 +153,7 @@ jobs:
       publish-test-summary: false
       draft-pr-skip: true
       runner-image: ubuntu-24.04
-      tooling-ref: 'e10242e81ebb34ceb796efeff39ba9824178f46e' # v0.75.2
+      tooling-ref: 'd1a4cbe278d60e631d95800f449d25e174140ea1' # v0.77.4
       egress-policy: block
       egress-preset: github-tooling
     permissions:
@@ -202,11 +202,11 @@ jobs:
     needs: [test-gate]
     if: always() && !cancelled()
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@e10242e81ebb34ceb796efeff39ba9824178f46e  # v0.75.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@d1a4cbe278d60e631d95800f449d25e174140ea1  # v0.77.4
     permissions:
       contents: read
     with:
-      tooling-ref: 'e10242e81ebb34ceb796efeff39ba9824178f46e' # v0.75.2
+      tooling-ref: 'd1a4cbe278d60e631d95800f449d25e174140ea1' # v0.77.4
       job-name: '🧪 Test Suite'
       runner-image: ubuntu-24.04
       upstream-result: ${{ needs.test-gate.result }}
@@ -227,11 +227,11 @@ jobs:
       - test-suite
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@e10242e81ebb34ceb796efeff39ba9824178f46e  # v0.75.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@d1a4cbe278d60e631d95800f449d25e174140ea1  # v0.77.4
     permissions:
       actions: read
       contents: read
       issues: write
     with:
       workflow-key: test-ci
-      tooling-ref: 'e10242e81ebb34ceb796efeff39ba9824178f46e' # v0.75.2
+      tooling-ref: 'd1a4cbe278d60e631d95800f449d25e174140ea1' # v0.77.4
