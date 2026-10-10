@@ -61,7 +61,7 @@ jobs:
         # column on Postgres, which requires the pgvector extension that the
         # stock postgres image does not ship.
         # yamllint disable-line rule:line-length
-        image: pgvector/pgvector:pg16@sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b
+        image: pgvector/pgvector:pg16@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a
         env:
           POSTGRES_USER: podex
           # Trust auth: throwaway CI service on localhost only; avoids a
@@ -83,7 +83,7 @@ jobs:
         # dependency resolution from PyPI.
         # Pinned to SHA for supply chain security
         # yamllint disable-line rule:line-length
-        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1  # v2.21.1
+        uses: step-security/harden-runner@ccd8616d44fd3846e67624a50d5aad6d37bf2d25  # v2.22.1
         with:
           egress-policy: block
           allowed-endpoints: >
@@ -102,7 +102,7 @@ jobs:
           persist-credentials: false
       - name: Install uv
         # Pinned to SHA for supply chain security
-        uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4  # v10.1.0
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884  # v10.3.0
         with:
           version: latest
           enable-cache: false
