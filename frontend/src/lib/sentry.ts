@@ -12,7 +12,9 @@ import { SENTRY_DSN } from "./config";
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const REDACTED = "[redacted-email]";
 
-const PII_HEADER_DENYLIST = ["forwarded", "-ip", "remote-", "via", "-user"];
+// Sentry's v10 sendDefaultPii:false denylist, applied by substring to both
+// header names and URL query keys (MIGRATION.md, v10 -> v11).
+const PII_KEY_DENYLIST = ["forwarded", "-ip", "remote-", "via", "-user"];
 
 /**
  * Restrictive data collection matching the Sentry v10 default
@@ -23,11 +25,11 @@ export const SENTRY_DATA_COLLECTION: NonNullable<BrowserOptions["dataCollection"
   userInfo: false,
   cookies: false,
   httpHeaders: {
-    request: { deny: PII_HEADER_DENYLIST },
-    response: { deny: PII_HEADER_DENYLIST },
+    request: { deny: PII_KEY_DENYLIST },
+    response: { deny: PII_KEY_DENYLIST },
   },
   httpBodies: [],
-  urlQueryParams: { deny: PII_HEADER_DENYLIST },
+  urlQueryParams: { deny: PII_KEY_DENYLIST },
   genAI: { inputs: false, outputs: false },
   databaseQueryData: false,
   queues: false,

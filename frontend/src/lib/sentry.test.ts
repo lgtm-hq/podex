@@ -83,10 +83,13 @@ describe("initSentry", () => {
   });
 
   it("keeps the restrictive v10 sendDefaultPii:false data collection baseline", () => {
-    expect(SENTRY_DATA_COLLECTION).toMatchObject({
+    const deny = ["forwarded", "-ip", "remote-", "via", "-user"];
+    expect(SENTRY_DATA_COLLECTION).toEqual({
       userInfo: false,
       cookies: false,
+      httpHeaders: { request: { deny }, response: { deny } },
       httpBodies: [],
+      urlQueryParams: { deny },
       genAI: { inputs: false, outputs: false },
       databaseQueryData: false,
       queues: false,
