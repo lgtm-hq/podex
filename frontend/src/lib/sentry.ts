@@ -5,10 +5,34 @@
  * cost when no DSN is configured. Events pass through {@link scrubEvent} to
  * strip email addresses before leaving the browser.
  */
+import type { BrowserOptions } from "@sentry/browser";
+
 import { SENTRY_DSN } from "./config";
 
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g;
 const REDACTED = "[redacted-email]";
+
+const PII_HEADER_DENYLIST = ["forwarded", "-ip", "remote-", "via", "-user"];
+
+/**
+ * Restrictive data collection matching the Sentry v10 default
+ * (sendDefaultPii: false). Leaving dataCollection unset in v11 would start
+ * collecting user info, cookies, request bodies, and more.
+ */
+export const SENTRY_DATA_COLLECTION: NonNullable<BrowserOptions["dataCollection"]> = {
+  userInfo: false,
+  cookies: false,
+  httpHeaders: {
+    request: { deny: PII_HEADER_DENYLIST },
+    response: { deny: PII_HEADER_DENYLIST },
+  },
+  httpBodies: [],
+  urlQueryParams: { deny: PII_HEADER_DENYLIST },
+  genAI: { inputs: false, outputs: false },
+  databaseQueryData: false,
+  queues: false,
+  graphQL: { document: false, variables: false },
+};
 
 /** Minimal structural view of a Sentry event for PII scrubbing. */
 export interface ScrubbableEvent {
@@ -68,7 +92,9 @@ export async function initSentry(
   const Sentry = await import("@sentry/browser");
   Sentry.init({
     dsn,
-    sendDefaultPii: false,
+    // Sentry v11 replaced sendDefaultPii with dataCollection, whose defaults
+    // collect more. Pin the documented v10 sendDefaultPii:false baseline.
+    dataCollection: SENTRY_DATA_COLLECTION,
     beforeSend: (event) => scrubEvent(event),
   });
   return true;

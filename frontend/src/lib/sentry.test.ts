@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { SENTRY_DSN, resolveSentryDsn } from "./config";
-import { initSentry, scrubEvent } from "./sentry";
+import { SENTRY_DATA_COLLECTION, initSentry, scrubEvent } from "./sentry";
 
 const initMock = vi.hoisted(() => vi.fn());
 
@@ -73,12 +73,24 @@ describe("initSentry", () => {
     expect(initMock).not.toHaveBeenCalled();
   });
 
-  it("initializes the SDK with PII disabled when a DSN is configured", async () => {
+  it("initializes the SDK with PII collection disabled when a DSN is configured", async () => {
     await expect(initSentry("https://key@sentry.example/1")).resolves.toBe(true);
     expect(initMock).toHaveBeenCalledExactlyOnceWith({
       dsn: "https://key@sentry.example/1",
-      sendDefaultPii: false,
+      dataCollection: SENTRY_DATA_COLLECTION,
       beforeSend: expect.any(Function),
+    });
+  });
+
+  it("keeps the restrictive v10 sendDefaultPii:false data collection baseline", () => {
+    expect(SENTRY_DATA_COLLECTION).toMatchObject({
+      userInfo: false,
+      cookies: false,
+      httpBodies: [],
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      queues: false,
+      graphQL: { document: false, variables: false },
     });
   });
 
