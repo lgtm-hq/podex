@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.7] - 2026-10-12
+
+### Changed
+
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.75.2 (patch) (#568) (f710f01)
+
+### Fixed
+
+- **deps**: override source-map-js to 1.2.2 for GHSA-68fv-2mgg-jv7q (#573) (5ca543f)
+
 ## [0.41.6] - 2026-10-04
 
 ### Changed
