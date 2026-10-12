@@ -50,7 +50,9 @@ jobs:
       run-id: ${{ format('{0}', github.event.workflow_run.id) }}
       run-attempt: ${{ format('{0}', github.event.workflow_run.run_attempt) }}
       egress-policy: block
-      egress-preset: github-minimal
+      # github-results (the v0.76 default) adds *.blob.core.windows.net, where
+      # job-log downloads redirect; github-minimal would block reading them.
+      egress-preset: github-results
       # Trivy DB mirror 404s during the reusable-docker scan are infra, not
       # CVEs (same signatures Rustume carries).
       signatures: |
