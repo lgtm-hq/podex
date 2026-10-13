@@ -17,6 +17,11 @@
 # upgrades from trixie-security) built locally and scanned with trivy
 # (CRITICAL,HIGH, no ignore file). Every CVE below was reported with an
 # empty FixedVersion (Debian status affected / no-dsa / will_not_fix).
+# 2026-10-13: backend base moved to python:3.15-slim-trixie (#583); its
+# pinned digest scanned from the registry (linux/amd64, CRITICAL,HIGH, no
+# ignore file) reports exactly the Debian CVEs below, all still unfixed.
+# Its only Python findings sit in pip's vendored libs, which the runtime
+# stage uninstalls.
 # Upstream tracking for each entry:
 # https://security-tracker.debian.org/tracker/<CVE-ID>.
 #
