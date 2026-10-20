@@ -22,6 +22,42 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.8] - 2026-10-20
+
+### Changed
+
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.3 (patch) (#595) (0e893c3)
+- **deps**: update step-security/harden-runner action to v2.22.2 (patch) (#596)
+  (b1dbe09)
+- **deps**: lock file maintenance (#594) (3deb668)
+- **deps**: update dependency happy-dom to 21.0.3 (patch) (#593) (aa44cd5)
+- **deps**: update test-tools to 5.0.5 (patch) (#592) (73f0f06)
+- **deps**: update python:3.15-slim-trixie docker digest to 2da6760 (#591) (45a669e)
+- **deps**: update python:3.15-slim-trixie docker digest to d802f03 (#590) (7282b9f)
+- **deps**: update test-tools to 5.0.4 (patch) (#589) (ebd9f34)
+- **deps**: update dependency happy-dom to 21.0.1 (major) (#588) (e07a8a5)
+- **deps**: update node.js to 24.22.0 (minor) (#587) (33fe0f8)
+- **deps**: update python:3.15-slim-trixie docker digest to f48fda6 (#586) (0f93e3f)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.1 (patch) (#585) (f65b202)
+- **deps**: update python docker tag to 3.15 (minor) (#583) (edeb556)
+- **deps**: update dependency fast-uri to 4.2.2 (patch) (#584) (e346563)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.0 (minor) (#582) (bb8cf63)
+- **deps**: update docker/dockerfile docker tag to 1.28 (minor) (#581) (5755d48)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.77.7 (patch) (#579) (ea34ed9)
+- **deps**: update oven/bun docker tag to 1.4.3 (patch) (#580) (72f5ff2)
+- **deps**: update dependency happy-dom to 20.14.6 (patch) (#578) (9c0b30b)
+- **deps**: update dependency @types/node to 26.6.5 (patch) (#577) (c6f2ae3)
+- **deps**: update all major dependencies (major) (#524) (9b406ed)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.77.5 (minor) (#570) (76a7c70)
+- **deps**: update python:3.14-slim-trixie docker digest to a2b82f3 (#576) (c20f159)
+- **deps**: update github-actions (#533) (7260ac7)
+- **deps**: update node.js to 173f125 (#575) (c3ca50a)
+- **deps**: update dependency fast-uri to 4.2.1 (minor) (#531) (b14d3e4)
+
+### Fixed
+
+- **deps**: bump certifi to 2026.10.19 (GHSA-6q48-6c7w-9gw2) (#599) (1de5a0f)
+
 ## [0.41.7] - 2026-10-12
 
 ### Changed
