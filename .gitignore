@@ -5,6 +5,9 @@
 .coverage
 .claude
 .lintro-cache
+# lgtm-ci reusable-workflow tooling checkout (CI only; keeps osv-scanner
+# --recursive from auditing lgtm-ci's own uv.lock as podex's dependencies)
+.lgtm-ci-tooling/
 
 ### dirs
 Reports/
