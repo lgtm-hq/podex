@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.9] - 2026-10-21
+
+### Changed
+
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.78.0 (minor) (#605) (d004a34)
+- **deps**: update node.js to a615538 (#602) (ba9dead)
+- **deps**: update python:3.15-slim-trixie docker digest to f5b92f2 (#603) (e324487)
+- **deps**: update python:3.15-slim-trixie docker digest to f11aa5d (#601) (2c724f3)
+- **deps-dev**: update dependency lintro to 0.173.1 (minor) (#598) (12d69c9)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.4 (patch) (#597) (86cb79c)
+
+### Fixed
+
+- **ci**: run actionlint over the whole repo; allow ubuntu-26.04 labels (#606) (b668b3b)
+
 ## [0.41.8] - 2026-10-20
 
 ### Changed
