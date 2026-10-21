@@ -63,8 +63,10 @@ jobs:
       egress-preset: quality
 
   # Org ruleset (checks-podex): lintro-code-quality / 🛠️ Lintro Code Quality
+  # Gates on both quality and actionlint, so a workflow that actionlint
+  # rejects blocks the required context (and Renovate automerge).
   lintro-code-quality:
-    needs: quality
+    needs: [quality, actionlint]
     if: >-
       always() &&
       (
@@ -79,8 +81,13 @@ jobs:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
       job-name: '🛠️ Lintro Code Quality'
       runner-image: ubuntu-24.04
-      upstream-result: ${{ needs.quality.result }}
-      status-output: ${{ needs.quality.outputs.status }}
+      # quality's result/status unless it succeeded, then actionlint's
+      # yamllint disable rule:line-length
+      upstream-result: >-
+        ${{ needs.quality.result == 'success' && needs.actionlint.result || needs.quality.result }}
+      status-output: >-
+        ${{ needs.quality.outputs.status == 'passed' && needs.actionlint.outputs.status || needs.quality.outputs.status }}
+      # yamllint enable rule:line-length
       status-expected: passed
       egress-policy: block
       egress-preset: github-tooling
