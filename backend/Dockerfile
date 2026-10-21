@@ -18,7 +18,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: builder — resolve dependencies with uv into /app/.venv
 # -----------------------------------------------------------------------------
-FROM python:3.15-slim-trixie@sha256:f11aa5dc9fad216f005cf34262f3f7dedc2369f03bbbd916589c24346519ee3b AS builder
+FROM python:3.15-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS builder
 
 # Copy the uv static binaries in from the official uv image (no apt install).
 # hadolint ignore=DL3022
@@ -53,7 +53,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Python + non-root user, no build tooling
 # -----------------------------------------------------------------------------
-FROM python:3.15-slim-trixie@sha256:f11aa5dc9fad216f005cf34262f3f7dedc2369f03bbbd916589c24346519ee3b AS runtime
+FROM python:3.15-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
