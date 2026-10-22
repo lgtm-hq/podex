@@ -41,6 +41,9 @@ jobs:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
       egress-policy: block
       egress-preset: quality
+      # Keep the quality preset and permit the artifact service (#561).
+      allowed-endpoints-mode: append
+      allowed-endpoints: results-receiver.actions.githubusercontent.com:443
     permissions:
       # multi-version matrix requires actions:write for artifact aggregation
       actions: write
@@ -142,6 +145,9 @@ jobs:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
       egress-policy: block
       egress-preset: quality
+      # Keep the quality preset and permit the artifact service (#561).
+      allowed-endpoints-mode: append
+      allowed-endpoints: results-receiver.actions.githubusercontent.com:443
     permissions:
       actions: write
       contents: read
