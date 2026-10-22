@@ -22,7 +22,7 @@ FROM python:3.15-slim-trixie@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca
 
 # Copy the uv static binaries in from the official uv image (no apt install).
 # hadolint ignore=DL3022
-COPY --from=ghcr.io/astral-sh/uv:0.13.4@sha256:9f130421e930bfbdc563c00740466603f8723158e90297d07957c2294640262b /uv /uvx /usr/local/bin/
+COPY --from=ghcr.io/astral-sh/uv:0.13.5@sha256:32a7bb39b496babbd997b0a39a4d66c126bdaf5661b302bf6f06abda8deca6ff /uv /uvx /usr/local/bin/
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
