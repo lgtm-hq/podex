@@ -1555,7 +1555,7 @@ wheels = [
 
 [[package]]
 name = "podex"
-version = "0.41.9"
+version = "0.41.10"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
