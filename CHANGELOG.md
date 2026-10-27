@@ -22,6 +22,22 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.10] - 2026-10-27
+
+### Changed
+
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.6 (patch) (#623) (498e192)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.5 (patch) (#612) (6163598)
+- **deps**: update astral-sh/setup-uv action to v10.3.1 (patch) (#610) (b3140f7)
+- **deps**: update node.js to 24.22.1 (patch) (#608) (18d3f35)
+- **deps**: update dependency ubuntu to 26.04 (major) (#569) (59f5afa)
+
+### Fixed
+
+- **ci**: temporarily switch harden-runner egress to audit (#625) (c52f3bf)
+- **security**: patch fast-uri and happy-dom together (#619) (0e21b79)
+- **ci**: allow Python matrix artifact results service (#613) (2400535)
+
 ## [0.41.9] - 2026-10-21
 
 ### Changed
