@@ -49,7 +49,7 @@ jobs:
       # as the strings the reusable workflow inputs expect.
       run-id: ${{ format('{0}', github.event.workflow_run.id) }}
       run-attempt: ${{ format('{0}', github.event.workflow_run.run_attempt) }}
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       # github-results (the v0.76 default) adds *.blob.core.windows.net, where
       # job-log downloads redirect; github-minimal would block reading them.
       egress-preset: github-results

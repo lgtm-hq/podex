@@ -48,7 +48,7 @@ jobs:
       min-age-days: ${{ inputs.min_age_days || 7 }}
       dry-run: ${{ inputs.dry_run == true }}
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: github-tooling
       runner-image: ubuntu-24.04
     secrets:
