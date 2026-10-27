@@ -45,6 +45,7 @@ jobs:
       security-events: write
     with:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       context: backend
       file: backend/Dockerfile
       image-name: lgtm-hq/podex-backend
@@ -137,6 +138,7 @@ jobs:
       security-events: write
     with:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       context: frontend
       file: frontend/Dockerfile
       image-name: lgtm-hq/podex-frontend
