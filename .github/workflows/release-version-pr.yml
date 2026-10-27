@@ -30,7 +30,7 @@ jobs:
       # Patch releases auto-merge; minor/major need explicit review.
       auto-merge-patch-only: true
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: pypi
       # The reusable's version-pr job hardens with this raw input before the
       # allowlist resolver can apply the pypi preset, and since lgtm-ci

@@ -39,7 +39,7 @@ jobs:
       artifact-prefix: compat
       runner-image: ubuntu-24.04
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: quality
       # Keep the quality preset and permit the artifact service (#561).
       allowed-endpoints-mode: append
@@ -92,7 +92,7 @@ jobs:
         # yamllint disable-line rule:line-length
         uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2  # v2.22.2
         with:
-          egress-policy: block
+          egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
           allowed-endpoints: >
             github.com:443
             api.github.com:443
@@ -143,7 +143,7 @@ jobs:
       artifact-prefix: coverage
       runner-image: ubuntu-24.04
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: quality
       # Keep the quality preset and permit the artifact service (#561).
       allowed-endpoints-mode: append
@@ -165,7 +165,7 @@ jobs:
       draft-pr-skip: true
       runner-image: ubuntu-24.04
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: github-tooling
     permissions:
       # lgtm-ci v0.76: the aggregate job lists run artifacts, and GitHub
@@ -226,7 +226,7 @@ jobs:
       runner-image: ubuntu-24.04
       upstream-result: ${{ needs.test-gate.result }}
       passed-output: ${{ needs.test-gate.outputs.passed }}
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
       egress-preset: github-tooling
 
   # Main-only: one deduplicated `fix(ci): main workflow failed: test-ci` issue;

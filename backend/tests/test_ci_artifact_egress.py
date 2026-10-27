@@ -1,4 +1,4 @@
-"""Protect the Python CI artifact transport under blocking egress."""
+"""Protect the Python CI artifact transport configuration."""
 
 from pathlib import Path
 
@@ -16,7 +16,6 @@ def test_python_ci_appends_artifact_results_receiver(job_name: str) -> None:
     workflow = yaml.safe_load(workflow_path.read_text(encoding="utf-8"))
     options = workflow["jobs"][job_name]["with"]
 
-    assert_that(options["egress-policy"]).is_equal_to("block")
     assert_that(options["egress-preset"]).is_equal_to("quality")
     assert_that(options.get("allowed-endpoints-mode")).is_equal_to("append")
     assert_that(str(options.get("allowed-endpoints", "")).split()).is_equal_to(

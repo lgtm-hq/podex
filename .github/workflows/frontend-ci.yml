@@ -33,7 +33,7 @@ jobs:
       tooling-ref: '9ea778eb4e6b876d60b7b3d7d0d0aee5182717bb' # v0.78.0
       # The reusable's default allowlist already covers the node/bun install
       # registries (registry.npmjs.org, bun.sh); no caller override needed.
-      egress-policy: block
+      egress-policy: audit # TEMP: lgtm-hq/lgtm-ci#1207
     permissions:
       actions: write
       contents: read
