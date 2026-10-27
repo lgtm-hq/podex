@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.11] - 2026-10-27
+
+### Fixed
+
+- **ci**: cover remaining reusable calls with audit egress (#626) (8a1bfef)
+
 ## [0.41.10] - 2026-10-27
 
 ### Changed
