@@ -5,8 +5,8 @@ from datetime import datetime
 from enum import StrEnum, auto
 from typing import Any, Literal
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.functions import coalesce
 
 from podex.api.query_helpers import (
     episode_count_by_podcast_subquery,
@@ -37,6 +37,8 @@ class OpsPodcastSourceData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class OpsPodcastSummaryData:
     """Podcast summary for ops catalog management views."""
 
@@ -125,6 +127,8 @@ def _apply_source_filter(*, query: Any, source: PodcastSourceType) -> Any:
     return query.filter(Podcast.podscripts_slug.isnot(None))
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def list_ops_podcasts(
     *,
     db: Session,
@@ -157,8 +161,8 @@ def list_ops_podcasts(
     query = (
         db.query(
             Podcast,
-            func.coalesce(episode_counts.c.episode_count, 0).label("episode_count"),
-            func.coalesce(mention_counts.c.mention_count, 0).label("mention_count"),
+            coalesce(episode_counts.c.episode_count, 0).label("episode_count"),
+            coalesce(mention_counts.c.mention_count, 0).label("mention_count"),
         )
         .outerjoin(episode_counts, Podcast.id == episode_counts.c.podcast_id)
         .outerjoin(mention_counts, Podcast.id == mention_counts.c.podcast_id)
@@ -176,9 +180,9 @@ def list_ops_podcasts(
     if sort == "name":
         sort_column = Podcast.name
     elif sort == "episode_count":
-        sort_column = func.coalesce(episode_counts.c.episode_count, 0)
+        sort_column = coalesce(episode_counts.c.episode_count, 0)
     elif sort == "mention_count":
-        sort_column = func.coalesce(mention_counts.c.mention_count, 0)
+        sort_column = coalesce(mention_counts.c.mention_count, 0)
     else:
         sort_column = Podcast.created_at
 
@@ -225,8 +229,8 @@ def get_ops_podcast_by_id(
     podcast_row = (
         db.query(
             Podcast,
-            func.coalesce(episode_counts.c.episode_count, 0).label("episode_count"),
-            func.coalesce(mention_counts.c.mention_count, 0).label("mention_count"),
+            coalesce(episode_counts.c.episode_count, 0).label("episode_count"),
+            coalesce(mention_counts.c.mention_count, 0).label("mention_count"),
         )
         .outerjoin(episode_counts, Podcast.id == episode_counts.c.podcast_id)
         .outerjoin(mention_counts, Podcast.id == mention_counts.c.podcast_id)

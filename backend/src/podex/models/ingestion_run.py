@@ -28,21 +28,21 @@ class IngestionRun(Base):
 
     __tablename__ = "ingestion_runs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    status: Mapped[IngestionRunStatus] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    status: "Mapped[IngestionRunStatus]" = mapped_column(
         SAEnum(IngestionRunStatus, native_enum=False, length=32),
         index=True,
     )
-    error_summary: Mapped[str | None] = mapped_column(Text, default=None)
-    started_at: Mapped[datetime] = mapped_column(
+    error_summary: "Mapped[str | None]" = mapped_column(Text, default=None)
+    started_at: "Mapped[datetime]" = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
-    completed_at: Mapped[datetime | None] = mapped_column(
+    completed_at: "Mapped[datetime | None]" = mapped_column(
         DateTime(timezone=True),
         default=None,
     )
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: "Mapped[datetime]" = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )

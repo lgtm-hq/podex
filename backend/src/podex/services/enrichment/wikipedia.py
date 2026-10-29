@@ -38,6 +38,30 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_STUDY_SEARCH_SIGNALS = [
+    "study",
+    "experiment",
+    "conducted",
+    "participants",
+    "subjects",
+    "medical",
+    "clinical",
+    "research",
+    "ethical",
+    "syphilis",
+    "trial",
+]
+_STUDY_SEARCH_EXCLUSIONS = [
+    "album",
+    "song",
+    "discography",
+    "musician",
+    "band",
+    "singer",
+    "studio album",
+]
+
+
 class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich media from Wikipedia with strict type validation.
 
@@ -84,13 +108,6 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             },
         )
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Wikipedia supports all media types."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Wikipedia and enrich media item with type validation.
 
@@ -112,16 +129,13 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
         # Generate search variations
         variations = generate_search_variations(media.title, media.author)
 
-        # Add type-specific variations
-        type_variations = self._get_type_specific_variations(media)
-
-        # Prioritize type-specific variations for better accuracy
-        all_variations = type_variations + variations
+        # Prioritize the type-specific plan ahead of general title variations.
+        variations[:0] = self._get_type_specific_variations(media)
 
         # Remove duplicates while preserving order
         seen = set()
         unique_variations = []
-        for v in all_variations:
+        for v in variations:
             v_lower = v.lower()
             if v_lower not in seen:
                 seen.add(v_lower)
@@ -145,13 +159,13 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                     # Final validation using categories
                     if self._validate_page_type(page_data, media.type):
                         return self._build_result(page_data, confidence)
-                    else:
-                        logger.debug(
-                            f"Wikipedia page '{title}' failed type "
-                            f"validation for {media.type}"
-                        )
+                    logger.debug(
+                        "Wikipedia page '%s' failed type validation for %s",
+                        title,
+                        media.type,
+                    )
 
-        logger.debug(f"No valid Wikipedia results for: {media.title}")
+        logger.debug("No valid Wikipedia results for: %s", media.title)
         return None
 
     def _search_for_study(self, media: Media) -> EnrichmentResult | None:
@@ -193,32 +207,10 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                 snippet: str = (result.get("snippet") or "").lower()
 
                 # Check for strong study signals in snippet
-                study_signals = [
-                    "study",
-                    "experiment",
-                    "conducted",
-                    "participants",
-                    "subjects",
-                    "medical",
-                    "clinical",
-                    "research",
-                    "ethical",
-                    "syphilis",
-                    "trial",
-                ]
-                signal_count = sum(1 for s in study_signals if s in snippet)
+                signal_count = sum(1 for s in _STUDY_SEARCH_SIGNALS if s in snippet)
 
                 # Check for negative signals (albums, songs, etc.)
-                negative_signals = [
-                    "album",
-                    "song",
-                    "discography",
-                    "musician",
-                    "band",
-                    "singer",
-                    "studio album",
-                ]
-                has_negative = any(s in snippet for s in negative_signals)
+                has_negative = any(s in snippet for s in _STUDY_SEARCH_EXCLUSIONS)
 
                 if signal_count >= 2 and not has_negative:
                     # Good candidate - fetch and validate
@@ -230,7 +222,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                     ):
                         confidence = min(0.85 + (signal_count * 0.02), 0.95)
                         logger.info(
-                            f"Found study match for '{media.title}': {result_title}"
+                            "Found study match for '%s': %s", media.title, result_title
                         )
                         return self._build_result(page_data, confidence)
 
@@ -288,12 +280,11 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
 
         try:
             response = self.client.get(self.API_URL, params=params)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("query", {}).get("search", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Wikipedia search error: {e}")
+            logger.warning("Wikipedia search error: %s", e)
             return []
 
     def _find_best_match_with_validation(
@@ -326,13 +317,17 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             title_score = calculate_similarity(media.title, result_title)
 
             # Check for positive type signals
-            positive_signals = TYPE_POSITIVE_SIGNALS.get(media.type, [])
-            positive_count = sum(1 for s in positive_signals if s in snippet)
-            positive_boost = min(positive_count * 0.03, 0.15)
+            positive_count = sum(
+                1
+                for signal in TYPE_POSITIVE_SIGNALS.get(media.type, [])
+                if signal in snippet
+            )
 
             # Check for negative type signals - these are PENALTIES
-            negative_signals = TYPE_NEGATIVE_SIGNALS.get(media.type, [])
-            has_negative = any(s in snippet for s in negative_signals)
+            has_negative = any(
+                signal in snippet
+                for signal in TYPE_NEGATIVE_SIGNALS.get(media.type, [])
+            )
             negative_penalty = 0.4 if has_negative else 0.0
 
             # Special case: check result title for type indicators
@@ -345,7 +340,9 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                 negative_penalty = 0.5
 
             # Calculate final score
-            total_score = title_score + positive_boost - negative_penalty
+            total_score = (
+                title_score + min(positive_count * 0.03, 0.15) - negative_penalty
+            )
 
             # Only consider if score is reasonable and no strong negative signals
             if total_score >= 0.4 and not (has_negative and positive_count < 2):
@@ -390,7 +387,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             # Reject if it's clearly an album, song, or film
             for pattern in ALBUM_CATEGORY_PATTERNS:
                 if re.search(pattern, cat_text):
-                    logger.debug(f"Rejecting: matched album pattern '{pattern}'")
+                    logger.debug("Rejecting: matched album pattern '%s'", pattern)
                     return False
 
             # Also check for explicit album/music categories
@@ -435,8 +432,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
 
         try:
             response = self.client.get(self.API_URL, params=params)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
 
             pages: dict[str, Any] = data.get("query", {}).get("pages", {})
             if str(page_id) in pages:
@@ -444,7 +440,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                 return result
             return None
         except httpx.HTTPError as e:
-            logger.warning(f"Wikipedia page fetch error: {e}")
+            logger.warning("Wikipedia page fetch error: %s", e)
             return None
 
     def _build_result(
@@ -492,6 +488,8 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
         if url:
             metadata["wikipedia_url"] = url
 
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
         return EnrichmentResult(
             source=self.source,
             cover_url=cover_url,
@@ -500,13 +498,4 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             metadata=metadata,
             confidence=confidence,
         )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> WikipediaProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        # pylint: enable=duplicate-code

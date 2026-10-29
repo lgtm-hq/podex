@@ -198,22 +198,14 @@ class RedisSlidingWindowRateLimiter:
 
         if not allowed_flag:
             retry_after = max(0.0, oldest_score + self._window_seconds - current)
-            return RateLimitDecision(
-                allowed=False,
-                limit=self._max_requests,
-                remaining=0,
-                reset_after=retry_after,
-                retry_after=retry_after,
+            return RateLimitDecision.rejected(
+                limit=self._max_requests, retry_after=retry_after
             )
 
         remaining = self._max_requests - count
         reset_after = max(0.0, oldest_score + self._window_seconds - current)
-        return RateLimitDecision(
-            allowed=True,
-            limit=self._max_requests,
-            remaining=remaining,
-            reset_after=reset_after,
-            retry_after=0.0,
+        return RateLimitDecision.accepted(
+            limit=self._max_requests, remaining=remaining, reset_after=reset_after
         )
 
     def reset(self) -> None:

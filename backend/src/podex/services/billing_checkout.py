@@ -33,6 +33,8 @@ class BillingCheckoutProvider(Protocol):
         """Create or link an external checkout session."""
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class HostedBillingCheckoutProvider:
     """Config-backed hosted checkout bridge used until provider SDK selection."""
 
@@ -55,6 +57,8 @@ class HostedBillingCheckoutProvider:
         )
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class PaddleBillingCheckoutProvider:
     """Paddle-hosted checkout bridge carrying an opaque account reference.
 

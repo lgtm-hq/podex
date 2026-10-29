@@ -4,7 +4,8 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.models import Episode, Media, MediaType, Mention, Podcast
+from podex.models import Mention, Podcast
+from tests.conftest import persist_episode, seed_catalog_graph
 
 
 def _seed_mention(db: Session) -> Mention:
@@ -18,21 +19,10 @@ def _seed_mention(db: Session) -> Mention:
     Returns:
         The newly created and committed Mention instance.
     """
-    podcast = Podcast(name="The Show", slug="the-show")
-    db.add(podcast)
-    db.commit()
-    episode = Episode(podcast_id=podcast.id, title="Pilot")
-    media = Media(type=MediaType.BOOK, title="Dune")
-    db.add_all([episode, media])
-    db.commit()
-    mention = Mention(
-        episode_id=episode.id,
-        media_id=media.id,
-        timestamp_seconds=42,
-        context="a great book",
-    )
-    db.add(mention)
-    db.commit()
+    graph = seed_catalog_graph(db)
+    mention: Mention | None = db.get(Mention, graph.mention_id)
+    if mention is None:
+        raise AssertionError("Seeded mention is missing")
     return mention
 
 
@@ -70,10 +60,7 @@ def test_media_mentions(client: TestClient, db_session: Session) -> None:
 def test_episode_mentions_empty(client: TestClient, db_session: Session) -> None:
     """An episode with no mentions returns an empty page envelope."""
     podcast = Podcast(name="The Show", slug="the-show")
-    db_session.add(podcast)
-    db_session.commit()
-    episode = Episode(podcast_id=podcast.id, title="Pilot")
-    db_session.add(episode)
+    episode = persist_episode(db_session, podcast=podcast, title="Pilot")
     db_session.commit()
 
     response = client.get(f"/api/v2/episodes/{episode.id}/mentions")

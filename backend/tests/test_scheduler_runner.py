@@ -16,7 +16,6 @@ from podex.models import (
     Transcript,
 )
 from podex.scheduler_runner import run_tick
-from podex.services.account_alerts import create_alert_rule
 from podex.services.account_follows import follow_podcast
 from podex.services.operational_alerts import (
     OperationalAlertThresholdsData,
@@ -31,11 +30,13 @@ from podex.services.recurring_notifications import (
     run_due_retention_work,
 )
 from podex.services.scheduled_work import plan_due_scheduled_work
-from tests.conftest import seed_catalog_graph
+from tests.conftest import create_podcast_alert_rule, seed_catalog_graph
 
 _NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class RecordingDigestSender:
     """In-memory digest delivery for scheduler tests."""
 
@@ -81,12 +82,8 @@ def test_run_due_digest_work_delivers_and_completes(db_session: Session) -> None
     db_session.flush()
     db_session.add(AccountPreference(user_id=user.id))
     follow_podcast(db=db_session, user_id=user.id, podcast_id=graph.podcast_id)
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="podcast",
-        target_id=graph.podcast_id,
-        event_type="new_episode",
+    create_podcast_alert_rule(
+        db=db_session, user_id=user.id, podcast_id=graph.podcast_id
     )
     db_session.add(
         Episode(podcast_id=graph.podcast_id, title="Pilot II", episode_number=2),

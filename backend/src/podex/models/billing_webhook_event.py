@@ -20,10 +20,10 @@ class BillingWebhookEvent(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    provider: Mapped[str] = mapped_column(String(40))
-    event_id: Mapped[str] = mapped_column(String(255), index=True)
-    event_type: Mapped[str] = mapped_column(String(100))
-    processed_at: Mapped[datetime] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    provider: "Mapped[str]" = mapped_column(String(40))
+    event_id: "Mapped[str]" = mapped_column(String(255), index=True)
+    event_type: "Mapped[str]" = mapped_column(String(100))
+    processed_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
     )

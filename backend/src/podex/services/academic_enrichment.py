@@ -7,6 +7,7 @@ authoritative sources with cross-validation to ensure accuracy.
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, wait
 from typing import TYPE_CHECKING, Any
@@ -85,7 +86,7 @@ class AcademicEnricher:
         results = self._collect_provider_results(media)
 
         if not results:
-            logger.debug(f"No academic enrichment results for: {media.title}")
+            logger.debug("No academic enrichment results for: %s", media.title)
             return None
 
         # 2. Cross-validate by DOI
@@ -94,8 +95,10 @@ class AcademicEnricher:
         # 3. If DOI verification succeeded with enough sources
         if len(verified) >= min_sources:
             logger.info(
-                f"DOI-verified enrichment for '{media.title}' "
-                f"from {len(verified)} sources: {[s.value for s in verified]}"
+                "DOI-verified enrichment for '%s' from %s sources: %s",
+                media.title,
+                len(verified),
+                [s.value for s in verified],
             )
             return self._aggregate_results(
                 verified,
@@ -108,9 +111,10 @@ class AcademicEnricher:
             title_verified = self._verify_by_title(results)
             if len(title_verified) >= min_sources:
                 logger.info(
-                    f"Title-verified enrichment for '{media.title}' "
-                    f"from {len(title_verified)} sources: "
-                    f"{[s.value for s in title_verified]}"
+                    "Title-verified enrichment for '%s' from %s sources: %s",
+                    media.title,
+                    len(title_verified),
+                    [s.value for s in title_verified],
                 )
                 return self._aggregate_results(
                     title_verified,
@@ -125,8 +129,10 @@ class AcademicEnricher:
             best_result = results[best_source]
 
             logger.info(
-                f"Single-source enrichment for '{media.title}' "
-                f"from {best_source.value} (confidence: {best_result.confidence:.2f})"
+                "Single-source enrichment for '%s' from %s (confidence: %s)",
+                media.title,
+                best_source.value,
+                format(best_result.confidence, ".2f"),
             )
 
             return VerifiedEnrichmentResult(
@@ -186,14 +192,18 @@ class AcademicEnricher:
                 source = futures[future]
                 try:
                     result = future.result()
+                # Keep other providers and tasks running after this failure.
+                # pylint: disable-next=broad-exception-caught
                 except Exception:
-                    logger.exception(f"Error querying {source.value}")
+                    logger.exception("Error querying %s", source.value)
                     continue
                 if result and result.confidence >= 0.5:
                     results[source] = result
                     logger.debug(
-                        f"Got result from {source.value} for '{media.title}' "
-                        f"(confidence: {result.confidence:.2f})"
+                        "Got result from %s for '%s' (confidence: %s)",
+                        source.value,
+                        media.title,
+                        format(result.confidence, ".2f"),
                     )
         finally:
             executor.shutdown(wait=False, cancel_futures=True)
@@ -271,16 +281,11 @@ class AcademicEnricher:
 
         for i, source1 in enumerate(sources):
             for source2 in sources[i + 1 :]:
-                title1 = titles[source1]
-                title2 = titles[source2]
-
-                # Simple word overlap check
-                words1 = set(title1.split())
-                words2 = set(title2.split())
+                # Compare normalized title word sets.
+                words1 = set(titles[source1].split())
+                words2 = set(titles[source2].split())
                 if words1 and words2:
-                    intersection = words1 & words2
-                    union = words1 | words2
-                    similarity = len(intersection) / len(union)
+                    similarity = len(words1 & words2) / len(words1 | words2)
 
                     if similarity > 0.5:
                         verified_sources.add(source1)
@@ -312,7 +317,6 @@ class AcademicEnricher:
         Returns:
             Normalized title.
         """
-        import re
 
         title = title.lower().strip()
         # Remove common articles

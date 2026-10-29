@@ -44,17 +44,7 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         requests_per_second: float = 0.3,
     ) -> None:
         super().__init__(requests_per_second)
-        self.client = httpx.Client(
-            base_url=base_url or self.BASE_URL,
-            timeout=30.0,
-        )
-
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if iTunes supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
+        self._configure_http_client(base_url)
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search iTunes and enrich podcast.
@@ -74,7 +64,7 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         results = self._search_podcasts(media.title)
 
         if not results:
-            logger.debug(f"No iTunes results for: {media.title}")
+            logger.debug("No iTunes results for: %s", media.title)
             return None
 
         # Find best match
@@ -104,12 +94,11 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                     "limit": 10,
                 },
             )
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("results", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"iTunes search error for '{query}': {e}")
+            logger.warning("iTunes search error for '%s': %s", query, e)
             return []
 
     def _find_best_match(
@@ -195,6 +184,29 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             external_ids["apple_podcasts_id"] = str(collection_id)
 
         # Build metadata
+        metadata = self._build_metadata(podcast=podcast)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=artwork_url or None,
+            description=description,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(self, *, podcast: dict[str, Any]) -> dict[str, Any]:
+        """Read optional iTunes podcast metadata.
+
+        Args:
+            podcast: iTunes search response document.
+
+        Returns:
+            Present metadata fields in their existing representation.
+        """
         metadata: dict[str, Any] = {}
 
         # Artist/creator
@@ -243,21 +255,4 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if collection_view_url:
             metadata["itunes_url"] = collection_view_url
 
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=artwork_url or None,
-            description=description,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> iTunesProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        return metadata

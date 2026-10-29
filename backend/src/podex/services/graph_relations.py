@@ -20,8 +20,16 @@ from podex.models import (
     MediaRelation,
     MediaRelationType,
 )
+from podex.services.field_normalization import (
+    normalize_optional as _normalize_optional,
+)
+from podex.services.field_normalization import (
+    normalize_required as _normalize_required,
+)
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def upsert_media_external_ref(
     *,
     db: Session,
@@ -75,6 +83,8 @@ def upsert_media_external_ref(
     return external_ref
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def upsert_media_relation(
     *,
     db: Session,
@@ -184,29 +194,9 @@ def _stable_key(
     return f"{prefix}:{digest[:64]}"
 
 
-def _normalize_required(
-    *,
-    value: str,
-    field_name: str,
-) -> str:
-    """Normalize a required string field."""
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} must be non-empty")
-    return normalized
-
-
-def _normalize_optional(
-    value: str | None,
-) -> str | None:
-    """Normalize an optional string field."""
-    if value is None:
-        return None
-    normalized = value.strip()
-    return normalized or None
-
-
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class GraphTripleInputData:
     """Input for an idempotent graph triple upsert."""
 

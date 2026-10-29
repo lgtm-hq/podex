@@ -133,6 +133,7 @@ def test_purge_transcript_if_eligible_deletes_external_raw_artifact(
             payload: dict[str, object],
         ) -> StoredTranscriptArtifactData:
             """Satisfy the storage protocol for this deletion-only test."""
+            del payload
             return StoredTranscriptArtifactData(
                 storage_key=storage_key,
                 storage_backend="fake",

@@ -72,13 +72,8 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if Semantic Scholar supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
+    # Independent lookup guards preserve the existing identifier/fallback order.
+    # pylint: disable-next=too-many-return-statements
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Semantic Scholar and enrich media item.
 
@@ -117,7 +112,7 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
         results = self._search(media.title)
 
         if not results:
-            logger.debug(f"No Semantic Scholar results for: {media.title}")
+            logger.debug("No Semantic Scholar results for: %s", media.title)
             return None
 
         # Find best match
@@ -144,11 +139,10 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             )
             if response.status_code == 404:
                 return None
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Semantic Scholar lookup error for {paper_id}: {e}")
+            logger.warning("Semantic Scholar lookup error for %s: %s", paper_id, e)
             return None
 
     def _search(self, title: str) -> list[dict[str, Any]]:
@@ -169,12 +163,11 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
                     "limit": 10,
                 },
             )
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("data", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Semantic Scholar search error: {e}")
+            logger.warning("Semantic Scholar search error: %s", e)
             return []
 
     def _find_best_match(
@@ -248,16 +241,14 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
         external_ids: dict[str, str | int] = {
             "semantic_scholar_id": paper["paperId"],
         }
-
-        # Extract external IDs
-        paper_external_ids = paper.get("externalIds", {})
-        if paper_external_ids:
-            if paper_external_ids.get("DOI"):
-                external_ids["doi"] = paper_external_ids["DOI"]
-            if paper_external_ids.get("PubMed"):
-                external_ids["pubmed_id"] = paper_external_ids["PubMed"]
-            if paper_external_ids.get("ArXiv"):
-                external_ids["arxiv_id"] = paper_external_ids["ArXiv"]
+        paper_external_ids = paper.get("externalIds") or {}
+        for source_key, target_key in (
+            ("DOI", "doi"),
+            ("PubMed", "pubmed_id"),
+            ("ArXiv", "arxiv_id"),
+        ):
+            if paper_external_ids.get(source_key):
+                external_ids[target_key] = paper_external_ids[source_key]
 
         metadata: dict[str, Any] = {}
 
@@ -297,6 +288,8 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
         if open_access and open_access.get("url"):
             metadata["open_access_pdf_url"] = open_access["url"]
 
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
         return EnrichmentResult(
             source=self.source,
             cover_url=None,  # Semantic Scholar doesn't provide cover images
@@ -305,13 +298,4 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             metadata=metadata,
             confidence=confidence,
         )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> SemanticScholarProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        # pylint: enable=duplicate-code

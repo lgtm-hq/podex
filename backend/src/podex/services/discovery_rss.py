@@ -17,6 +17,7 @@ import feedparser
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
+    slugify_podcast_name,
 )
 
 if TYPE_CHECKING:
@@ -30,6 +31,7 @@ class RSSDiscovery:
 
     @property
     def name(self) -> str:
+        """Return the discovery provider identifier."""
         return "rss"
 
     @property
@@ -49,7 +51,7 @@ class RSSDiscovery:
         feed = feedparser.parse(rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning(f"Failed to parse RSS feed: {rss_url}")
+            logger.warning("Failed to parse RSS feed: %s", rss_url)
             return None
 
         channel = feed.feed
@@ -65,12 +67,9 @@ class RSSDiscovery:
         if not cover_url and hasattr(channel, "itunes_image"):
             cover_url = channel.itunes_image.get("href")
 
-        # Generate a slug from the name
-        slug = self._generate_slug(name)
-
         return DiscoveredPodcast(
             name=name,
-            slug=slug,
+            slug=self._generate_slug(name),
             description=description,
             author=author,
             cover_url=cover_url,
@@ -93,13 +92,13 @@ class RSSDiscovery:
             List of discovered episodes
         """
         if not podcast.rss_url:
-            logger.warning(f"Podcast {podcast.slug} has no rss_url")
+            logger.warning("Podcast %s has no rss_url", podcast.slug)
             return []
 
         feed = feedparser.parse(podcast.rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning(f"Failed to parse RSS feed: {podcast.rss_url}")
+            logger.warning("Failed to parse RSS feed: %s", podcast.rss_url)
             return []
 
         episodes = []
@@ -114,7 +113,7 @@ class RSSDiscovery:
 
                 episodes.append(episode)
 
-        logger.info(f"Discovered {len(episodes)} episodes from RSS feed")
+        logger.info("Discovered %s episodes from RSS feed", len(episodes))
         return episodes
 
     def _parse_episode(self, entry: Any) -> DiscoveredEpisode | None:
@@ -200,7 +199,7 @@ class RSSDiscovery:
             parts = duration_str.split(":")
             if len(parts) == 2:
                 return int(parts[0]) * 60 + int(parts[1])
-            elif len(parts) == 3:
+            if len(parts) == 3:
                 return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
 
         except (ValueError, TypeError):
@@ -209,10 +208,5 @@ class RSSDiscovery:
         return None
 
     def _generate_slug(self, name: str) -> str:
-        """Generate a URL-safe slug from a name."""
-        # Lowercase and replace spaces with hyphens
-        slug = name.lower().strip()
-        slug = re.sub(r"[^\w\s-]", "", slug)
-        slug = re.sub(r"[\s_]+", "-", slug)
-        slug = re.sub(r"-+", "-", slug)
-        return slug.strip("-")
+        """Generate the common discovery slug for a podcast name."""
+        return str(slugify_podcast_name(name))

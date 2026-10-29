@@ -30,6 +30,8 @@ class MediaSummary(Base):
         UniqueConstraint("summary_key", name="uq_media_summaries_summary_key"),
     )
 
+    # Explicit mapped/input fields preserve this independent table or boundary contract.
+    # pylint: disable=duplicate-code
     id: Mapped[int] = mapped_column(primary_key=True)
     media_id: Mapped[int] = mapped_column(ForeignKey("media.id"), index=True)
     summary_key: Mapped[str] = mapped_column(String(120), unique=True, index=True)
@@ -57,3 +59,4 @@ class MediaSummary(Base):
     )
 
     media: Mapped[Media] = relationship(back_populates="summaries")
+    # pylint: enable=duplicate-code

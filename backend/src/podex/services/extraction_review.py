@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import string
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -51,6 +51,8 @@ class PersistedExtractionReviewData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class CandidateSnapshotData:
     """Mutable candidate fields captured for provenance comparisons."""
 
@@ -449,48 +451,78 @@ def _changed_candidate_fields(
         Ordered list of changed field names.
     """
     changed_fields: list[str] = []
-    for field_name in CandidateSnapshotData.__dataclass_fields__:
-        if getattr(before, field_name) != getattr(after, field_name):
-            changed_fields.append(field_name)
+    for field in fields(CandidateSnapshotData):
+        if getattr(before, field.name) != getattr(after, field.name):
+            changed_fields.append(field.name)
     return changed_fields
+
+
+def _candidate_input(
+    *,
+    db: Session,
+    item: ExtractedMedia,
+    segments: Sequence[dict[str, Any]] | None,
+    extraction_source: str,
+) -> CandidateSnapshotData:
+    """Resolve an extracted item into the shared mutable candidate contract.
+
+    Args:
+        db: Session used to resolve canonical media.
+        item: Extracted media item.
+        segments: Transcript segments used to locate context.
+        extraction_source: Extraction provider identifier.
+
+    Returns:
+        Proposed candidate fields before persistence or provenance comparison.
+    """
+    normalized_title = _normalize_value(value=item.title)
+    segment_match = _find_segment_context(item=item, segments=segments)
+    media = _find_matching_media(
+        db=db,
+        media_type=item.media_type.value,
+        normalized_title=normalized_title,
+        normalized_creator=_normalize_value(value=item.creator),
+        year=item.year,
+    )
+    return CandidateSnapshotData(
+        raw_title=item.title,
+        normalized_title=normalized_title,
+        suggested_author=item.creator,
+        timestamp_seconds=segment_match.timestamp_seconds,
+        context=segment_match.context,
+        confidence=item.confidence,
+        extraction_source=extraction_source,
+        media_id=media.id if media is not None else None,
+        metadata_json=_candidate_metadata(item=item),
+    )
 
 
 def _update_candidate(
     *,
     candidate: MentionCandidate,
-    item: ExtractedMedia,
-    normalized_title: str | None,
-    timestamp_seconds: int | None,
-    context: str | None,
-    media_id: int | None,
-    extraction_source: str,
+    incoming: CandidateSnapshotData,
 ) -> None:
-    """Refresh an existing candidate with the latest extraction output.
+    """Refresh candidate fields while retaining existing optional values.
 
     Args:
-        candidate: Mention candidate to update.
-        item: Extracted media item.
-        normalized_title: Normalized extracted title.
-        timestamp_seconds: Matched transcript timestamp.
-        context: Matched transcript context.
-        media_id: Matched canonical media identifier, if any.
-        extraction_source: Extraction provider identifier.
+        candidate: Stored candidate receiving the new extraction output.
+        incoming: Proposed fields resolved from the extracted item.
     """
-    candidate.raw_title = item.title
-    candidate.normalized_title = normalized_title
-    if _normalize_value(value=item.creator) is not None:
-        candidate.suggested_author = item.creator
-    candidate.confidence = item.confidence
-    candidate.extraction_source = extraction_source
-    candidate.timestamp_seconds = timestamp_seconds or candidate.timestamp_seconds
-    candidate.context = context or candidate.context
-    candidate.media_id = candidate.media_id or media_id
-
-    metadata = _candidate_metadata(item=item)
-    if metadata is not None:
+    candidate.raw_title = incoming.raw_title
+    candidate.normalized_title = incoming.normalized_title
+    if _normalize_value(value=incoming.suggested_author) is not None:
+        candidate.suggested_author = incoming.suggested_author
+    candidate.confidence = incoming.confidence
+    candidate.extraction_source = incoming.extraction_source
+    candidate.timestamp_seconds = (
+        incoming.timestamp_seconds or candidate.timestamp_seconds
+    )
+    candidate.context = incoming.context or candidate.context
+    candidate.media_id = candidate.media_id or incoming.media_id
+    if incoming.metadata_json is not None:
         candidate.metadata_json = {
             **(candidate.metadata_json or {}),
-            **metadata,
+            **incoming.metadata_json,
         }
 
 
@@ -533,6 +565,8 @@ def _ensure_review_item(
     return False
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def persist_extracted_candidates(
     *,
     db: Session,
@@ -581,18 +615,17 @@ def persist_extracted_candidates(
             )
             continue
 
-        normalized_title = _normalize_value(value=item.title)
-        normalized_author = _normalize_value(value=item.creator)
-        segment_match = _find_segment_context(item=item, segments=segments)
-        matched_media = _find_matching_media(
+        incoming = _candidate_input(
             db=db,
-            media_type=item.media_type.value,
-            normalized_title=normalized_title,
-            normalized_creator=normalized_author,
-            year=item.year,
+            item=item,
+            segments=segments,
+            extraction_source=extraction_source,
         )
 
-        if matched_media is not None and matched_media.id in existing_media_mentions:
+        if (
+            incoming.media_id is not None
+            and incoming.media_id in existing_media_mentions
+        ):
             summary = PersistedExtractionReviewData(
                 candidates_created=summary.candidates_created,
                 candidates_updated=summary.candidates_updated,
@@ -605,9 +638,9 @@ def persist_extracted_candidates(
         candidate = _find_matching_candidate(
             candidates=existing_candidates,
             media_type=item.media_type.value,
-            normalized_title=normalized_title,
-            normalized_author=normalized_author,
-            media_id=matched_media.id if matched_media is not None else None,
+            normalized_title=incoming.normalized_title,
+            normalized_author=_normalize_value(value=incoming.suggested_author),
+            media_id=incoming.media_id,
         )
 
         if candidate is None:
@@ -623,16 +656,16 @@ def persist_extracted_candidates(
                 continue
             candidate = MentionCandidate(
                 episode_id=episode.id,
-                media_id=matched_media.id if matched_media is not None else None,
+                media_id=incoming.media_id,
                 media_type=item.media_type.value,
-                raw_title=item.title,
-                normalized_title=normalized_title,
-                suggested_author=item.creator,
-                timestamp_seconds=segment_match.timestamp_seconds,
-                context=segment_match.context,
+                raw_title=incoming.raw_title,
+                normalized_title=incoming.normalized_title,
+                suggested_author=incoming.suggested_author,
+                timestamp_seconds=incoming.timestamp_seconds,
+                context=incoming.context,
                 confidence=item.confidence,
                 extraction_source=extraction_source,
-                metadata_json=_candidate_metadata(item=item),
+                metadata_json=incoming.metadata_json,
             )
             db.add(candidate)
             db.flush()
@@ -644,35 +677,25 @@ def persist_extracted_candidates(
                 changed_fields=[],
             )
             existing_candidates.append(candidate)
-            review_item_created = _ensure_review_item(
-                db=db,
-                candidate=candidate,
-                confidence=item.confidence,
-            )
             summary = PersistedExtractionReviewData(
                 candidates_created=summary.candidates_created + 1,
                 candidates_updated=summary.candidates_updated,
                 review_items_created=summary.review_items_created
-                + int(review_item_created),
+                + int(
+                    _ensure_review_item(
+                        db=db, candidate=candidate, confidence=item.confidence
+                    )
+                ),
                 skipped_low_confidence=summary.skipped_low_confidence,
                 skipped_existing_mentions=summary.skipped_existing_mentions,
             )
             continue
 
         before_snapshot = _snapshot_candidate(candidate=candidate)
-        _update_candidate(
-            candidate=candidate,
-            item=item,
-            normalized_title=normalized_title,
-            timestamp_seconds=segment_match.timestamp_seconds,
-            context=segment_match.context,
-            media_id=matched_media.id if matched_media is not None else None,
-            extraction_source=extraction_source,
-        )
-        after_snapshot = _snapshot_candidate(candidate=candidate)
+        _update_candidate(candidate=candidate, incoming=incoming)
         changed_fields = _changed_candidate_fields(
             before=before_snapshot,
-            after=after_snapshot,
+            after=_snapshot_candidate(candidate=candidate),
         )
         if changed_fields:
             _record_candidate_provenance(
@@ -682,16 +705,16 @@ def persist_extracted_candidates(
                 change_summary=_build_change_summary(changed_fields=changed_fields),
                 changed_fields=changed_fields,
             )
-        review_item_created = _ensure_review_item(
-            db=db,
-            candidate=candidate,
-            confidence=item.confidence,
-        )
         summary = PersistedExtractionReviewData(
             candidates_created=summary.candidates_created,
             candidates_updated=summary.candidates_updated + int(bool(changed_fields)),
             review_items_created=(
-                summary.review_items_created + int(review_item_created)
+                summary.review_items_created
+                + int(
+                    _ensure_review_item(
+                        db=db, candidate=candidate, confidence=item.confidence
+                    )
+                )
             ),
             skipped_low_confidence=summary.skipped_low_confidence,
             skipped_existing_mentions=summary.skipped_existing_mentions,

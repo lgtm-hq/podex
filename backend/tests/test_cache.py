@@ -8,6 +8,8 @@ from assertpy import assert_that
 from podex.services.cache import Cache, TTLCache
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class _Clock:
     """Simple monotonic-clock stand-in whose ``now`` value can be advanced."""
 
@@ -116,7 +118,6 @@ def test_get_or_compute_caches_none_results() -> None:
         """Return ``None`` and record how many times it ran."""
         nonlocal call_count
         call_count += 1
-        return None
 
     first = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
     second = cache.get_or_compute("k", ttl_seconds=60, loader=loader)
@@ -136,7 +137,6 @@ def test_get_or_compute_recomputes_none_after_expiry() -> None:
         """Return ``None`` and record how many times it ran."""
         nonlocal call_count
         call_count += 1
-        return None
 
     cache.get_or_compute("k", ttl_seconds=10, loader=loader)
     clock.now += 11

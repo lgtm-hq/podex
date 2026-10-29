@@ -6,8 +6,6 @@ from assertpy import assert_that
 from sqlalchemy.orm import Session
 
 from podex.models import (
-    Episode,
-    Podcast,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
@@ -17,8 +15,11 @@ from podex.services.semantic_chunks import (
     build_semantic_chunk_candidates,
     sync_semantic_chunks_for_transcript,
 )
+from tests.conftest import create_jre_episode
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class FakeEmbeddingProvider:
     """Deterministic embedding provider for semantic chunk tests."""
 
@@ -36,6 +37,8 @@ class FakeEmbeddingProvider:
         ]
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class BadEmbeddingProvider:
     """Embedding provider that returns malformed vectors."""
 
@@ -207,16 +210,7 @@ def _create_transcript(
     segments_json: list[dict[str, object]] | None = None,
 ) -> Transcript:
     """Create a persisted transcript with podcast and episode parents."""
-    podcast = Podcast(name="The Joe Rogan Experience", slug="jre")
-    db_session.add(podcast)
-    db_session.flush()
-    episode = Episode(
-        podcast_id=podcast.id,
-        title="JRE #1",
-        episode_number=1,
-    )
-    db_session.add(episode)
-    db_session.flush()
+    episode = create_jre_episode(db_session)
     transcript = Transcript(
         episode_id=episode.id,
         provider="podscripts",

@@ -22,6 +22,103 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _pubmed_abstract(article: ET.Element) -> str:
+    """Combine labelled abstract sections from an article.
+
+    Args:
+        article: The PubMed Article element.
+
+    Returns:
+        Nonempty sections joined in source order.
+    """
+    sections: list[str] = []
+    for element in article.findall(".//AbstractText"):
+        text = (element.text or "").strip()
+        if not text:
+            continue
+        label = (element.get("Label") or "").strip()
+        sections.append(f"{label}: {text}" if label else text)
+    return " ".join(sections)
+
+
+def _pubmed_authors(article: ET.Element) -> list[str]:
+    """Read available author names in publication order.
+
+    Args:
+        article: The PubMed Article element.
+
+    Returns:
+        Names with a last name, including fore names when supplied.
+    """
+    authors: list[str] = []
+    author_list = article.find("AuthorList")
+    if author_list is not None:
+        for author in author_list.findall("Author"):
+            last = author.find("LastName")
+            fore = author.find("ForeName")
+            if last is not None and fore is not None:
+                authors.append(f"{fore.text} {last.text}")
+            elif last is not None and last.text is not None:
+                authors.append(last.text)
+    return authors
+
+
+def _pubmed_identifier(article: ET.Element, kind: str) -> str | None:
+    """Read the first publication identifier of a given kind.
+
+    Args:
+        article: The PubmedArticle element.
+        kind: Identifier type, such as doi or pmc.
+
+    Returns:
+        The first matching identifier text, or None.
+    """
+    identifiers = article.find(".//PubmedData/ArticleIdList")
+    if identifiers is not None:
+        for identifier in identifiers.findall("ArticleId"):
+            if identifier.get("IdType") == kind:
+                return identifier.text
+    return None
+
+
+def _pubmed_date(article: ET.Element) -> str | None:
+    """Read the publication year and optional month.
+
+    Args:
+        article: The PubMed Article element.
+
+    Returns:
+        The date at the precision supplied by PubMed, or None.
+    """
+    date = article.find(".//PubDate")
+    if date is None:
+        return None
+    year = date.find("Year")
+    month = date.find("Month")
+    if year is None:
+        return None
+    return f"{year.text}-{month.text}" if month is not None else year.text
+
+
+def _pubmed_mesh_terms(medline: ET.Element) -> list[str | None]:
+    """Read the first MeSH descriptor in each heading.
+
+    Args:
+        medline: The MedlineCitation element.
+
+    Returns:
+        Descriptor text in heading order.
+    """
+    terms: list[str | None] = []
+    headings = medline.find("MeshHeadingList")
+    if headings is not None:
+        for heading in headings.findall("MeshHeading"):
+            descriptor = heading.find("DescriptorName")
+            if descriptor is not None:
+                terms.append(descriptor.text)
+    return terms
+
+
 class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     """Enrich academic papers from PubMed/NCBI databases.
 
@@ -54,13 +151,8 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         self.SUMMARY_URL = f"{root}/esummary.fcgi"
         self.client = httpx.Client(timeout=30.0)
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if PubMed supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
+    # Independent lookup guards preserve the existing identifier/fallback order.
+    # pylint: disable-next=too-many-return-statements
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search PubMed and enrich media item.
 
@@ -95,7 +187,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         results = self._search(media.title, media.author)
 
         if not results:
-            logger.debug(f"No PubMed results for: {media.title}")
+            logger.debug("No PubMed results for: %s", media.title)
             return None
 
         # Find best match
@@ -131,13 +223,12 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         try:
             response = self.client.get(self.SEARCH_URL, params=params)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             id_list: list[str] = data.get("esearchresult", {}).get("idlist", [])
             if id_list:
                 return id_list[0]
         except httpx.HTTPError as e:
-            logger.warning(f"PubMed DOI search error: {e}")
+            logger.warning("PubMed DOI search error: %s", e)
 
         return None
 
@@ -173,8 +264,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         try:
             response = self.client.get(self.SEARCH_URL, params=params)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             id_list: list[str] = data.get("esearchresult", {}).get("idlist", [])
 
             if not id_list:
@@ -183,7 +273,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             # Get summaries for found PMIDs
             return self._get_summaries(id_list)
         except httpx.HTTPError as e:
-            logger.warning(f"PubMed search error: {e}")
+            logger.warning("PubMed search error: %s", e)
             return []
 
     def _get_summaries(self, pmids: list[str]) -> list[dict[str, Any]]:
@@ -227,7 +317,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                     )
             return results
         except httpx.HTTPError as e:
-            logger.warning(f"PubMed summary error: {e}")
+            logger.warning("PubMed summary error: %s", e)
             return []
 
     def _fetch_article(self, pmid: str) -> dict[str, Any] | None:
@@ -252,114 +342,46 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             response.raise_for_status()
             return self._parse_pubmed_xml(response.text, pmid)
         except httpx.HTTPError as e:
-            logger.warning(f"PubMed fetch error for {pmid}: {e}")
+            logger.warning("PubMed fetch error for %s: %s", pmid, e)
             return None
 
     def _parse_pubmed_xml(self, xml_text: str, pmid: str) -> dict[str, Any] | None:
-        """Parse PubMed XML response.
+        """Parse a PubMed response into the enrichment article contract.
 
         Args:
             xml_text: XML response text.
-            pmid: PubMed ID.
+            pmid: PubMed identifier requested by the caller.
 
         Returns:
-            Parsed article data or None.
+            Article fields, or None for missing or malformed article data.
         """
         try:
             root = ET.fromstring(xml_text)  # noqa: S314 # nosec B314
-            article = root.find(".//PubmedArticle")
-            if article is None:
-                return None
-
-            medline = article.find("MedlineCitation")
-            if medline is None:
-                return None
-
-            article_data = medline.find("Article")
-            if article_data is None:
-                return None
-
-            # Extract title
-            title_elem = article_data.find("ArticleTitle")
-            title = title_elem.text if title_elem is not None else ""
-
-            # Extract abstract (structured abstracts have multiple sections)
-            abstract_sections: list[str] = []
-            for abstract_elem in article_data.findall(".//AbstractText"):
-                text = (abstract_elem.text or "").strip()
-                if not text:
-                    continue
-                label = (abstract_elem.get("Label") or "").strip()
-                abstract_sections.append(f"{label}: {text}" if label else text)
-            abstract = " ".join(abstract_sections)
-
-            # Extract authors
-            authors: list[str] = []
-            author_list = article_data.find("AuthorList")
-            if author_list is not None:
-                for author in author_list.findall("Author"):
-                    last_name = author.find("LastName")
-                    fore_name = author.find("ForeName")
-                    if last_name is not None and fore_name is not None:
-                        authors.append(f"{fore_name.text} {last_name.text}")
-                    elif last_name is not None and last_name.text is not None:
-                        authors.append(last_name.text)
-
-            # Extract journal
-            journal_elem = article_data.find(".//Journal/Title")
-            journal = journal_elem.text if journal_elem is not None else ""
-
-            # Extract DOI
-            doi = None
-            article_id_list = article.find(".//PubmedData/ArticleIdList")
-            if article_id_list is not None:
-                for aid in article_id_list.findall("ArticleId"):
-                    if aid.get("IdType") == "doi":
-                        doi = aid.text
-                        break
-
-            # Extract publication date
-            pub_date = None
-            pub_date_elem = article_data.find(".//PubDate")
-            if pub_date_elem is not None:
-                year = pub_date_elem.find("Year")
-                month = pub_date_elem.find("Month")
-                if year is not None:
-                    pub_date = year.text
-                    if month is not None:
-                        pub_date = f"{year.text}-{month.text}"
-
-            # Extract MeSH terms
-            mesh_terms = []
-            mesh_heading_list = medline.find("MeshHeadingList")
-            if mesh_heading_list is not None:
-                for heading in mesh_heading_list.findall("MeshHeading"):
-                    descriptor = heading.find("DescriptorName")
-                    if descriptor is not None:
-                        mesh_terms.append(descriptor.text)
-
-            # Extract PMC ID if available
-            pmc_id = None
-            if article_id_list is not None:
-                for aid in article_id_list.findall("ArticleId"):
-                    if aid.get("IdType") == "pmc":
-                        pmc_id = aid.text
-                        break
-
-            return {
-                "pmid": pmid,
-                "title": title,
-                "abstract": abstract,
-                "authors": authors,
-                "journal": journal,
-                "doi": doi,
-                "pub_date": pub_date,
-                "mesh_terms": mesh_terms,
-                "pmc_id": pmc_id,
-            }
-        except ET.ParseError as e:
-            logger.warning(f"PubMed XML parse error: {e}")
+        except ET.ParseError as error:
+            logger.warning("PubMed XML parse error: %s", error)
             return None
+        article = root.find(".//PubmedArticle")
+        if article is None:
+            return None
+        medline = article.find("MedlineCitation")
+        if medline is None:
+            return None
+        article_data = medline.find("Article")
+        if article_data is None:
+            return None
+        title = article_data.find("ArticleTitle")
+        journal = article_data.find(".//Journal/Title")
+        return {
+            "pmid": pmid,
+            "title": title.text if title is not None else "",
+            "abstract": _pubmed_abstract(article_data),
+            "authors": _pubmed_authors(article_data),
+            "journal": journal.text if journal is not None else "",
+            "doi": _pubmed_identifier(article, "doi"),
+            "pub_date": _pubmed_date(article_data),
+            "mesh_terms": _pubmed_mesh_terms(medline),
+            "pmc_id": _pubmed_identifier(article, "pmc"),
+        }
 
     def _find_best_match(
         self,
@@ -450,6 +472,8 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                 f"https://www.ncbi.nlm.nih.gov/pmc/articles/{article['pmc_id']}"
             )
 
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
         return EnrichmentResult(
             source=self.source,
             cover_url=None,  # PubMed doesn't provide cover images
@@ -458,13 +482,4 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             metadata=metadata,
             confidence=confidence,
         )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> PubMedProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        # pylint: enable=duplicate-code

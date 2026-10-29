@@ -21,12 +21,12 @@ class AccountQuotaUsage(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("account_users.id"), index=True)
-    period: Mapped[str] = mapped_column(String(7), index=True)
-    feature: Mapped[str] = mapped_column(String(40))
-    units: Mapped[int] = mapped_column(default=0)
-    updated_at: Mapped[datetime] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    user_id: "Mapped[int]" = mapped_column(ForeignKey("account_users.id"), index=True)
+    period: "Mapped[str]" = mapped_column(String(7), index=True)
+    feature: "Mapped[str]" = mapped_column(String(40))
+    units: "Mapped[int]" = mapped_column(default=0)
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )

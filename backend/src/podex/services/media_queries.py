@@ -10,6 +10,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from podex.database import fetch_page
 from podex.models import Media, MediaType, Mention
 
 
@@ -34,10 +35,10 @@ def list_media(
     statement = select(Media).order_by(Media.title)
     if media_type is not None:
         statement = statement.where(Media.type == media_type)
-    statement = statement.offset(offset)
-    if limit is not None:
-        statement = statement.limit(limit)
-    return list(db.execute(statement).scalars().all())
+    rows: list[Media] = fetch_page(
+        db=db, statement=statement, limit=limit, offset=offset
+    )
+    return rows
 
 
 def count_media(db: Session, media_type: MediaType | None = None) -> int:
@@ -95,14 +96,12 @@ def list_media_mentions(
     if db.get(Media, media_id) is None:
         return None
     statement = (
-        select(Mention)
-        .where(Mention.media_id == media_id)
-        .order_by(Mention.episode_id)
-        .offset(offset)
+        select(Mention).where(Mention.media_id == media_id).order_by(Mention.episode_id)
     )
-    if limit is not None:
-        statement = statement.limit(limit)
-    return list(db.execute(statement).scalars().all())
+    rows: list[Mention] = fetch_page(
+        db=db, statement=statement, limit=limit, offset=offset
+    )
+    return rows
 
 
 def count_media_mentions(db: Session, media_id: int) -> int:

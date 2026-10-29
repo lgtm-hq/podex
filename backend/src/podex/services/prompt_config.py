@@ -107,7 +107,7 @@ class PromptConfig(BaseModel):
     @classmethod
     def load_from_file(cls, path: Path) -> PromptConfig:
         """Load configuration from a JSON file."""
-        with open(path) as f:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         return cls.model_validate(data)
 
@@ -123,13 +123,13 @@ class PromptConfig(BaseModel):
 
         config_path = config_dir / f"{slug}.json"
         if not config_path.exists():
-            logger.debug(f"No prompt config found for {slug} at {config_path}")
+            logger.debug("No prompt config found for %s at %s", slug, config_path)
             return None
 
         try:
             return cls.load_from_file(config_path)
-        except Exception as e:
-            logger.warning(f"Failed to load prompt config for {slug}: {e}")
+        except (OSError, ValueError, TypeError, KeyError) as e:
+            logger.warning("Failed to load prompt config for %s: %s", slug, e)
             return None
 
 

@@ -3,16 +3,29 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Set
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import httpx
 
+from podex.models.media import MediaType
+
 if TYPE_CHECKING:
-    from podex.models.media import Media, MediaType
+    from podex.models.media import Media
+
+SCREEN_MEDIA_TYPES = frozenset(
+    {
+        MediaType.MOVIE,
+        MediaType.TV_SHOW,
+        MediaType.DOCUMENTARY,
+        "standup_special",
+    }
+)
 
 #: Prefixes stripped from DOI values, matched case-insensitively.
 _DOI_PREFIXES = (
@@ -157,6 +170,9 @@ class EnrichmentProvider(ABC):
 
     source: ClassVar[EnrichmentSource]
     rate_limiter: RateLimiter
+    client: httpx.Client
+    SUPPORTED_TYPES: ClassVar[Set[str]]
+    BASE_URL: ClassVar[str]
 
     def __init__(self, requests_per_second: float = 2.0) -> None:
         self.rate_limiter = RateLimiter(requests_per_second)
@@ -171,24 +187,66 @@ class EnrichmentProvider(ABC):
         Returns:
             EnrichmentResult if found, None otherwise.
         """
-        ...
 
-    @abstractmethod
     def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if this provider supports the given media type.
+        """Return whether the provider accepts the declared media type."""
+        return media_type in self.SUPPORTED_TYPES
 
-        Args:
-            media_type: The type of media (book, movie, etc.).
-
-        Returns:
-            True if this provider can enrich this media type.
-        """
-        ...
-
-    @abstractmethod
     def close(self) -> None:
-        """Close the provider's HTTP client and release resources."""
-        ...
+        """Close the provider's HTTP client and release its connections."""
+        self.client.close()
+
+    def __enter__(self) -> Self:
+        """Return this provider for a managed enrichment operation."""
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        """Release provider resources when the operation completes."""
+        self.close()
+
+    def _configure_http_client(
+        self, base_url: str | None, *, params: dict[str, str] | None = None
+    ) -> None:
+        """Create the provider HTTP client with the shared finite timeout."""
+        self.client = httpx.Client(
+            base_url=base_url or self.BASE_URL,
+            params=params,
+            timeout=30.0,
+        )
+
+    @staticmethod
+    def _response_json(response: httpx.Response) -> dict[str, Any]:
+        """Validate an upstream HTTP response and decode its JSON object."""
+        response.raise_for_status()
+        payload: dict[str, Any] = response.json()
+        return payload
+
+    def _response_results(self, response: httpx.Response) -> list[dict[str, Any]]:
+        """Decode a validated JSON response containing a results list."""
+        payload = self._response_json(response)
+        results: list[dict[str, Any]] = payload.get("results", [])
+        return results
+
+    def _author_match_boost(
+        self, author: str | None, candidates: list[str], *, threshold: float
+    ) -> float:
+        """Apply the shared author bonus only for sufficiently similar names."""
+        if author and any(
+            self._calculate_title_similarity(author, name) > threshold
+            for name in candidates
+        ):
+            return 0.15
+        return 0.0
+
+    def _book_match_score(self, media: Media, title: str, authors: list[str]) -> float:
+        """Combine normalized book-title similarity and the shared author bonus."""
+        return self._calculate_title_similarity(
+            media.title, title
+        ) + self._author_match_boost(
+            media.author,
+            authors,
+            threshold=0.7,
+        )
 
     def _calculate_title_similarity(self, title1: str, title2: str) -> float:
         """Calculate similarity between two titles.
@@ -220,7 +278,6 @@ class EnrichmentProvider(ABC):
 
     def _normalize_title(self, title: str) -> str:
         """Normalize a title for comparison."""
-        import re
 
         # Lowercase
         title = title.lower()
@@ -231,3 +288,21 @@ class EnrichmentProvider(ABC):
         # Normalize whitespace
         title = " ".join(title.split())
         return title
+
+
+class TMDBApiProvider(EnrichmentProvider, ABC):
+    """Shared client configuration for the two TMDB endpoint families."""
+
+    BASE_URL = "https://api.themoviedb.org/3"
+    IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
+
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        base_url: str | None = None,
+        requests_per_second: float = 3.0,
+    ) -> None:
+        super().__init__(requests_per_second)
+        self.api_key = api_key
+        self._configure_http_client(base_url, params={"api_key": api_key})

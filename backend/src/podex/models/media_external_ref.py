@@ -40,18 +40,22 @@ class MediaExternalRef(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    media_id: Mapped[int] = mapped_column(ForeignKey("media.id"), index=True)
-    source: Mapped[str] = mapped_column(String(50), index=True)
-    external_id: Mapped[str] = mapped_column(String(255), index=True)
-    url: Mapped[str | None] = mapped_column(String(500))
-    label: Mapped[str | None] = mapped_column(String(255))
-    description: Mapped[str | None] = mapped_column(Text)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    media_id: "Mapped[int]" = mapped_column(ForeignKey("media.id"), index=True)
+    source: "Mapped[str]" = mapped_column(String(50), index=True)
+    external_id: "Mapped[str]" = mapped_column(String(255), index=True)
+    url: "Mapped[str | None]" = mapped_column(String(500))
+    label: "Mapped[str | None]" = mapped_column(String(255))
+    description: "Mapped[str | None]" = mapped_column(Text)
+    # Independent table metadata and timestamps must remain explicit mapper fields.
+    # pylint: disable=duplicate-code
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
 
-    media: Mapped["Media"] = relationship(back_populates="external_refs")
+    # pylint: enable=duplicate-code
+
+    media: 'Mapped["Media"]' = relationship(back_populates="external_refs")

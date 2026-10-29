@@ -24,7 +24,7 @@ from podex.services.extraction_review import (
     persist_extracted_candidates,
 )
 from podex.services.llm_extraction import ExtractedMedia
-from tests.conftest import seed_catalog_graph
+from tests.conftest import persist_episode, seed_catalog_graph
 
 _SEGMENTS = [
     {"text": "Today we talk about Dune by Frank Herbert.", "start": 30},
@@ -34,10 +34,7 @@ _SEGMENTS = [
 
 def _episode(db_session: Session) -> Episode:
     podcast = Podcast(name="Example Show", slug="example-show-review")
-    db_session.add(podcast)
-    db_session.commit()
-    episode = Episode(podcast_id=podcast.id, title="Pilot")
-    db_session.add(episode)
+    episode = persist_episode(db_session, podcast=podcast, title="Pilot")
     db_session.commit()
     return episode
 
@@ -465,13 +462,12 @@ def test_persist_skips_items_with_existing_published_mentions(
 
 def test_persist_caps_candidates_per_episode(db_session: Session) -> None:
     """A hostile flood of items stops at the per-episode candidate cap."""
-    from podex.models.media import MediaType as _MediaType
 
     episode = _episode(db_session)
     flood = [
         ExtractedMedia(
             title=f"Injected title {index}",
-            media_type=_MediaType.BOOK,
+            media_type=MediaType.BOOK,
             confidence=0.9,
         )
         for index in range(5)

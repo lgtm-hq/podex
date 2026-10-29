@@ -28,8 +28,8 @@ def _make_client(settings: Settings) -> TestClient:
     return TestClient(create_app(settings))
 
 
-@pytest.fixture
-def tight_client() -> Iterator[TestClient]:
+@pytest.fixture(name="tight_client")
+def tight_client_fixture() -> Iterator[TestClient]:
     """Return a client whose limiter allows only two requests per window.
 
     Yields:
@@ -126,28 +126,23 @@ def test_client_key_falls_back_when_client_unknown() -> None:
 
     async def _app(scope: object, receive: object, send: object) -> None:
         """No-op ASGI app used only to construct the middleware."""
+        del scope, receive, send
 
     middleware = RateLimitMiddleware(_app, limiter=limiter)
     request = Request({"type": "http", "headers": [], "method": "GET", "path": "/"})
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(middleware._client_key(request)).is_equal_to("unknown")
 
 
 def test_access_log_emitted_when_handler_raises(
+    failing_client: TestClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Unhandled handler exceptions still produce a 500 access-log line."""
-    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
-
-    async def _boom() -> None:
-        """Route handler that always fails."""
-        raise RuntimeError("boom")
-
-    app.add_api_route("/boom", _boom, methods=["GET"])
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        with caplog.at_level(logging.INFO, logger="podex.access"):
-            response = client.get("/boom", headers={REQUEST_ID_HEADER: "err-1"})
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = failing_client.get("/boom", headers={REQUEST_ID_HEADER: "err-1"})
 
     assert_that(response.status_code).is_equal_to(500)
     records = [r for r in caplog.records if r.name == "podex.access"]

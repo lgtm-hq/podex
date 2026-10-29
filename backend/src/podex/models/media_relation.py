@@ -33,31 +33,34 @@ class MediaRelation(Base):
         UniqueConstraint("relation_key", name="uq_media_relations_relation_key"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    relation_key: Mapped[str] = mapped_column(String(96), unique=True, index=True)
-    subject_media_id: Mapped[int] = mapped_column(ForeignKey("media.id"), index=True)
-    object_media_id: Mapped[int] = mapped_column(ForeignKey("media.id"), index=True)
-    relation_type: Mapped[str] = mapped_column(String(64), index=True)
-    source: Mapped[str] = mapped_column(String(80), index=True)
-    confidence: Mapped[float] = mapped_column(Float, default=1.0)
-    evidence_text: Mapped[str | None] = mapped_column(Text)
-    provenance_episode_id: Mapped[int | None] = mapped_column(
+    # Explicit mapped/input fields preserve this independent table or boundary contract.
+    # pylint: disable=duplicate-code
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    relation_key: "Mapped[str]" = mapped_column(String(96), unique=True, index=True)
+    subject_media_id: "Mapped[int]" = mapped_column(ForeignKey("media.id"), index=True)
+    object_media_id: "Mapped[int]" = mapped_column(ForeignKey("media.id"), index=True)
+    relation_type: "Mapped[str]" = mapped_column(String(64), index=True)
+    source: "Mapped[str]" = mapped_column(String(80), index=True)
+    confidence: "Mapped[float]" = mapped_column(Float, default=1.0)
+    evidence_text: "Mapped[str | None]" = mapped_column(Text)
+    provenance_episode_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("episodes.id"),
         index=True,
     )
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
 
-    subject_media: Mapped["Media"] = relationship(
+    subject_media: 'Mapped["Media"]' = relationship(
         foreign_keys=[subject_media_id],
         back_populates="outgoing_relations",
     )
-    object_media: Mapped["Media"] = relationship(
+    object_media: 'Mapped["Media"]' = relationship(
         foreign_keys=[object_media_id],
         back_populates="incoming_relations",
     )
-    provenance_episode: Mapped["Episode | None"] = relationship()
+    provenance_episode: 'Mapped["Episode | None"]' = relationship()
+    # pylint: enable=duplicate-code

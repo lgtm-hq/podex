@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import anthropic
-import httpx
+import httpx2 as httpx
 from assertpy import assert_that
 
 from podex.models.media import MediaType
@@ -21,6 +21,8 @@ from podex.services.prompts_default import (
 _LONG_TEXT = "word " * 60
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class _FakeMessages:
     """Messages endpoint double returning canned text or raising."""
 
@@ -125,7 +127,7 @@ def test_extractor_records_api_errors() -> None:
     assert_that(r2.errors[0]).contains("Network error")
 
 
-def test_extractor_reports_unparseable_output() -> None:
+def test_extractor_reports_unparsable_output() -> None:
     """Non-JSON output produces a parse error instead of raising."""
     result = LLMExtractor(
         client=_fake_client(text="no json array at all"),
@@ -165,7 +167,7 @@ def test_cleaner_applies_corrections_and_context() -> None:
 
 
 def test_cleaner_short_text_and_parse_failure() -> None:
-    """Short inputs short-circuit; unparseable output records an error."""
+    """Short inputs short-circuit; unparsable output records an error."""
     untouched = TranscriptCleaner(client=_fake_client(text="{}"))
     short = untouched.cleanup_transcript("tiny")
     assert_that(short.cleaned_text).is_equal_to("tiny")

@@ -31,6 +31,8 @@ from podex.services.transcript_retention_commands import (
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class OpsTranscriptRetentionData:
     """Operator-facing state for one raw transcript asset."""
 

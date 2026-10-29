@@ -9,6 +9,7 @@ This module provides the DiscoveryOrchestrator class which:
 from __future__ import annotations
 
 import logging
+from dataclasses import fields, replace
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -68,8 +69,10 @@ class DiscoveryOrchestrator:
             try:
                 source = self._sources["podscripts"]
                 eps = source.discover_episodes(podcast, since=since)
-                logger.info(f"Discovered {len(eps)} episodes from podscripts.co")
+                logger.info("Discovered %s episodes from podscripts.co", len(eps))
                 discovered.extend(eps)
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception as e:
                 error = f"podscripts: {e}"
                 logger.warning(error)
@@ -79,8 +82,10 @@ class DiscoveryOrchestrator:
             try:
                 source = self._sources["rss"]
                 eps = source.discover_episodes(podcast, since=since)
-                logger.info(f"Discovered {len(eps)} episodes from RSS")
+                logger.info("Discovered %s episodes from RSS", len(eps))
                 discovered.extend(eps)
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception as e:
                 error = f"rss: {e}"
                 logger.warning(error)
@@ -90,8 +95,10 @@ class DiscoveryOrchestrator:
             try:
                 source = self._sources["spotify"]
                 eps = source.discover_episodes(podcast, since=since)
-                logger.info(f"Discovered {len(eps)} episodes from Spotify")
+                logger.info("Discovered %s episodes from Spotify", len(eps))
                 discovered.extend(eps)
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception as e:
                 error = f"spotify: {e}"
                 logger.warning(error)
@@ -99,7 +106,7 @@ class DiscoveryOrchestrator:
 
         # Deduplicate and merge
         merged = self._deduplicate_episodes(discovered)
-        logger.info(f"After deduplication: {len(merged)} unique episodes")
+        logger.info("After deduplication: %s unique episodes", len(merged))
 
         # Create/update episode records
         new_count, updated_count = self._upsert_episodes(podcast, merged)
@@ -160,14 +167,11 @@ class DiscoveryOrchestrator:
 
         Returns True if they match by ID or by title similarity + date.
         """
-        # Match by source-specific IDs
-        if ep1.youtube_id and ep1.youtube_id == ep2.youtube_id:
-            return True
-        if ep1.spotify_uri and ep1.spotify_uri == ep2.spotify_uri:
-            return True
-        if ep1.rss_guid and ep1.rss_guid == ep2.rss_guid:
-            return True
-        if ep1.episode_url and ep1.episode_url == ep2.episode_url:
+        # A matching source identifier is sufficient to establish identity.
+        if any(
+            getattr(ep1, name) and getattr(ep1, name) == getattr(ep2, name)
+            for name in ("youtube_id", "spotify_uri", "rss_guid", "episode_url")
+        ):
             return True
 
         # Match by episode number if both have one
@@ -208,21 +212,7 @@ class DiscoveryOrchestrator:
             return episodes[0]
 
         # Start with the first episode
-        merged = DiscoveredEpisode(
-            title=episodes[0].title,
-            published_at=episodes[0].published_at,
-            duration_seconds=episodes[0].duration_seconds,
-            episode_number=episodes[0].episode_number,
-            description=episodes[0].description,
-            episode_url=episodes[0].episode_url,
-            thumbnail_url=episodes[0].thumbnail_url,
-            youtube_id=episodes[0].youtube_id,
-            spotify_uri=episodes[0].spotify_uri,
-            rss_guid=episodes[0].rss_guid,
-            apple_id=episodes[0].apple_id,
-            has_transcript=episodes[0].has_transcript,
-            discovery_source=episodes[0].discovery_source,
-        )
+        merged = replace(episodes[0])
 
         # Merge in values from other episodes
         for ep in episodes[1:]:
@@ -232,27 +222,14 @@ class DiscoveryOrchestrator:
                 # Also prefer podscripts title as it's often cleaner
                 merged.title = ep.title
 
-            # Fill in missing values
-            if ep.published_at and not merged.published_at:
-                merged.published_at = ep.published_at
-            if ep.duration_seconds and not merged.duration_seconds:
-                merged.duration_seconds = ep.duration_seconds
-            if ep.episode_number and not merged.episode_number:
-                merged.episode_number = ep.episode_number
-            if ep.description and not merged.description:
-                merged.description = ep.description
-            if ep.episode_url and not merged.episode_url:
-                merged.episode_url = ep.episode_url
-            if ep.thumbnail_url and not merged.thumbnail_url:
-                merged.thumbnail_url = ep.thumbnail_url
-            if ep.youtube_id and not merged.youtube_id:
-                merged.youtube_id = ep.youtube_id
-            if ep.spotify_uri and not merged.spotify_uri:
-                merged.spotify_uri = ep.spotify_uri
-            if ep.rss_guid and not merged.rss_guid:
-                merged.rss_guid = ep.rss_guid
-            if ep.apple_id and not merged.apple_id:
-                merged.apple_id = ep.apple_id
+            # Identity precedence is handled above; fill the remaining data fields.
+            for record_field in fields(DiscoveredEpisode):
+                name = record_field.name
+                if name in {"title", "has_transcript", "discovery_source"}:
+                    continue
+                value = getattr(ep, name)
+                if value and not getattr(merged, name):
+                    setattr(merged, name, value)
 
         return merged
 
@@ -346,7 +323,7 @@ class DiscoveryOrchestrator:
             discovery_source=discovered.discovery_source,
         )
         self.session.add(episode)
-        logger.debug(f"Created episode: {discovered.title}")
+        logger.debug("Created episode: %s", discovered.title)
         return episode
 
     def _update_episode(
@@ -387,7 +364,7 @@ class DiscoveryOrchestrator:
             changed = True
 
         if changed:
-            logger.debug(f"Updated episode: {episode.title}")
+            logger.debug("Updated episode: %s", episode.title)
 
         return changed
 

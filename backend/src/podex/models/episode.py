@@ -40,55 +40,55 @@ class Episode(Base):
         Index("ix_episodes_published_at", "published_at"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    podcast_id: Mapped[int] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    podcast_id: "Mapped[int]" = mapped_column(
         ForeignKey("podcasts.id", ondelete="CASCADE"),
     )
-    title: Mapped[str] = mapped_column(String(500), index=True)
-    episode_number: Mapped[int | None] = mapped_column(default=None)
-    published_at: Mapped[datetime | None] = mapped_column(
+    title: "Mapped[str]" = mapped_column(String(500), index=True)
+    episode_number: "Mapped[int | None]" = mapped_column(default=None)
+    published_at: "Mapped[datetime | None]" = mapped_column(
         DateTime(timezone=True),
         default=None,
     )
-    duration_seconds: Mapped[int | None] = mapped_column(default=None)
-    thumbnail_url: Mapped[str | None] = mapped_column(String(1000), default=None)
+    duration_seconds: "Mapped[int | None]" = mapped_column(default=None)
+    thumbnail_url: "Mapped[str | None]" = mapped_column(String(1000), default=None)
     # Source-specific identifiers used for cross-provider deduplication.
-    youtube_id: Mapped[str | None] = mapped_column(
+    youtube_id: "Mapped[str | None]" = mapped_column(
         String(20),
         index=True,
         default=None,
     )
-    spotify_uri: Mapped[str | None] = mapped_column(
+    spotify_uri: "Mapped[str | None]" = mapped_column(
         String(50),
         index=True,
         default=None,
     )
-    apple_id: Mapped[str | None] = mapped_column(String(50), default=None)
-    rss_guid: Mapped[str | None] = mapped_column(
+    apple_id: "Mapped[str | None]" = mapped_column(String(50), default=None)
+    rss_guid: "Mapped[str | None]" = mapped_column(
         String(500),
         index=True,
         default=None,
     )
-    episode_url: Mapped[str | None] = mapped_column(String(500), default=None)
-    discovery_source: Mapped[DiscoverySource | None] = mapped_column(
+    episode_url: "Mapped[str | None]" = mapped_column(String(500), default=None)
+    discovery_source: "Mapped[DiscoverySource | None]" = mapped_column(
         SAEnum(DiscoverySource, native_enum=False, length=50),
         default=None,
     )
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: "Mapped[datetime]" = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
 
-    podcast: Mapped["Podcast"] = relationship(back_populates="episodes")
-    transcripts: Mapped[list["Transcript"]] = relationship(
+    podcast: 'Mapped["Podcast"]' = relationship(back_populates="episodes")
+    transcripts: 'Mapped[list["Transcript"]]' = relationship(
         back_populates="episode",
     )
-    semantic_chunks: Mapped[list["SemanticChunk"]] = relationship(
+    semantic_chunks: 'Mapped[list["SemanticChunk"]]' = relationship(
         back_populates="episode",
     )
-    summaries: Mapped[list["EpisodeSummary"]] = relationship(
+    summaries: 'Mapped[list["EpisodeSummary"]]' = relationship(
         back_populates="episode",
     )
-    derivative_runs: Mapped[list["DerivativeGenerationRun"]] = relationship(
+    derivative_runs: 'Mapped[list["DerivativeGenerationRun"]]' = relationship(
         back_populates="episode",
     )

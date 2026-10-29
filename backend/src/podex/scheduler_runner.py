@@ -158,6 +158,8 @@ class SchedulerRunner:
                     summary.digest_runs,
                     summary.retention_runs,
                 )
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception:
                 db.rollback()
                 logger.exception("scheduler_tick_failed")

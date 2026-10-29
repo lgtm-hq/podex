@@ -22,16 +22,16 @@ class AccountAlertRule(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("account_users.id"), index=True)
-    target_type: Mapped[str] = mapped_column(String(20), index=True)
-    target_id: Mapped[int] = mapped_column(index=True)
-    event_type: Mapped[str] = mapped_column(String(30))
-    baseline_count: Mapped[int] = mapped_column(default=0)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    last_evaluated_at: Mapped[datetime | None] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    user_id: "Mapped[int]" = mapped_column(ForeignKey("account_users.id"), index=True)
+    target_type: "Mapped[str]" = mapped_column(String(20), index=True)
+    target_id: "Mapped[int]" = mapped_column(index=True)
+    event_type: "Mapped[str]" = mapped_column(String(30))
+    baseline_count: "Mapped[int]" = mapped_column(default=0)
+    enabled: "Mapped[bool]" = mapped_column(Boolean, default=True)
+    last_evaluated_at: "Mapped[datetime | None]" = mapped_column()
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )

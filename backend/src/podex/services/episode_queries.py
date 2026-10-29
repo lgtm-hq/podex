@@ -11,6 +11,7 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from podex.database import fetch_page
 from podex.models import Episode, Mention
 
 
@@ -35,10 +36,10 @@ def list_episodes(
     statement = select(Episode).order_by(Episode.published_at.desc())
     if podcast_id is not None:
         statement = statement.where(Episode.podcast_id == podcast_id)
-    statement = statement.offset(offset)
-    if limit is not None:
-        statement = statement.limit(limit)
-    return list(db.execute(statement).scalars().all())
+    rows: list[Episode] = fetch_page(
+        db=db, statement=statement, limit=limit, offset=offset
+    )
+    return rows
 
 
 def count_episodes(db: Session, podcast_id: int | None = None) -> int:
@@ -99,11 +100,11 @@ def list_episode_mentions(
         select(Mention)
         .where(Mention.episode_id == episode_id)
         .order_by(Mention.timestamp_seconds)
-        .offset(offset)
     )
-    if limit is not None:
-        statement = statement.limit(limit)
-    return list(db.execute(statement).scalars().all())
+    rows: list[Mention] = fetch_page(
+        db=db, statement=statement, limit=limit, offset=offset
+    )
+    return rows
 
 
 def count_episode_mentions(db: Session, episode_id: int) -> int:

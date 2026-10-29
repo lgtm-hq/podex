@@ -91,11 +91,14 @@ class RecordingS3Client:
         return {"Body": body}
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class SuccessfulAcquirer:
     """Return a deterministic fresh transcript for re-acquisition."""
 
     def acquire(self, episode: Episode) -> TranscriptAcquisitionResult:
         """Return a provider result for the requested episode."""
+        del episode
         return TranscriptAcquisitionResult(
             success=True,
             result=TranscriptResult(

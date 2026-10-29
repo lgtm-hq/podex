@@ -111,6 +111,8 @@ def _request_id(request: Request) -> str | None:
     return getattr(request.state, "request_id", None)
 
 
+# FastAPI injects these named query/callback fields as part of the HTTP contract.
+# pylint: disable-next=too-many-arguments
 def build_error_response(
     *,
     status_code: int,
