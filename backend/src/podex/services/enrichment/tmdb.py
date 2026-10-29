@@ -88,7 +88,7 @@ class TMDBProvider(TMDBApiProvider):  # type: ignore[misc, unused-ignore]
                     continue
 
                 # First try with year, then without
-                for year in ([media.year, None] if media.year else [None]):
+                for year in [media.year, None] if media.year else [None]:
                     search_results = self._search(query, search_type, year)
                     if not search_results:
                         continue

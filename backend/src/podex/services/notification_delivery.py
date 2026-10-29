@@ -4,7 +4,8 @@ from email.message import EmailMessage
 from typing import Protocol
 
 from podex.config import Settings
-from podex.services.smtp_delivery import SmtpDelivery
+
+from .smtp_delivery import SmtpDelivery
 
 
 class DigestSender(Protocol):

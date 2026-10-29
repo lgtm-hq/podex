@@ -23,9 +23,8 @@ if TYPE_CHECKING:
 
 # SQLAlchemy uses process_bind_param for literal fallback when this optional
 # process_literal_param hook is absent; TypeDecorator marks it abstract to pylint.
-class PgVectorType(
-    TypeDecorator[list[float] | None]
-):  # pylint: disable=abstract-method
+# pylint: disable-next=abstract-method
+class PgVectorType(TypeDecorator[list[float] | None]):
     """Store fixed-dimension embeddings as pgvector or text JSON."""
 
     impl = Text
