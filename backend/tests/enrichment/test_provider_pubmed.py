@@ -1,8 +1,12 @@
 """Tests for academic enrichment providers and aggregation."""
 
+import logging
+
 import httpx
+import pytest
 from assertpy import assert_that
 
+from podex.logging_config import configure_logging
 from podex.models import Media, MediaType
 from podex.services.enrichment import (
     PubMedProvider,
@@ -387,3 +391,45 @@ def test_pubmed_structured_abstract_joins_sections() -> None:
     assert_that(description).contains("Rest improves recall.")
     assert_that(description).contains("BACKGROUND")
     assert_that(description).contains("CONCLUSIONS")
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_message"),
+    [
+        ("doi", "PubMed DOI search error"),
+        ("search", "PubMed search error"),
+        ("summary", "PubMed summary error"),
+        ("fetch", "PubMed fetch error for 12345"),
+    ],
+)
+def test_pubmed_http_error_logs_redact_api_key(
+    scenario: str, expected_message: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Failed upstream requests must not expose their query-string credentials."""
+    configure_logging()
+    api_key = "fixture-key-not-for-production"
+    sent_keys: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        """Fail the selected operation after any required search setup."""
+        sent_keys.append(request.url.params.get("api_key"))
+        if scenario == "summary" and "esearch" in request.url.path:
+            return httpx.Response(200, json={"esearchresult": {"idlist": ["12345"]}})
+        return httpx.Response(503)
+
+    provider = PubMedProvider(api_key=api_key)
+    provider.rate_limiter = _CountingLimiter()
+    _swap_client(provider, handler)
+    media = _media("Sleep study", MediaType.STUDY)
+    if scenario == "doi":
+        media.doi = "10.1000/example"
+    elif scenario == "fetch":
+        media.pubmed_id = "12345"
+
+    with caplog.at_level(logging.INFO):
+        with provider:
+            assert_that(provider.search_and_enrich(media)).is_none()
+
+    assert_that(sent_keys).is_not_empty().contains_only(api_key)
+    assert_that(caplog.text).contains("HTTP Request:", expected_message, "HTTP 503")
+    assert_that(caplog.text).does_not_contain(api_key, "api_key=")

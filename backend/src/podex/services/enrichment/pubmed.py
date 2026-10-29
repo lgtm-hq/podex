@@ -14,6 +14,7 @@ from podex.services.enrichment.base import (
     EnrichmentResult,
     EnrichmentSource,
     canonicalize_doi,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -228,7 +229,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             if id_list:
                 return id_list[0]
         except httpx.HTTPError as e:
-            logger.warning("PubMed DOI search error: %s", e)
+            logger.warning("PubMed DOI search error: %s", describe_http_error(e))
 
         return None
 
@@ -273,7 +274,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             # Get summaries for found PMIDs
             return self._get_summaries(id_list)
         except httpx.HTTPError as e:
-            logger.warning("PubMed search error: %s", e)
+            logger.warning("PubMed search error: %s", describe_http_error(e))
             return []
 
     def _get_summaries(self, pmids: list[str]) -> list[dict[str, Any]]:
@@ -317,7 +318,7 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                     )
             return results
         except httpx.HTTPError as e:
-            logger.warning("PubMed summary error: %s", e)
+            logger.warning("PubMed summary error: %s", describe_http_error(e))
             return []
 
     def _fetch_article(self, pmid: str) -> dict[str, Any] | None:
@@ -342,7 +343,9 @@ class PubMedProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             response.raise_for_status()
             return self._parse_pubmed_xml(response.text, pmid)
         except httpx.HTTPError as e:
-            logger.warning("PubMed fetch error for %s: %s", pmid, e)
+            logger.warning(
+                "PubMed fetch error for %s: %s", pmid, describe_http_error(e)
+            )
             return None
 
     def _parse_pubmed_xml(self, xml_text: str, pmid: str) -> dict[str, Any] | None:
