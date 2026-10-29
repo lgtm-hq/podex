@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.12] - 2026-10-29
+
+### Changed
+
+- adopt lgtm-ci v0.79.0 and map CODEX_AUTH_JSON for subscription reviews (#632)
+  (e653aa3)
+- **deps**: update node.js to 9481667 (#631) (f1acfd7)
+- **deps**: update node.js to 26.12.1 (major) (#630) (dbf2256)
+- **deps**: update lgtm-hq/lgtm-ci to v0.78.1 (#628) (3693e24)
+
+### Fixed
+
+- **quality**: clear the backend lint baseline (#634) (f2736ab)
+
 ## [0.41.11] - 2026-10-27
 
 ### Fixed
