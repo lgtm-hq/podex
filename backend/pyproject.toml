@@ -29,6 +29,7 @@ dependencies = [
   "alembic>=1.13",
   "redis>=5.0",
   "httpx>=0.28",
+  "httpx2>=2.14",
   "feedparser>=6.0",
   "beautifulsoup4>=4.12",
   "rapidfuzz>=3.9",
@@ -53,6 +54,8 @@ dev = [
   "httpx>=0.28",
   "lintro==0.173.1",
   "mypy>=1.14",
+  # Match CI and local framework inference to the same Pylint/Astroid release.
+  "pylint==4.1.3",
   "pytest>=8.0",
   "pytest-cov>=6.0",
   "types-assertpy>=1.1.0.20260518",
@@ -130,3 +133,71 @@ target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+# Alembic installs these module proxies at runtime. Limit inference exceptions
+# to the two proxies; regular application imports remain checked.
+[tool.pylint.typecheck]
+ignored-modules = ["alembic.op", "alembic.context"]
+
+[tool.pylint.basic]
+# Alembic's published migration API mandates these lowercase module globals
+# and numbered migration modules. SessionLocal is SQLAlchemy's factory name.
+good-names = [
+  "revision",
+  "down_revision",
+  "branch_labels",
+  "depends_on",
+  "SessionLocal",
+  "iTunesProvider",
+  "SEARCH_URL",
+  "FETCH_URL",
+  "SUMMARY_URL",
+  "API_URL",
+]
+module-rgx = "(?:[a-z_][a-z0-9_]*|[0-9]{4}_[a-z0-9_]+)$"
+
+[tool.pylint.main]
+# The CI image runs standalone Pylint without application dependencies.
+init-hook = "import runpy; runpy.run_path('scripts/ci/quality/pylint_environment.py', run_name='__main__')"
+# Isolate inference caches between workers when analysing ORM mappings and the
+# Alembic proxy modules together; this also bounds local/CI analysis time.
+jobs = 4
+
+[tool.pylint.design]
+# TypeDecorator contributes a framework inheritance chain, not application layers.
+ignored-parents = ["sqlalchemy.sql.type_api.TypeDecorator"]
+# These declarative/framework bases implement behaviour; subclasses describe
+# fields or override the single framework hook rather than a public service API.
+exclude-too-few-public-methods = [
+  "pydantic.main.BaseModel",
+  "sqlalchemy.orm.decl_api.DeclarativeBase",
+  "typing.Protocol",
+  "starlette.middleware.base.BaseHTTPMiddleware",
+]
+
+[tool.lintro.semgrep]
+# Match quality-ci.yml's explicit, repository-owned Python >=3.11 ruleset.
+config = ".semgrep/prompt-boundary.yaml"
+
+[tool.lintro.trufflehog]
+# Generated PyPI distribution digests resemble Sentry credentials. OSV and
+# Gitleaks still inspect the lockfile; only this detector omits generated data.
+exclude_patterns = ["uv.lock"]
+
+[tool.pylint.imports]
+# Alembic migrations live here, but the imported Alembic library is third-party.
+known-third-party = ["alembic"]
+# Optional integrations are imported only when their settings enable them, so
+# unconfigured deployments and test doubles do not initialize those clients.
+allow-any-import-level = [
+  "spotipy",
+  "spotipy.oauth2",
+  "spotipy.oauth2.SpotifyClientCredentials",
+  "redis",
+  "podex.services.redis_limiter",
+  "podex.services.redis_limiter.RedisSlidingWindowRateLimiter",
+]
+
+[tool.ruff.lint.isort]
+# The local migrations directory does not replace the installed Alembic package.
+known-third-party = ["alembic"]
