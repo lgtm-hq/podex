@@ -316,7 +316,10 @@ def begin_workos_login(
     return redirect
 
 
+# FastAPI injects these named query/callback fields as part of the HTTP contract.
+# pylint: disable-next=too-many-arguments
 def complete_workos_callback(
+    *,
     code: str,
     state: str,
     request: Request,

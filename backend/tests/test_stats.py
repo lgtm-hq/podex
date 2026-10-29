@@ -20,6 +20,8 @@ from podex.services.stats_queries import (
 )
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class _Clock:
     """Advancable clock used to exercise TTL expiry without sleeping."""
 
@@ -104,8 +106,10 @@ def test_get_catalog_stats_bypasses_cache_when_ttl_zero(db_session: Session) -> 
     assert_that(cache.get(CATALOG_STATS_CACHE_KEY)).is_none()
 
 
-@pytest.fixture
-def stats_test_client(db_session: Session) -> Iterator[tuple[TestClient, TTLCache]]:
+@pytest.fixture(name="stats_test_client")
+def stats_test_client_fixture(
+    db_session: Session,
+) -> Iterator[tuple[TestClient, TTLCache]]:
     """Return a client + shared TTLCache override so tests can inspect it."""
     app = create_app()
     cache = TTLCache()

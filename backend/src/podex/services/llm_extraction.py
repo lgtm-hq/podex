@@ -16,6 +16,7 @@ from typing import Any
 import anthropic
 
 from podex.models.media import MediaType
+from podex.services.llm_response import first_response_text
 from podex.services.prompts_default import DEFAULT_EXTRACTION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,24 @@ _MAX_TITLE_CHARS = 500
 _MAX_CREATOR_CHARS = 255
 _MIN_YEAR = 1000
 _MAX_YEAR = 2100
+
+
+def _validated_creator(value: object) -> str | None:
+    """Normalize a creator without exceeding the persisted schema limit.
+
+    Args:
+        value: Untrusted creator value from the parsed response.
+
+    Returns:
+        A nonempty creator name, or None for absent or blank input.
+
+    Raises:
+        ValueError: When the normalized name exceeds the schema limit.
+    """
+    creator = str(value).strip() or None if value is not None else None
+    if creator is not None and len(creator) > _MAX_CREATOR_CHARS:
+        raise ValueError("creator exceeds the schema limit")
+    return creator
 
 
 def _validate_item(*, item: dict[str, Any], title: str) -> ExtractedMedia | None:
@@ -48,14 +67,9 @@ def _validate_item(*, item: dict[str, Any], title: str) -> ExtractedMedia | None
 
     try:
         media_type = MediaType(str(item.get("type", "")))
+        creator = _validated_creator(item.get("creator"))
     except ValueError:
         return None
-
-    creator = item.get("creator")
-    if creator is not None:
-        creator = str(creator).strip() or None
-        if creator is not None and len(creator) > _MAX_CREATOR_CHARS:
-            return None
 
     year = item.get("year")
     if year is not None:
@@ -106,6 +120,21 @@ class ExtractionResult:
         return len(self.errors) == 0
 
 
+def _failed_extraction(message: str) -> ExtractionResult:
+    """Record an SDK failure as the existing extraction result contract.
+
+    Args:
+        message: Diagnostic message safe to log and return to the caller.
+
+    Returns:
+        An empty extraction with the diagnostic recorded once.
+    """
+    logger.error(message)
+    return ExtractionResult(errors=[message])
+
+
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class LLMExtractor:
     """Extract media mentions from transcripts via the Anthropic API.
 
@@ -168,20 +197,11 @@ class LLMExtractor:
                 ],
             )
         except anthropic.APIStatusError as exc:
-            error_msg = f"API request failed: {exc.status_code}"
-            logger.error(error_msg)
-            result.errors.append(error_msg)
-            return result
+            return _failed_extraction(f"API request failed: {exc.status_code}")
         except anthropic.APIConnectionError as exc:
-            error_msg = f"Network error: {exc}"
-            logger.error(error_msg)
-            result.errors.append(error_msg)
-            return result
+            return _failed_extraction(f"Network error: {exc}")
 
-        response_text = next(
-            (block.text for block in response.content if block.type == "text"),
-            "",
-        ).strip()
+        response_text = first_response_text(response)
         if not response_text:
             return result
 

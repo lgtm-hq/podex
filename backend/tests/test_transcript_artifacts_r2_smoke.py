@@ -103,8 +103,7 @@ def test_r2_put_get_delete_round_trip(
         with contextlib.suppress(Exception):
             r2_store.delete(storage_key=storage_key)
         raise
-    else:
-        r2_store.delete(storage_key=storage_key)
+    r2_store.delete(storage_key=storage_key)
 
     with pytest.raises(botocore.exceptions.ClientError) as excinfo:
         r2_store.get_json(storage_key=storage_key)

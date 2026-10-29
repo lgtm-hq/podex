@@ -52,13 +52,6 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             follow_redirects=True,
         )
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if OpenLibrary supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search OpenLibrary and enrich media item.
 
@@ -84,7 +77,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         results = self._search(media.title, media.author)
 
         if not results:
-            logger.debug(f"No OpenLibrary results for: {media.title}")
+            logger.debug("No OpenLibrary results for: %s", media.title)
             return None
 
         # Find best match
@@ -131,12 +124,11 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 f"{self.base_url}/search.json",
                 params=params,
             )
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("docs", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"OpenLibrary search error: {e}")
+            logger.warning("OpenLibrary search error: %s", e)
             return []
 
     def _get_work(self, work_id: str) -> dict[str, Any] | None:
@@ -152,11 +144,10 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             response = self.client.get(
                 f"{self.base_url}/works/{work_id}.json",
             )
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"OpenLibrary work error for {work_id}: {e}")
+            logger.warning("OpenLibrary work error for %s: %s", work_id, e)
             return None
 
     def _find_best_match(
@@ -182,24 +173,9 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         for doc in results[:5]:  # Check top 5 results
             result_title = doc.get("title", "")
 
-            # Calculate title similarity
-            title_score = self._calculate_title_similarity(
-                media.title,
-                result_title,
+            title_author_score = self._book_match_score(
+                media, result_title, doc.get("author_name", [])
             )
-
-            # Check author match
-            author_boost = 0.0
-            if media.author:
-                authors = doc.get("author_name", [])
-                for author in authors:
-                    author_sim = self._calculate_title_similarity(
-                        media.author,
-                        author,
-                    )
-                    if author_sim > 0.7:
-                        author_boost = 0.15
-                        break
 
             # Boost if publication year matches
             year_boost = 0.0
@@ -208,7 +184,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 if first_publish and first_publish == media.year:
                     year_boost = 0.1
 
-            total_score = title_score + author_boost + year_boost
+            total_score = title_author_score + year_boost
 
             if total_score > best_score:
                 best_score = total_score
@@ -296,10 +272,38 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                     if len(isbn) == 13:
                         external_ids["isbn_13"] = isbn
                         break
-                    elif len(isbn) == 10 and "isbn_10" not in external_ids:
+                    if len(isbn) == 10 and "isbn_10" not in external_ids:
                         external_ids["isbn_10"] = isbn
 
         # Build metadata
+        metadata = self._build_metadata(search_doc=search_doc, work=work)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=cover_url,
+            description=description,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(
+        self,
+        search_doc: dict[str, Any] | None,
+        work: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect provider-specific metadata from the response.
+
+        Args:
+            search_doc: Provider response data for the metadata fields.
+            work: Provider response data for the metadata fields.
+
+        Returns:
+            Metadata fields supported by this provider.
+        """
         metadata: dict[str, Any] = {}
 
         # Subjects/genres
@@ -341,14 +345,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             if pages:
                 metadata["page_count"] = pages
 
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=cover_url,
-            description=description,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
+        return metadata
 
     def _build_result_from_search(
         self,
@@ -383,7 +380,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 if len(isbn) == 13:
                     external_ids["isbn_13"] = isbn
                     break
-                elif len(isbn) == 10 and "isbn_10" not in external_ids:
+                if len(isbn) == 10 and "isbn_10" not in external_ids:
                     external_ids["isbn_10"] = isbn
 
         # Build metadata
@@ -409,6 +406,8 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         if pages:
             metadata["page_count"] = pages
 
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
         return EnrichmentResult(
             source=self.source,
             cover_url=cover_url,
@@ -417,13 +416,4 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             metadata=metadata,
             confidence=confidence,
         )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> OpenLibraryProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        # pylint: enable=duplicate-code

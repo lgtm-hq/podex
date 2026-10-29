@@ -13,16 +13,16 @@ class AccountPreference(Base):
 
     __tablename__ = "account_preferences"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    user_id: "Mapped[int]" = mapped_column(
         ForeignKey("account_users.id"),
         unique=True,
         index=True,
     )
-    digest_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
-    digest_frequency: Mapped[str] = mapped_column(String(20), default="daily")
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    digest_enabled: "Mapped[bool]" = mapped_column(Boolean, default=True)
+    digest_frequency: "Mapped[str]" = mapped_column(String(20), default="daily")
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )

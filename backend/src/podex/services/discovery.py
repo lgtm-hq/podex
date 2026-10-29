@@ -6,6 +6,7 @@ from various sources (podscripts.co, RSS, Spotify, etc.).
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol
@@ -15,6 +16,8 @@ if TYPE_CHECKING:
 
 
 @dataclass
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class DiscoveredEpisode:
     """Episode discovered from a source.
 
@@ -44,6 +47,8 @@ class DiscoveredEpisode:
 
 
 @dataclass
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class DiscoveredPodcast:
     """Podcast discovered from a source."""
 
@@ -114,3 +119,19 @@ class DiscoveryProvider(Protocol):
             List of discovered episodes
         """
         ...
+
+
+def slugify_podcast_name(name: str) -> str:
+    """Generate the stable slug shared by podcast discovery providers.
+
+    Args:
+        name: Podcast display name.
+
+    Returns:
+        A lowercase slug with punctuation removed and separators collapsed.
+    """
+    slug = name.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug)
+    return slug.strip("-")

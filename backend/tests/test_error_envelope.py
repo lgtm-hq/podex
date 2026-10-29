@@ -4,6 +4,7 @@ import logging
 
 import pytest
 from assertpy import assert_that
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from podex.api.v2.errors import (
@@ -51,20 +52,12 @@ def test_validation_error_returns_details(client: TestClient) -> None:
 
 
 def test_unhandled_exception_returns_500_envelope(
+    failing_client: TestClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Unhandled route errors are wrapped in an opaque 500 envelope."""
-    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
-
-    async def _boom() -> None:
-        """Route handler that always fails."""
-        raise RuntimeError("boom")
-
-    app.add_api_route("/boom", _boom, methods=["GET"])
-
-    with TestClient(app, raise_server_exceptions=False) as client:
-        with caplog.at_level(logging.INFO, logger="podex.access"):
-            response = client.get("/boom", headers={REQUEST_ID_HEADER: "err-1"})
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = failing_client.get("/boom", headers={REQUEST_ID_HEADER: "err-1"})
 
     assert_that(response.status_code).is_equal_to(500)
     body = response.json()
@@ -84,15 +77,9 @@ def test_error_code_for_status_falls_back_to_generic() -> None:
     assert_that(error_code_for_status(418)).is_equal_to("http_418")
 
 
-def test_http_exception_with_structured_detail_preserves_code(
-    client: TestClient,
-) -> None:
+def test_http_exception_with_structured_detail_preserves_code() -> None:
     """Structured ``HTTPException.detail`` dicts propagate ``code``/``details``."""
-    from fastapi import HTTPException
 
-    from podex.main import app as _base_app
-
-    del _base_app
     app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
 
     async def _custom() -> None:

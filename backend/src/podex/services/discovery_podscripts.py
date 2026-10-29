@@ -63,6 +63,7 @@ class PodscriptsDiscovery:
 
     @property
     def name(self) -> str:
+        """Return the discovery provider identifier."""
         return "podscripts"
 
     @property
@@ -88,7 +89,7 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.warning(f"Failed to fetch podcast {slug}: {e}")
+            logger.warning("Failed to fetch podcast %s: %s", slug, e)
             return None
 
         soup = BeautifulSoup(html, "html.parser")
@@ -147,7 +148,7 @@ class PodscriptsDiscovery:
             List of discovered episodes
         """
         if not podcast.podscripts_slug:
-            logger.warning(f"Podcast {podcast.slug} has no podscripts_slug")
+            logger.warning("Podcast %s has no podscripts_slug", podcast.slug)
             return []
 
         episodes = []
@@ -169,7 +170,7 @@ class PodscriptsDiscovery:
             episodes.extend(page_episodes)
             page += 1
 
-        logger.info(f"Discovered {len(episodes)} episodes from podscripts.co")
+        logger.info("Discovered %s episodes from podscripts.co", len(episodes))
         return episodes
 
     def _fetch_episode_page(
@@ -179,7 +180,7 @@ class PodscriptsDiscovery:
     ) -> list[DiscoveredEpisode]:
         """Fetch a single page of episodes."""
         url = f"{BASE_URL}/podcasts/{slug}?page={page}"
-        logger.debug(f"Fetching page {page}: {url}")
+        logger.debug("Fetching page %s: %s", page, url)
 
         try:
             html = fetch_podscripts_html(
@@ -188,7 +189,7 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.warning(f"Failed to fetch page {page}: {e}")
+            logger.warning("Failed to fetch page %s: %s", page, e)
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -202,7 +203,7 @@ class PodscriptsDiscovery:
                 href.startswith(expected_prefix)
                 and href.rstrip("/") != f"/podcasts/{slug}"
             ):
-                episode = self._parse_episode_link(link, href, slug)
+                episode = self._parse_episode_link(link, href)
                 if episode:
                     episodes.append(episode)
 
@@ -221,7 +222,6 @@ class PodscriptsDiscovery:
         self,
         link: Tag,
         href: str,
-        podcast_slug: str,
     ) -> DiscoveredEpisode | None:
         """Parse an episode from a link element."""
         link_text = link.get_text(strip=True)
@@ -256,7 +256,7 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.error(f"Failed to fetch podcast catalog: {e}")
+            logger.error("Failed to fetch podcast catalog: %s", e)
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -288,7 +288,7 @@ class PodscriptsDiscovery:
                 seen.add(p["slug"])
                 unique.append(p)
 
-        logger.info(f"Found {len(unique)} podcasts on podscripts.co")
+        logger.info("Found %s podcasts on podscripts.co", len(unique))
         return unique
 
     def close(self) -> None:

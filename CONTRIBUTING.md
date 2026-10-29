@@ -43,11 +43,44 @@ Podex uses [`lintro`](https://github.com/lgtm-hq/py-lintro) as the single entry
 point for linting and formatting. Run it before every commit:
 
 ```bash
+cd backend
 uv run lintro fmt   # auto-fix formatting
 uv run lintro chk   # verify, must be clean
 ```
 
 Do not invoke the underlying tools (ruff, black, mypy, eslint, etc.) directly.
+
+Pylint is pinned in the backend development group. The quality container starts
+its tools outside the application's virtual environment, so the Pylint init hook
+in `backend/scripts/ci/quality/pylint_environment.py` synchronizes the frozen
+backend dependencies and restarts Pylint with that environment's interpreter.
+This keeps imports and Pylint/Astroid framework inference consistent with local
+checks; CI needs package-registry access on a cold dependency cache.
+
+Keep diagnostic exceptions narrow and explain them next to the affected code.
+The baseline has these intentional boundaries:
+
+- Declarative ORM/Pydantic fields, flat data records, public command signatures,
+  and single-operation adapters retain their framework or caller contracts.
+  SQLAlchemy mapping annotations use forward references for reliable inference.
+- Alembic's runtime proxies and numbered migration names follow its conventions.
+  Historical migration DDL stays self-contained rather than importing mutable
+  application helpers; only duplicated DDL blocks are exempt from similarity
+  checks, while all other checks remain enabled.
+- API/service DTO declarations and explicit provider result mappings remain
+  independent at their validation boundaries. Similarity exceptions cover only
+  those declarations or mappings, not provider algorithms or request handling.
+- Independent provider/task failures are caught at orchestration boundaries so
+  one failure does not stop the remaining work. Direct unit tests of private
+  boundaries use local `protected-access` exceptions.
+- A few tests repeat external request or relationship fields to exercise separate
+  contracts. Shared setup, payloads, and algorithms belong in reusable helpers.
+- `.lintro/` contains generated reports and is excluded from source discovery.
+  TruffleHog alone omits `uv.lock` because a generated PyPI Sentry SDK integrity
+  digest resembles a credential; OSV and Gitleaks still scan the lockfile.
+
+No Pylint diagnostic is disabled globally. Add new exceptions only after fixing
+the underlying cause or establishing why the explicit boundary must remain.
 
 ## Commits
 

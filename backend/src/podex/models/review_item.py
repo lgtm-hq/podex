@@ -38,39 +38,39 @@ class ReviewItem(Base):
 
     __tablename__ = "review_items"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    mention_candidate_id: Mapped[int] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    mention_candidate_id: "Mapped[int]" = mapped_column(
         ForeignKey("mention_candidates.id"),
         unique=True,
         index=True,
     )
-    target_media_id: Mapped[int | None] = mapped_column(
+    target_media_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("media.id"),
         index=True,
     )
-    status: Mapped[str] = mapped_column(
+    status: "Mapped[str]" = mapped_column(
         String(32),
         index=True,
         default=ReviewItemStatus.PENDING.value,
     )
-    priority: Mapped[str] = mapped_column(
+    priority: "Mapped[str]" = mapped_column(
         String(16),
         index=True,
         default=ReviewPriority.MEDIUM.value,
     )
-    assigned_to: Mapped[str | None] = mapped_column(String(100))
-    decision_note: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    assigned_to: "Mapped[str | None]" = mapped_column(String(100))
+    decision_note: "Mapped[str | None]" = mapped_column(Text)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    decided_at: Mapped[datetime | None] = mapped_column()
+    decided_at: "Mapped[datetime | None]" = mapped_column()
 
-    mention_candidate: Mapped["MentionCandidate"] = relationship(
+    mention_candidate: 'Mapped["MentionCandidate"]' = relationship(
         back_populates="review_item",
     )
-    target_media: Mapped["Media | None"] = relationship()
+    target_media: 'Mapped["Media | None"]' = relationship()
 
     def assign(self, *, actor_name: str | None = None) -> None:
         """Move the item into active review.

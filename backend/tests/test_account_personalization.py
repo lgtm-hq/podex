@@ -143,6 +143,7 @@ def test_smtp_sender_builds_single_use_message(
     class _FakeSmtp:
         def __init__(self, host: str, port: int, timeout: int) -> None:
             sent["endpoint"] = (host, port)
+            sent["timeout"] = timeout
 
         def __enter__(self) -> "_FakeSmtp":
             return self
@@ -151,12 +152,16 @@ def test_smtp_sender_builds_single_use_message(
             return None
 
         def starttls(self) -> None:
+            """Record TLS negotiation."""
             sent["starttls"] = True
 
         def login(self, username: str, password: str) -> None:
+            """Capture the credentials passed to the SMTP adapter."""
             sent["login"] = username
+            sent["password"] = password
 
         def send_message(self, message: EmailMessage) -> None:
+            """Capture the outgoing message."""
             sent["message"] = message
 
     monkeypatch.setattr("smtplib.SMTP", _FakeSmtp)

@@ -34,16 +34,16 @@ class MediaAlias(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    media_id: Mapped[int] = mapped_column(ForeignKey("media.id"), index=True)
-    alias: Mapped[str] = mapped_column(String(500))
-    normalized_alias: Mapped[str] = mapped_column(String(500), index=True)
-    source: Mapped[str] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    media_id: "Mapped[int]" = mapped_column(ForeignKey("media.id"), index=True)
+    alias: "Mapped[str]" = mapped_column(String(500))
+    normalized_alias: "Mapped[str]" = mapped_column(String(500), index=True)
+    source: "Mapped[str]" = mapped_column(
         String(32),
         default=MediaAliasSourceType.MANUAL.value,
         index=True,
     )
-    is_primary: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    is_primary: "Mapped[bool]" = mapped_column(Boolean, default=False)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
 
-    media: Mapped["Media"] = relationship(back_populates="aliases")
+    media: 'Mapped["Media"]' = relationship(back_populates="aliases")

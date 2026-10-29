@@ -94,7 +94,7 @@ COPY --from=builder --chown=podex:podex /app/src /app/src
 # part of the installed package. The executable bit is tracked by git.
 COPY --chown=podex:podex scripts/start.sh /app/scripts/start.sh
 
-USER podex
+USER 1001:1001
 
 EXPOSE 8000
 

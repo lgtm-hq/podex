@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from podex.models.transcript import Transcript
 
 
+# SQLAlchemy uses process_bind_param for literal fallback when this optional
+# process_literal_param hook is absent; TypeDecorator marks it abstract to pylint.
+# pylint: disable-next=abstract-method
 class PgVectorType(TypeDecorator[list[float] | None]):
     """Store fixed-dimension embeddings as pgvector or text JSON."""
 
@@ -78,17 +81,17 @@ class PgVectorType(TypeDecorator[list[float] | None]):
 
 def _compile_pgvector_type(
     type_: PgVectorType,
-    compiler: object,
-    **kwargs: object,
+    _compiler: object,
+    **_kwargs: object,
 ) -> str:
     """Compile semantic embeddings to a pgvector column on Postgres."""
     return f"vector({type_.dimensions})"
 
 
 def _compile_default_vector_type(
-    type_: PgVectorType,
-    compiler: object,
-    **kwargs: object,
+    _type: PgVectorType,
+    _compiler: object,
+    **_kwargs: object,
 ) -> str:
     """Compile semantic embeddings to text for local test databases."""
     return "TEXT"

@@ -44,6 +44,8 @@ class SemanticChunkingPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class SemanticChunkCandidateData:
     """Candidate semantic chunk derived from transcript text."""
 
@@ -152,31 +154,26 @@ def sync_semantic_chunks_for_transcript(
     Returns:
         Summary of created, updated, deleted, and embedded chunks.
     """
-    effective_now = now or datetime.now(UTC)
-    effective_policy = policy or SemanticChunkingPolicy()
+    now = now or datetime.now(UTC)
+    policy = policy or SemanticChunkingPolicy()
     candidates = build_semantic_chunk_candidates(
         transcript=transcript,
-        policy=effective_policy,
+        policy=policy,
     )
     existing_chunks = {
         chunk.chunk_key: chunk
         for chunk in db.query(SemanticChunk)
         .filter(SemanticChunk.transcript_id == transcript.id)
-        .filter(SemanticChunk.pipeline_version == effective_policy.pipeline_version)
+        .filter(SemanticChunk.pipeline_version == policy.pipeline_version)
         .all()
     }
-    candidate_keys = {candidate.chunk_key for candidate in candidates}
-
     created_count = 0
     updated_count = 0
-    deleted_count = 0
-    embedded_count = 0
-    failed_count = 0
-
-    for stale_key, stale_chunk in existing_chunks.items():
-        if stale_key not in candidate_keys:
-            db.delete(stale_chunk)
-            deleted_count += 1
+    deleted_count = _remove_stale_chunks(
+        db=db,
+        existing=existing_chunks,
+        candidates=candidates,
+    )
 
     chunks_to_embed: list[SemanticChunk] = []
     for candidate in candidates:
@@ -199,32 +196,11 @@ def sync_semantic_chunks_for_transcript(
             continue
         chunks_to_embed.append(chunk)
 
-    if embedding_provider is not None and chunks_to_embed:
-        try:
-            vectors = embedding_provider.embed_texts(
-                texts=[chunk.text for chunk in chunks_to_embed],
-            )
-            _validate_embeddings(
-                vectors=vectors,
-                expected_count=len(chunks_to_embed),
-                expected_dimensions=embedding_provider.dimensions,
-            )
-        except (RuntimeError, ValueError, TypeError) as exc:
-            failed_count = len(chunks_to_embed)
-            for chunk in chunks_to_embed:
-                chunk.embedding_status = SemanticChunkEmbeddingStatus.FAILED.value
-                chunk.embedding_model = embedding_provider.model_name
-                chunk.embedding_dimensions = embedding_provider.dimensions
-                chunk.embedding_error = str(exc)
-        else:
-            embedded_count = len(chunks_to_embed)
-            for chunk, vector in zip(chunks_to_embed, vectors, strict=True):
-                chunk.embedding_status = SemanticChunkEmbeddingStatus.EMBEDDED.value
-                chunk.embedding_model = embedding_provider.model_name
-                chunk.embedding_dimensions = embedding_provider.dimensions
-                chunk.embedding_vector = vector
-                chunk.embedding_error = None
-                chunk.embedded_at = effective_now
+    embedded_count, failed_count = _embed_chunks(
+        chunks=chunks_to_embed,
+        provider=embedding_provider,
+        now=now,
+    )
 
     db.flush()
     return SemanticChunkSyncResultData(
@@ -235,6 +211,73 @@ def sync_semantic_chunks_for_transcript(
         failed_count=failed_count,
         chunk_keys=tuple(candidate.chunk_key for candidate in candidates),
     )
+
+
+def _remove_stale_chunks(
+    *,
+    db: Session,
+    existing: dict[str, SemanticChunk],
+    candidates: list[SemanticChunkCandidateData],
+) -> int:
+    """Remove stored chunks absent from the current candidate set.
+
+    Args:
+        db: Session containing the stored chunks.
+        existing: Existing chunks indexed by their persisted identity.
+        candidates: Current transcript candidates.
+
+    Returns:
+        The number of deleted chunks.
+    """
+    candidate_keys = {candidate.chunk_key for candidate in candidates}
+    deleted = 0
+    for key, chunk in existing.items():
+        if key not in candidate_keys:
+            db.delete(chunk)
+            deleted += 1
+    return deleted
+
+
+def _embed_chunks(
+    *,
+    chunks: list[SemanticChunk],
+    provider: EmbeddingProvider | None,
+    now: datetime,
+) -> tuple[int, int]:
+    """Apply one validated embedding batch to the pending chunks.
+
+    Args:
+        chunks: Ordered chunks awaiting embeddings.
+        provider: Configured embedding provider, when available.
+        now: Timestamp for successfully embedded chunks.
+
+    Returns:
+        Counts of successfully embedded and failed chunks.
+    """
+    if provider is None or not chunks:
+        return 0, 0
+    try:
+        vectors = provider.embed_texts(texts=[chunk.text for chunk in chunks])
+        _validate_embeddings(
+            vectors=vectors,
+            expected_count=len(chunks),
+            expected_dimensions=provider.dimensions,
+        )
+    except (RuntimeError, ValueError, TypeError) as error:
+        for chunk in chunks:
+            chunk.embedding_status = SemanticChunkEmbeddingStatus.FAILED.value
+            chunk.embedding_model = provider.model_name
+            chunk.embedding_dimensions = provider.dimensions
+            chunk.embedding_error = str(error)
+        return 0, len(chunks)
+    for chunk, vector in zip(chunks, vectors, strict=True):
+        chunk.embedding_status = SemanticChunkEmbeddingStatus.EMBEDDED.value
+        chunk.embedding_model = provider.model_name
+        chunk.embedding_dimensions = provider.dimensions
+        chunk.embedding_vector = vector
+        chunk.embedding_error = None
+        chunk.embedded_at = now
+    return len(chunks), 0
 
 
 def _segments_from_transcript(

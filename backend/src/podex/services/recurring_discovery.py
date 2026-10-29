@@ -34,6 +34,8 @@ class DiscoveryScheduleResultData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class DiscoveryWorkRunData:
     """Result of running one scheduled discovery work item."""
 
@@ -185,6 +187,8 @@ def run_due_episode_discovery_work(
 
         try:
             discovery_result = effective_runner(db, podcast)
+        # Keep other providers and tasks running after this failure.
+        # pylint: disable-next=broad-exception-caught
         except Exception as exc:
             run.status = "failed"
             run.error_summary = str(exc)

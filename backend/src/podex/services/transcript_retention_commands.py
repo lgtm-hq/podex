@@ -9,10 +9,12 @@ from sqlalchemy.orm import Session
 from podex.models import (
     DerivativeGenerationRun,
     Transcript,
-    TranscriptArtifact,
     TranscriptDigest,
 )
-from podex.services.transcript_artifacts import TranscriptArtifactStore
+from podex.services.transcript_artifacts import (
+    TranscriptArtifactStore,
+    list_retained_artifacts,
+)
 from podex.services.transcript_retention import (
     TranscriptRetentionDecision,
     TranscriptRetentionPolicy,
@@ -89,6 +91,8 @@ def create_transcript_digest(
     return digest
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def evaluate_transcript_retention(
     *,
     db: Session,
@@ -181,14 +185,7 @@ def purge_transcript_if_eligible(
         return False
 
     purged_at = now or datetime.now(UTC)
-    active_artifacts = (
-        db.query(TranscriptArtifact)
-        .filter(
-            TranscriptArtifact.transcript_id == transcript.id,
-            TranscriptArtifact.purged_at.is_(None),
-        )
-        .all()
-    )
+    active_artifacts = list_retained_artifacts(db=db, transcript_id=transcript.id)
     if active_artifacts and artifact_store is None:
         raise ValueError("Encrypted transcript artifact storage is not configured")
     create_transcript_digest(db=db, transcript=transcript, purged_at=purged_at)

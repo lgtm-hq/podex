@@ -15,6 +15,7 @@ from typing import Any
 
 import anthropic
 
+from podex.services.llm_response import first_response_text
 from podex.services.prompts_default import DEFAULT_CLEANUP_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,39 @@ class CleanupResult:
         return len(self.corrections_made)
 
 
+def _cleanup_context(
+    *,
+    podcast_name: str | None,
+    host_name: str | None,
+    guest_name: str | None,
+    terminology: list[str] | None,
+) -> str:
+    """Format the optional context attached to transcript cleanup.
+
+    Args:
+        podcast_name: Podcast display name.
+        host_name: Optional host name.
+        guest_name: Optional guest name.
+        terminology: Known terms limited to the existing prompt allowance.
+
+    Returns:
+        Context lines, or the existing fallback when no context is supplied.
+    """
+    context_parts = []
+    if podcast_name:
+        context_parts.append(f"Podcast: {podcast_name}")
+    if host_name:
+        context_parts.append(f"Host: {host_name}")
+    if guest_name:
+        context_parts.append(f"Guest: {guest_name}")
+    if terminology:
+        terms = terminology[:_MAX_TERMINOLOGY_TERMS]
+        context_parts.append(f"Known terms and names: {', '.join(terms)}")
+    return "\n".join(context_parts) if context_parts else "No additional context."
+
+
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class TranscriptCleaner:
     """Fix speech-to-text errors in transcripts via the Anthropic API.
 
@@ -74,6 +108,8 @@ class TranscriptCleaner:
         self.model = model
         self.system_prompt = system_prompt or DEFAULT_CLEANUP_SYSTEM_PROMPT
 
+    # Keep the existing named command inputs compatible with callers.
+    # pylint: disable-next=too-many-arguments,too-many-positional-arguments
     def cleanup_transcript(
         self,
         transcript_text: str,
@@ -109,18 +145,11 @@ class TranscriptCleaner:
             )
             transcript_text = transcript_text[:max_chars]
 
-        context_parts = []
-        if podcast_name:
-            context_parts.append(f"Podcast: {podcast_name}")
-        if host_name:
-            context_parts.append(f"Host: {host_name}")
-        if guest_name:
-            context_parts.append(f"Guest: {guest_name}")
-        if terminology:
-            terms = terminology[:_MAX_TERMINOLOGY_TERMS]
-            context_parts.append(f"Known terms and names: {', '.join(terms)}")
-        context = (
-            "\n".join(context_parts) if context_parts else "No additional context."
+        context = _cleanup_context(
+            podcast_name=podcast_name,
+            host_name=host_name,
+            guest_name=guest_name,
+            terminology=terminology,
         )
 
         user_message = (
@@ -131,6 +160,8 @@ class TranscriptCleaner:
             "Return as JSON."
         )
 
+        # Keep this task-specific Anthropic request contract explicit.
+        # pylint: disable=duplicate-code
         try:
             response = self.client.messages.create(
                 model=self.model,
@@ -138,6 +169,7 @@ class TranscriptCleaner:
                 system=self.system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
+        # pylint: enable=duplicate-code
         except anthropic.APIStatusError as exc:
             result.errors.append(f"API error: {exc.status_code}")
             return result
@@ -145,10 +177,7 @@ class TranscriptCleaner:
             result.errors.append(f"Network error: {exc}")
             return result
 
-        response_text = next(
-            (block.text for block in response.content if block.type == "text"),
-            "",
-        ).strip()
+        response_text = first_response_text(response)
         if not response_text:
             return result
 

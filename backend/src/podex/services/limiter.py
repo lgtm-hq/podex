@@ -36,6 +36,30 @@ class RateLimitDecision:
     reset_after: float
     retry_after: float
 
+    @classmethod
+    def rejected(cls, *, limit: int, retry_after: float) -> "RateLimitDecision":
+        """Describe a full window with matching reset and retry hints."""
+        return cls(
+            allowed=False,
+            limit=limit,
+            remaining=0,
+            reset_after=retry_after,
+            retry_after=retry_after,
+        )
+
+    @classmethod
+    def accepted(
+        cls, *, limit: int, remaining: int, reset_after: float
+    ) -> "RateLimitDecision":
+        """Describe an admitted request with no retry penalty."""
+        return cls(
+            allowed=True,
+            limit=limit,
+            remaining=remaining,
+            reset_after=reset_after,
+            retry_after=0.0,
+        )
+
 
 @runtime_checkable
 class RateLimiter(Protocol):
@@ -149,23 +173,15 @@ class SlidingWindowRateLimiter:
             if len(hits) >= self._max_requests:
                 oldest = hits[0]
                 retry_after = max(0.0, oldest + self._window_seconds - current)
-                return RateLimitDecision(
-                    allowed=False,
-                    limit=self._max_requests,
-                    remaining=0,
-                    reset_after=retry_after,
-                    retry_after=retry_after,
+                return RateLimitDecision.rejected(
+                    limit=self._max_requests, retry_after=retry_after
                 )
 
             hits.append(current)
             remaining = self._max_requests - len(hits)
             reset_after = hits[0] + self._window_seconds - current
-            return RateLimitDecision(
-                allowed=True,
-                limit=self._max_requests,
-                remaining=remaining,
-                reset_after=reset_after,
-                retry_after=0.0,
+            return RateLimitDecision.accepted(
+                limit=self._max_requests, remaining=remaining, reset_after=reset_after
             )
 
     def reset(self) -> None:

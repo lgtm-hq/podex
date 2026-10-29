@@ -13,11 +13,11 @@ class AccountDigest(Base):
 
     __tablename__ = "account_digests"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("account_users.id"), index=True)
-    channel: Mapped[str] = mapped_column(String(20), default="email")
-    subject: Mapped[str] = mapped_column(String(255))
-    body_text: Mapped[str] = mapped_column(Text)
-    event_count: Mapped[int] = mapped_column()
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    delivered_at: Mapped[datetime | None] = mapped_column()
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    user_id: "Mapped[int]" = mapped_column(ForeignKey("account_users.id"), index=True)
+    channel: "Mapped[str]" = mapped_column(String(20), default="email")
+    subject: "Mapped[str]" = mapped_column(String(255))
+    body_text: "Mapped[str]" = mapped_column(Text)
+    event_count: "Mapped[int]" = mapped_column()
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    delivered_at: "Mapped[datetime | None]" = mapped_column()

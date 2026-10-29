@@ -58,6 +58,7 @@ class ExtractedMention:
 
 
 def normalize_text(value: str) -> str:
+    """Normalize punctuation and case for mention matching."""
     table = str.maketrans("", "", string.punctuation)
     return value.translate(table).lower().strip()
 
@@ -111,8 +112,7 @@ def extract_mentions_from_segments(
         # Heuristic extraction: title-cased sequences
         # Disabled by default - creates too many false positives (places, names, etc.)
         if enable_heuristic:
-            matches = TITLE_PATTERN.findall(text)
-            for match in matches[:5]:
+            for match in TITLE_PATTERN.findall(text)[:5]:
                 words = match.split()
                 if all(word in STOPWORDS for word in words):
                     continue

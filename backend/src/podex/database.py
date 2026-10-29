@@ -1,9 +1,9 @@
 """Database engine and session management."""
 
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, TypeVar
 
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, Select, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from podex.config import Settings, get_settings
@@ -68,3 +68,25 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def delete_if_present(*, db: Session, row: object | None) -> bool:
+    """Delete an optional ORM row and flush, returning whether it existed."""
+    if row is None:
+        return False
+    db.delete(row)
+    db.flush()
+    return True
+
+
+RowT = TypeVar("RowT")
+
+
+def fetch_page(
+    *, db: Session, statement: Select[RowT], limit: int | None, offset: int
+) -> list[RowT]:
+    """Execute a scalar-row query with consistent optional pagination."""
+    statement = statement.offset(offset)
+    if limit is not None:
+        statement = statement.limit(limit)
+    return list(db.scalars(statement).all())

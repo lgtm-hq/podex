@@ -14,6 +14,7 @@ import httpx
 
 from podex.models.media import MediaType
 from podex.services.enrichment.base import (
+    SCREEN_MEDIA_TYPES,
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
@@ -40,12 +41,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
     source = EnrichmentSource.OMDB
 
-    SUPPORTED_TYPES = {
-        MediaType.MOVIE,
-        MediaType.TV_SHOW,
-        MediaType.DOCUMENTARY,
-        "standup_special",
-    }
+    SUPPORTED_TYPES = SCREEN_MEDIA_TYPES
 
     def __init__(
         self,
@@ -56,14 +52,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
     ) -> None:
         super().__init__(requests_per_second)
         self.api_key = api_key
-        self.client = httpx.Client(
-            base_url=base_url or self.BASE_URL,
-            timeout=30.0,
-        )
-
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if OMDB supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
+        self._configure_http_client(base_url)
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search OMDB and enrich media item.
@@ -107,7 +96,7 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                     )
                 return result
 
-        logger.debug(f"No OMDB results for: {media.title}")
+        logger.debug("No OMDB results for: %s", media.title)
         return None
 
     def _result_from_title_hit(
@@ -138,8 +127,10 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         if confidence < 0.7:
             logger.debug(
-                f"OMDB match too weak for '{media.title}': "
-                f"got '{result_title}' with confidence {confidence:.2f}"
+                "OMDB match too weak for '%s': got '%s' with confidence %s",
+                media.title,
+                result_title,
+                format(confidence, ".2f"),
             )
             return None
 
@@ -170,12 +161,13 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                     "plot": "full",
                 },
             )
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
             logger.warning(
-                f"OMDB error for IMDB ID {imdb_id}: {describe_http_error(e)}",
+                "OMDB error for IMDB ID %s: %s",
+                imdb_id,
+                describe_http_error(e),
             )
             return None
 
@@ -207,12 +199,13 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
                 params["y"] = year
 
             response = self.client.get("/", params=params)
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
             logger.warning(
-                f"OMDB search error for '{title}': {describe_http_error(e)}",
+                "OMDB search error for '%s': %s",
+                title,
+                describe_http_error(e),
             )
             return None
 
@@ -245,33 +238,35 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             external_ids["imdb_id"] = imdb_id
 
         # Build metadata
+        metadata = self._build_metadata(data=data)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=cover_url,
+            description=description,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(
+        self,
+        data: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect provider-specific metadata from the response.
+
+        Args:
+            data: Provider response data for the metadata fields.
+
+        Returns:
+            Metadata fields supported by this provider.
+        """
         metadata: dict[str, Any] = {}
 
-        # IMDB rating
-        imdb_rating = data.get("imdbRating")
-        if imdb_rating and imdb_rating != "N/A":
-            with contextlib.suppress(ValueError):
-                metadata["imdb_rating"] = float(imdb_rating)
-
-        imdb_votes = data.get("imdbVotes")
-        if imdb_votes and imdb_votes != "N/A":
-            with contextlib.suppress(ValueError):
-                metadata["imdb_votes"] = int(imdb_votes.replace(",", ""))
-
-        # Other ratings (Rotten Tomatoes, Metacritic)
-        ratings = data.get("Ratings", [])
-        for rating in ratings:
-            source = rating.get("Source", "")
-            value = rating.get("Value", "")
-
-            if source == "Rotten Tomatoes":
-                # Value is like "91%"
-                with contextlib.suppress(ValueError):
-                    metadata["rotten_tomatoes"] = int(value.rstrip("%"))
-            elif source == "Metacritic":
-                # Value is like "79/100"
-                with contextlib.suppress(ValueError):
-                    metadata["metacritic"] = int(value.split("/")[0])
+        self._add_ratings_metadata(metadata=metadata, data=data)
 
         # Awards
         awards = data.get("Awards")
@@ -327,14 +322,44 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             with contextlib.suppress(ValueError):
                 metadata["seasons"] = int(total_seasons)
 
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=cover_url,
-            description=description,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
+        return metadata
+
+    def _add_ratings_metadata(
+        self,
+        metadata: dict[str, Any],
+        data: dict[str, Any],
+    ) -> None:
+        """Add ratings fields to the provider metadata.
+
+        Args:
+            metadata: Metadata dictionary to populate.
+            data: Provider response data for these fields.
+        """
+        # IMDB rating
+        imdb_rating = data.get("imdbRating")
+        if imdb_rating and imdb_rating != "N/A":
+            with contextlib.suppress(ValueError):
+                metadata["imdb_rating"] = float(imdb_rating)
+
+        imdb_votes = data.get("imdbVotes")
+        if imdb_votes and imdb_votes != "N/A":
+            with contextlib.suppress(ValueError):
+                metadata["imdb_votes"] = int(imdb_votes.replace(",", ""))
+
+        # Other ratings (Rotten Tomatoes, Metacritic)
+        ratings = data.get("Ratings", [])
+        for rating in ratings:
+            source = rating.get("Source", "")
+            value = rating.get("Value", "")
+
+            if source == "Rotten Tomatoes":
+                # Value is like "91%"
+                with contextlib.suppress(ValueError):
+                    metadata["rotten_tomatoes"] = int(value.rstrip("%"))
+            elif source == "Metacritic":
+                # Value is like "79/100"
+                with contextlib.suppress(ValueError):
+                    metadata["metacritic"] = int(value.split("/")[0])
 
     def _parse_oscar_awards(self, awards_text: str) -> tuple[int, int]:
         """Parse Oscar wins and nominations from awards text.
@@ -359,13 +384,3 @@ class OMDBProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             nominations = int(nom_match.group(1))
 
         return wins, nominations
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> OMDBProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()

@@ -123,129 +123,90 @@ def test_complete_nested_settings_load_from_env_mapping(
 
     settings = Settings()
 
-    assert_that(settings.app_name).is_equal_to("podex-full")
-    assert_that(settings.environment).is_equal_to("staging")
-    assert_that(settings.debug).is_true()
-    assert_that(settings.api_v2_prefix).is_equal_to("/api/test")
-    assert_that(settings.cors_origins).is_equal_to(["https://app.example.com"])
-    assert_that(settings.public_web_url).is_equal_to("https://app.example.com")
-
-    assert_that(settings.database.url).is_equal_to(
-        "postgresql+psycopg://podex@db/podex",
-    )
-    assert_that(settings.database.pool_size).is_equal_to(9)
-    assert_that(settings.database.max_overflow).is_equal_to(3)
-    assert_that(settings.database.pool_recycle_seconds).is_equal_to(240)
-
-    assert_that(settings.rate_limit.enabled).is_false()
-    assert_that(settings.rate_limit.max_requests).is_equal_to(42)
-    assert_that(settings.rate_limit.window_seconds).is_equal_to(12.5)
-    assert_that(settings.rate_limit.exempt_paths).is_equal_to(
-        ["/health", "/metrics"],
-    )
-    assert_that(settings.rate_limit.redis_url).is_equal_to("redis://redis:6379/2")
-    assert_that(settings.rate_limit.redis_prefix).is_equal_to("podex:full")
-
-    assert_that(settings.stats_cache.ttl_seconds).is_equal_to(7.5)
-
-    assert_that(settings.transcripts.storage_backend).is_equal_to("encrypted_s3")
-    assert_that(settings.transcripts.storage_path).is_equal_to(
-        Path("./data/full-model-transcripts"),
-    )
-    assert_that(settings.transcripts.encryption_key).is_equal_to("fernet-key")
-    assert_that(settings.transcripts.s3_bucket).is_equal_to("full-transcripts")
-    assert_that(settings.transcripts.s3_endpoint_url).is_equal_to(
-        "https://r2.example",
-    )
-    assert_that(settings.transcripts.s3_region_name).is_equal_to("auto")
-    assert_that(settings.transcripts.s3_access_key_id).is_equal_to("access-key-id")
-    assert_that(settings.transcripts.s3_secret_access_key).is_equal_to(
-        "secret-access-key",
-    )
-
-    assert_that(settings.auth.magic_link_ttl_minutes).is_equal_to(20)
-    assert_that(settings.auth.session_ttl_days).is_equal_to(60)
-    assert_that(settings.auth.session_cookie_name).is_equal_to(
-        "podex_full_session",
-    )
-    assert_that(settings.auth.session_cookie_secure).is_false()
-    assert_that(settings.auth.smtp_host).is_equal_to("smtp.example.com")
-    assert_that(settings.auth.smtp_port).is_equal_to(2525)
-    assert_that(settings.auth.smtp_username).is_equal_to("smtp-user")
-    assert_that(settings.auth.smtp_password).is_equal_to("smtp-password")
-    assert_that(settings.auth.smtp_from_email).is_equal_to("signin@example.com")
-    assert_that(settings.auth.smtp_starttls).is_false()
-    assert_that(settings.auth.workos_client_id).is_equal_to("client_full")
-    assert_that(settings.auth.workos_api_key).is_equal_to("sk_full")
-    assert_that(settings.auth.workos_redirect_uri).is_equal_to(
-        "https://app.example.com/callback",
-    )
-    assert_that(settings.auth.workos_enabled).is_true()
-
-    assert_that(settings.billing.paid_tier_enabled).is_true()
-    assert_that(settings.billing.paid_tier_enforced).is_true()
-    assert_that(settings.billing.paid_api_requests_per_month).is_equal_to(1500)
-    assert_that(settings.billing.paid_llm_requests_per_month).is_equal_to(75)
-    assert_that(settings.billing.provider_name).is_equal_to("paddle")
-    assert_that(settings.billing.checkout_url).is_equal_to(
-        "https://checkout.example.com",
-    )
-    assert_that(settings.billing.paddle_api_key).is_equal_to("pdl_full")
-    assert_that(settings.billing.paddle_webhook_secret).is_equal_to("whsec_full")
-    assert_that(settings.billing.paddle_price_id).is_equal_to("pri_full")
-    assert_that(settings.billing.paddle_checkout_url).is_equal_to(
-        "https://buy.example.com",
-    )
-    assert_that(settings.billing.paddle_checkout_enabled).is_true()
-
-    assert_that(settings.observability.sentry_dsn).is_equal_to(
-        "https://key@sentry.example/1",
-    )
-    assert_that(settings.observability.sentry_environment).is_equal_to("staging")
+    expectations: list[tuple[object, object]] = [
+        (settings.app_name, "podex-full"),
+        (settings.environment, "staging"),
+        (settings.debug, True),
+        (settings.api_v2_prefix, "/api/test"),
+        (settings.cors_origins, ["https://app.example.com"]),
+        (settings.public_web_url, "https://app.example.com"),
+        (settings.database.url, "postgresql+psycopg://podex@db/podex"),
+        (settings.database.pool_size, 9),
+        (settings.database.max_overflow, 3),
+        (settings.database.pool_recycle_seconds, 240),
+        (settings.rate_limit.enabled, False),
+        (settings.rate_limit.max_requests, 42),
+        (settings.rate_limit.window_seconds, 12.5),
+        (settings.rate_limit.exempt_paths, ["/health", "/metrics"]),
+        (settings.rate_limit.redis_url, "redis://redis:6379/2"),
+        (settings.rate_limit.redis_prefix, "podex:full"),
+        (settings.stats_cache.ttl_seconds, 7.5),
+        (settings.transcripts.storage_backend, "encrypted_s3"),
+        (settings.transcripts.storage_path, Path("./data/full-model-transcripts")),
+        (settings.transcripts.encryption_key, "fernet-key"),
+        (settings.transcripts.s3_bucket, "full-transcripts"),
+        (settings.transcripts.s3_endpoint_url, "https://r2.example"),
+        (settings.transcripts.s3_region_name, "auto"),
+        (settings.transcripts.s3_access_key_id, "access-key-id"),
+        (settings.transcripts.s3_secret_access_key, "secret-access-key"),
+        (settings.auth.magic_link_ttl_minutes, 20),
+        (settings.auth.session_ttl_days, 60),
+        (settings.auth.session_cookie_name, "podex_full_session"),
+        (settings.auth.session_cookie_secure, False),
+        (settings.auth.smtp_host, "smtp.example.com"),
+        (settings.auth.smtp_port, 2525),
+        (settings.auth.smtp_username, "smtp-user"),
+        (settings.auth.smtp_password, "smtp-password"),
+        (settings.auth.smtp_from_email, "signin@example.com"),
+        (settings.auth.smtp_starttls, False),
+        (settings.auth.workos_client_id, "client_full"),
+        (settings.auth.workos_api_key, "sk_full"),
+        (settings.auth.workos_redirect_uri, "https://app.example.com/callback"),
+        (settings.auth.workos_enabled, True),
+        (settings.billing.paid_tier_enabled, True),
+        (settings.billing.paid_tier_enforced, True),
+        (settings.billing.paid_api_requests_per_month, 1500),
+        (settings.billing.paid_llm_requests_per_month, 75),
+        (settings.billing.provider_name, "paddle"),
+        (settings.billing.checkout_url, "https://checkout.example.com"),
+        (settings.billing.paddle_api_key, "pdl_full"),
+        (settings.billing.paddle_webhook_secret, "whsec_full"),
+        (settings.billing.paddle_price_id, "pri_full"),
+        (settings.billing.paddle_checkout_url, "https://buy.example.com"),
+        (settings.billing.paddle_checkout_enabled, True),
+        (settings.observability.sentry_dsn, "https://key@sentry.example/1"),
+        (settings.observability.sentry_environment, "staging"),
+        (settings.enrichment.tmdb.enabled, True),
+        (settings.enrichment.tmdb.base_url, "https://tmdb.example/3"),
+        (settings.enrichment.tmdb.api_key, "tmdb-key"),
+        (settings.enrichment.omdb.enabled, False),
+        (settings.enrichment.omdb.base_url, "https://omdb.example"),
+        (settings.enrichment.omdb.api_key, "omdb-key"),
+        (settings.enrichment.google_books.api_key, "books-key"),
+        (settings.enrichment.google_books.base_url, "https://books.example/v1"),
+        (settings.enrichment.open_library.base_url, "https://ol.example"),
+        (settings.enrichment.itunes.base_url, "https://itunes.example"),
+        (settings.enrichment.wikipedia.base_url, "https://wiki.example/w/api.php"),
+        (settings.enrichment.pubmed.api_key, "ncbi-key"),
+        (settings.enrichment.pubmed.base_url, "https://pubmed.example/eutils"),
+        (settings.enrichment.semantic_scholar.api_key, "s2-key"),
+        (settings.enrichment.semantic_scholar.base_url, "https://s2.example/graph/v1"),
+        (settings.enrichment.crossref.mailto, "ops@example.com"),
+        (settings.enrichment.crossref.base_url, "https://crossref.example"),
+        (settings.ops_api_key, "ops-key"),
+        (settings.ops_review_pending_alert_threshold, 12),
+        (settings.ops_alert_delivery_pending_threshold, 6),
+        (settings.scheduler_tick_seconds, 15),
+        (settings.scheduler_digest_interval_minutes, 120),
+        (settings.scheduler_retention_interval_minutes, 240),
+    ]
+    for actual, expected in expectations:
+        if isinstance(expected, bool):
+            assert_that(actual).is_same_as(expected)
+        else:
+            assert_that(actual).is_equal_to(expected)
 
     assert_that(settings.enrichment).is_instance_of(EnrichmentSettings)
-    assert_that(settings.enrichment.tmdb.enabled).is_true()
-    assert_that(settings.enrichment.tmdb.base_url).is_equal_to(
-        "https://tmdb.example/3",
-    )
-    assert_that(settings.enrichment.tmdb.api_key).is_equal_to("tmdb-key")
-    assert_that(settings.enrichment.omdb.enabled).is_false()
-    assert_that(settings.enrichment.omdb.base_url).is_equal_to(
-        "https://omdb.example",
-    )
-    assert_that(settings.enrichment.omdb.api_key).is_equal_to("omdb-key")
-    assert_that(settings.enrichment.google_books.api_key).is_equal_to("books-key")
-    assert_that(settings.enrichment.google_books.base_url).is_equal_to(
-        "https://books.example/v1",
-    )
-    assert_that(settings.enrichment.open_library.base_url).is_equal_to(
-        "https://ol.example",
-    )
-    assert_that(settings.enrichment.itunes.base_url).is_equal_to(
-        "https://itunes.example",
-    )
-    assert_that(settings.enrichment.wikipedia.base_url).is_equal_to(
-        "https://wiki.example/w/api.php",
-    )
-    assert_that(settings.enrichment.pubmed.api_key).is_equal_to("ncbi-key")
-    assert_that(settings.enrichment.pubmed.base_url).is_equal_to(
-        "https://pubmed.example/eutils",
-    )
-    assert_that(settings.enrichment.semantic_scholar.api_key).is_equal_to("s2-key")
-    assert_that(settings.enrichment.semantic_scholar.base_url).is_equal_to(
-        "https://s2.example/graph/v1",
-    )
-    assert_that(settings.enrichment.crossref.mailto).is_equal_to("ops@example.com")
-    assert_that(settings.enrichment.crossref.base_url).is_equal_to(
-        "https://crossref.example",
-    )
-
-    assert_that(settings.ops_api_key).is_equal_to("ops-key")
-    assert_that(settings.ops_review_pending_alert_threshold).is_equal_to(12)
-    assert_that(settings.ops_alert_delivery_pending_threshold).is_equal_to(6)
-    assert_that(settings.scheduler_tick_seconds).is_equal_to(15)
-    assert_that(settings.scheduler_digest_interval_minutes).is_equal_to(120)
-    assert_that(settings.scheduler_retention_interval_minutes).is_equal_to(240)
 
 
 def test_database_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None:

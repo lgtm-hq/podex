@@ -5,6 +5,7 @@ from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
 import httpx
+import httpx2
 import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
@@ -90,7 +91,7 @@ def _override(client: TestClient, workos: object) -> None:
     app.dependency_overrides[v2_auth_api.get_workos_auth_client] = lambda: workos
 
 
-def _state_cookie(response: httpx.Response) -> str:
+def _state_cookie(response: httpx2.Response) -> str:
     """Read the OAuth state value from the login response cookie."""
     cookie = SimpleCookie()
     for header in response.headers.get_list("set-cookie"):

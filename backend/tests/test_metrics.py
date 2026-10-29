@@ -10,8 +10,8 @@ from prometheus_client import CollectorRegistry
 from sqlalchemy.orm import Session
 
 import podex.metrics
-from podex.api.deps import get_app_settings
 from podex.config import Settings
+from podex.main import create_app
 from podex.metrics import build_metrics, observe_scheduler_tick
 from podex.scheduler_runner import run_instrumented_tick
 from podex.services.ops_metrics import (
@@ -19,19 +19,10 @@ from podex.services.ops_metrics import (
     OperationalMetricsData,
     ReviewThroughputData,
 )
+from tests.conftest import enable_ops
 
 _OPS_KEY = "test-ops-key"
 _HEADERS = {"X-Ops-Key": _OPS_KEY}
-
-
-def _enable_ops(client: TestClient) -> None:
-    """Configure the internal ops key for a test app."""
-    app = client.app
-    if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
-        raise AssertionError
-    app.dependency_overrides[get_app_settings] = lambda: Settings(
-        ops_api_key=_OPS_KEY,
-    )
 
 
 def _registry(client: TestClient) -> CollectorRegistry:
@@ -47,7 +38,7 @@ def test_metrics_endpoint_requires_internal_access(client: TestClient) -> None:
     """Unconfigured reports 503; missing/wrong key reports 401; key gets 200."""
     assert_that(client.get("/metrics").status_code).is_equal_to(503)
 
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     assert_that(client.get("/metrics").status_code).is_equal_to(401)
     wrong = client.get("/metrics", headers={"X-Ops-Key": "wrong"})
     assert_that(wrong.status_code).is_equal_to(401)
@@ -78,7 +69,7 @@ def test_request_middleware_labels_route_template(
 ) -> None:
     """Requests count under the route template, never the raw path."""
     del seeded_graph
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     client.get("/health")
     client.get("/api/v2/podcasts/1")
 
@@ -190,7 +181,7 @@ def test_ops_gauges_reflect_operational_metrics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Scrape-time gauges mirror the operational-metrics service output."""
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     fake = OperationalMetricsData(
         measured_at=datetime(2026, 7, 19, 12, 0, tzinfo=UTC),
         review=ReviewThroughputData(
@@ -230,7 +221,6 @@ def test_ops_gauges_reflect_operational_metrics(
 
 def test_registry_is_isolated_per_app() -> None:
     """Each create_app call builds its own registry; no cross-contamination."""
-    from podex.main import create_app
 
     first = create_app()
     second = create_app()

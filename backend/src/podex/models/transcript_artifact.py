@@ -19,25 +19,27 @@ class TranscriptArtifact(Base):
 
     __tablename__ = "transcript_artifacts"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    transcript_id: Mapped[int] = mapped_column(ForeignKey("transcripts.id"), index=True)
-    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), index=True)
-    reacquired_from_digest_id: Mapped[int | None] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    transcript_id: "Mapped[int]" = mapped_column(
+        ForeignKey("transcripts.id"), index=True
+    )
+    episode_id: "Mapped[int]" = mapped_column(ForeignKey("episodes.id"), index=True)
+    reacquired_from_digest_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("transcript_digests.id"),
         index=True,
     )
-    storage_key: Mapped[str] = mapped_column(String(500), unique=True, index=True)
-    storage_backend: Mapped[str] = mapped_column(String(32))
-    encryption_key_id: Mapped[str] = mapped_column(String(64))
-    provider: Mapped[str] = mapped_column(String(50))
-    source_text_hash: Mapped[str] = mapped_column(String(64), index=True)
-    content_type: Mapped[str] = mapped_column(String(100))
-    byte_size: Mapped[int] = mapped_column(Integer)
-    provenance_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    stored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    purged_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    storage_key: "Mapped[str]" = mapped_column(String(500), unique=True, index=True)
+    storage_backend: "Mapped[str]" = mapped_column(String(32))
+    encryption_key_id: "Mapped[str]" = mapped_column(String(64))
+    provider: "Mapped[str]" = mapped_column(String(50))
+    source_text_hash: "Mapped[str]" = mapped_column(String(64), index=True)
+    content_type: "Mapped[str]" = mapped_column(String(100))
+    byte_size: "Mapped[int]" = mapped_column(Integer)
+    provenance_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    stored_at: "Mapped[datetime]" = mapped_column(DateTime(timezone=True))
+    purged_at: "Mapped[datetime | None]" = mapped_column(DateTime(timezone=True))
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
 
-    transcript: Mapped["Transcript"] = relationship(back_populates="artifacts")
-    episode: Mapped["Episode"] = relationship()
-    reacquired_from_digest: Mapped["TranscriptDigest | None"] = relationship()
+    transcript: 'Mapped["Transcript"]' = relationship(back_populates="artifacts")
+    episode: 'Mapped["Episode"]' = relationship()
+    reacquired_from_digest: 'Mapped["TranscriptDigest | None"]' = relationship()

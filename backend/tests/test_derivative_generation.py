@@ -15,7 +15,6 @@ from podex.models import (
     MediaSummary,
     MediaType,
     Mention,
-    Podcast,
     SemanticChunk,
     Transcript,
 )
@@ -26,8 +25,11 @@ from podex.services.derivative_generation import (
 from podex.services.derivative_summaries import GeneratedSummaryData, SummarySourceData
 from podex.services.graph_relations import GraphTripleInputData
 from podex.services.semantic_chunks import SemanticChunkingPolicy
+from tests.conftest import create_jre_episode
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class FakeSummaryProvider:
     """Deterministic summary provider for orchestration tests."""
 
@@ -148,16 +150,7 @@ def _create_episode_graph(
     db_session: Session,
 ) -> tuple[Episode, Transcript, Media]:
     """Create a persisted JRE episode with transcript and media mention."""
-    podcast = Podcast(name="The Joe Rogan Experience", slug="jre")
-    db_session.add(podcast)
-    db_session.flush()
-    episode = Episode(
-        podcast_id=podcast.id,
-        title="JRE #1",
-        episode_number=1,
-    )
-    db_session.add(episode)
-    db_session.flush()
+    episode = create_jre_episode(db_session)
     transcript = Transcript(
         episode_id=episode.id,
         provider="podscripts",

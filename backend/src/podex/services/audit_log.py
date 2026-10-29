@@ -10,6 +10,8 @@ from podex.models import AuditAction, AuditLog
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class AuditLogEntryData:
     """Audit log entry exposed to shared services and API layers."""
 
@@ -56,6 +58,8 @@ def _to_audit_log_entry_data(*, entry: AuditLog) -> AuditLogEntryData:
     )
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def record_audit_log(
     *,
     db: Session,
