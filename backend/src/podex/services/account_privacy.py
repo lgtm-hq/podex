@@ -28,6 +28,8 @@ from podex.models import (
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class AccountDeletionResultData:
     """Counts of rows removed by one account deletion."""
 

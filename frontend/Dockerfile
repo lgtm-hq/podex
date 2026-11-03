@@ -25,6 +25,7 @@ WORKDIR /app
 # Install dependencies first for cache reuse. Renovate keeps bun.lock in sync
 # with package.json; --frozen-lockfile fails the build if they diverge.
 COPY package.json bun.lock ./
+COPY patches ./patches
 RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
     bun install --frozen-lockfile
 
@@ -44,7 +45,7 @@ RUN bun run build
 # -----------------------------------------------------------------------------
 # Stage 2: runtime — slim Node LTS, non-root
 # -----------------------------------------------------------------------------
-FROM node:24.22.0-trixie-slim@sha256:a6155384446670e9719bdc4fd0ebe4d4b29fb32a8d6aa523da3547a6cfbcf22c AS runtime
+FROM node:26.13.0-trixie-slim@sha256:e4db4c914bf8ad241bd24804fc25d272d89bad97e68cdc8a1414862790a02c39 AS runtime
 
 WORKDIR /app
 
@@ -70,13 +71,13 @@ RUN /tmp/upgrade-min-debs.sh \
         /usr/local/bin/npx \
         /usr/local/bin/corepack
 
-# `node:*-slim` ships a UID 1000 `node` user out of the box; use it directly.
+# `node:*-slim` ships the `node` user/group with UID/GID 1000:1000.
 # Copy the built bundle and node_modules the adapter needs at runtime.
 COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 
-USER node
+USER 1000:1000
 
 EXPOSE 4321
 

@@ -1,13 +1,46 @@
 """Tests for MediaEnricher orchestration and apply helpers."""
 
+import logging as _logging
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 from assertpy import assert_that
 
+from podex.config import (
+    CrossrefEnrichmentSettings,
+    EnrichmentSettings,
+    GoogleBooksEnrichmentSettings,
+    OmdbEnrichmentSettings,
+    PubmedEnrichmentSettings,
+    TmdbEnrichmentSettings,
+)
 from podex.models import Media, MediaType
-from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
-from podex.services.media_enrichment import PROVIDER_PRIORITY, MediaEnricher
+from podex.services.enrichment import (
+    CrossRefProvider,
+    GoogleBooksProvider,
+    OMDBProvider,
+    PubMedProvider,
+    SemanticScholarProvider,
+    TMDBPersonProvider,
+    TMDBProvider,
+    iTunesProvider,
+)
+from podex.services.enrichment.base import (
+    EnrichmentResult,
+    EnrichmentSource,
+    VerifiedEnrichmentResult,
+)
+from podex.services.media_enrichment import (
+    PROVIDER_PRIORITY,
+    MediaEnricher,
+    apply_external_ids,
+)
+from podex.services.media_enrichment_pipeline import (
+    _apply_enrichment_result,
+    _extract_enrichment_aliases,
+    _merge_metadata,
+)
 from tests.enrichment.conftest import (
     _CountingLimiter,
     _enricher_with,
@@ -97,7 +130,6 @@ def test_enricher_rejects_low_confidence() -> None:
 
 def test_enricher_academic_path_and_apply() -> None:
     """Study media route via the academic enricher; apply writes fields."""
-    from podex.services.enrichment.base import VerifiedEnrichmentResult
 
     verified = VerifiedEnrichmentResult(
         source=EnrichmentSource.CROSSREF,
@@ -116,11 +148,12 @@ def test_enricher_academic_path_and_apply() -> None:
             self,
             media: Media,
         ) -> VerifiedEnrichmentResult:
+            """Return the configured academic result."""
             del media
             return verified
 
         def close(self) -> None:
-            pass
+            """Satisfy the lifecycle without owning external resources."""
 
     enricher = _enricher_with({})
     enricher.academic_enricher = _StubAcademic()  # type: ignore[assignment, unused-ignore]
@@ -181,14 +214,6 @@ def test_apply_enrichment_fills_media_fields() -> None:
 
 def test_enricher_initializes_all_configured_providers() -> None:
     """API keys switch on their providers in the registry."""
-    from podex.config import (
-        CrossrefEnrichmentSettings,
-        EnrichmentSettings,
-        GoogleBooksEnrichmentSettings,
-        OmdbEnrichmentSettings,
-        PubmedEnrichmentSettings,
-        TmdbEnrichmentSettings,
-    )
 
     settings = EnrichmentSettings(
         tmdb=TmdbEnrichmentSettings(api_key="k1"),
@@ -209,13 +234,6 @@ def test_enricher_initializes_all_configured_providers() -> None:
 
 def test_pipeline_apply_and_alias_helpers() -> None:
     """The pipeline's apply/merge/alias helpers cover every id branch."""
-    from datetime import UTC, datetime
-
-    from podex.services.media_enrichment_pipeline import (
-        _apply_enrichment_result,
-        _extract_enrichment_aliases,
-        _merge_metadata,
-    )
 
     media = _media("Dune", MediaType.BOOK)
     result = EnrichmentResult(
@@ -268,9 +286,6 @@ def test_pipeline_apply_and_alias_helpers() -> None:
 
 def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
     """A 401 response log line never contains the api key value."""
-    import logging as _logging
-
-    from podex.services.enrichment import OMDBProvider
 
     provider = OMDBProvider(api_key="sekret-key")
     provider.rate_limiter = _CountingLimiter()
@@ -291,26 +306,16 @@ def test_provider_error_logs_redact_api_key(caplog: Any) -> None:
 
 def test_provider_context_managers_close_clients() -> None:
     """Context-manager protocol closes every API-key provider."""
-    from podex.services.enrichment import (
-        CrossRefProvider,
-        GoogleBooksProvider,
-        OMDBProvider,
-        PubMedProvider,
-        SemanticScholarProvider,
-        TMDBPersonProvider,
-        TMDBProvider,
-        iTunesProvider,
-    )
 
     factories: tuple[Any, ...] = (
-        lambda: CrossRefProvider(),
-        lambda: GoogleBooksProvider(),
+        CrossRefProvider,
+        GoogleBooksProvider,
         lambda: OMDBProvider(api_key="key"),
-        lambda: PubMedProvider(),
-        lambda: SemanticScholarProvider(),
+        PubMedProvider,
+        SemanticScholarProvider,
         lambda: TMDBProvider(api_key="key"),
         lambda: TMDBPersonProvider(api_key="key"),
-        lambda: iTunesProvider(),
+        iTunesProvider,
     )
     for factory in factories:
         provider = factory()
@@ -322,7 +327,6 @@ def test_provider_context_managers_close_clients() -> None:
 
 def test_apply_external_ids_maps_columns_and_metadata() -> None:
     """Column-backed keys hit columns; other keys land in metadata_json."""
-    from podex.services.media_enrichment import apply_external_ids
 
     media = _media("Dune", MediaType.BOOK)
     apply_external_ids(
@@ -349,7 +353,6 @@ def test_apply_external_ids_maps_columns_and_metadata() -> None:
 
 def test_apply_external_ids_preserves_existing_values() -> None:
     """Existing column and metadata values are never overwritten."""
-    from podex.services.media_enrichment import apply_external_ids
 
     media = _media("Dune", MediaType.BOOK)
     media.imdb_id = "tt-existing"

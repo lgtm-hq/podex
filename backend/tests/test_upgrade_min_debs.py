@@ -16,8 +16,8 @@ FRONTEND_SCRIPT = (
 )
 
 
-@pytest.fixture
-def bin_dir(tmp_path: Path) -> Path:
+@pytest.fixture(name="bin_dir")
+def bin_dir_fixture(tmp_path: Path) -> Path:
     """Return an empty directory used as PATH for mocked Debian tools."""
     path = tmp_path / "bin"
     path.mkdir()

@@ -146,7 +146,10 @@ def get_ops_operational_alerts(
     )
 
 
+# FastAPI injects these named query/callback fields as part of the HTTP contract.
+# pylint: disable-next=too-many-arguments
 def list_ops_podcasts_endpoint(
+    *,
     request: Request,
     db: DbSession,
     settings: AppSettings,
@@ -504,7 +507,10 @@ def decide_ops_takedown_request(
     )
 
 
+# FastAPI injects these named query/callback fields as part of the HTTP contract.
+# pylint: disable-next=too-many-arguments
 def get_ops_audit_log(
+    *,
     request: Request,
     db: DbSession,
     settings: AppSettings,

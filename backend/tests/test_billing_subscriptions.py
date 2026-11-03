@@ -4,9 +4,11 @@ from datetime import UTC, datetime
 
 import pytest
 from assertpy import assert_that
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from podex.api.deps import get_app_settings
 from podex.config import BillingSettings, Settings
 from podex.models import AccountSubscription, AccountUser
 from podex.services.account_subscriptions import (
@@ -23,6 +25,7 @@ from podex.services.billing_checkout import (
     HostedBillingCheckoutProvider,
     build_billing_checkout_provider,
 )
+from tests.conftest import seed_catalog_graph
 from tests.test_api_auth import _sign_in
 
 _NOW = datetime(2026, 7, 19, tzinfo=UTC)
@@ -122,10 +125,14 @@ def test_checkout_provider_builds_prefilled_url() -> None:
     if provider is None:  # pragma: no cover - narrowed above
         raise AssertionError
 
+    # Both billing implementations must accept the same external checkout inputs.
+    # pylint: disable=duplicate-code
     checkout = provider.create_checkout(
         email="reader@example.com",
         account_reference="7",
     )
+
+    # pylint: enable=duplicate-code
 
     assert_that(checkout).is_instance_of(BillingCheckout)
     assert_that(checkout.provider).is_equal_to("hosted-test")
@@ -163,16 +170,13 @@ def test_paid_enforcement_blocks_personalization_writes(
     db_session: Session,
 ) -> None:
     """With enforcement on, free accounts get 402 and paid accounts proceed."""
-    from tests.conftest import seed_catalog_graph
 
     graph = seed_catalog_graph(db_session)
     cookie = {"Cookie": f"podex_session={_sign_in(client)}"}
     app = client.app
-    from fastapi import FastAPI
 
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
-    from podex.api.deps import get_app_settings
 
     app.dependency_overrides[get_app_settings] = lambda: Settings(
         billing=BillingSettings(paid_tier_enforced=True),

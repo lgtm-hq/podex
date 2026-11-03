@@ -32,43 +32,43 @@ class MentionCandidate(Base):
 
     __tablename__ = "mention_candidates"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    episode_id: Mapped[int] = mapped_column(ForeignKey("episodes.id"), index=True)
-    media_id: Mapped[int | None] = mapped_column(ForeignKey("media.id"), index=True)
-    mention_id: Mapped[int | None] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    episode_id: "Mapped[int]" = mapped_column(ForeignKey("episodes.id"), index=True)
+    media_id: "Mapped[int | None]" = mapped_column(ForeignKey("media.id"), index=True)
+    mention_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("mentions.id"),
         unique=True,
         index=True,
     )
-    media_type: Mapped[str] = mapped_column(String(20), index=True)
-    raw_title: Mapped[str] = mapped_column(String(500))
-    normalized_title: Mapped[str | None] = mapped_column(String(500))
-    suggested_author: Mapped[str | None] = mapped_column(String(255))
-    timestamp_seconds: Mapped[int | None] = mapped_column()
-    context: Mapped[str | None] = mapped_column(Text)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    extraction_source: Mapped[str | None] = mapped_column(String(50))
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    state: Mapped[str] = mapped_column(
+    media_type: "Mapped[str]" = mapped_column(String(20), index=True)
+    raw_title: "Mapped[str]" = mapped_column(String(500))
+    normalized_title: "Mapped[str | None]" = mapped_column(String(500))
+    suggested_author: "Mapped[str | None]" = mapped_column(String(255))
+    timestamp_seconds: "Mapped[int | None]" = mapped_column()
+    context: "Mapped[str | None]" = mapped_column(Text)
+    confidence: "Mapped[float]" = mapped_column(Float, default=0.0)
+    extraction_source: "Mapped[str | None]" = mapped_column(String(50))
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    state: "Mapped[str]" = mapped_column(
         String(32),
         index=True,
         default=MentionCandidateState.PENDING_REVIEW.value,
     )
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
-    reviewed_at: Mapped[datetime | None] = mapped_column()
+    reviewed_at: "Mapped[datetime | None]" = mapped_column()
 
-    episode: Mapped["Episode"] = relationship()
-    media: Mapped["Media | None"] = relationship()
-    mention: Mapped["Mention | None"] = relationship()
-    review_item: Mapped["ReviewItem | None"] = relationship(
+    episode: 'Mapped["Episode"]' = relationship()
+    media: 'Mapped["Media | None"]' = relationship()
+    mention: 'Mapped["Mention | None"]' = relationship()
+    review_item: 'Mapped["ReviewItem | None"]' = relationship(
         back_populates="mention_candidate",
         uselist=False,
     )
-    provenance_events: Mapped[list["MentionCandidateProvenance"]] = relationship(
+    provenance_events: 'Mapped[list["MentionCandidateProvenance"]]' = relationship(
         back_populates="mention_candidate",
         order_by="desc(MentionCandidateProvenance.created_at)",
     )

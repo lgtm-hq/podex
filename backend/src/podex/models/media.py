@@ -41,74 +41,74 @@ class Media(Base):
         Index("ix_media_type_title", "type", "title"),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    type: Mapped[MediaType] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    type: "Mapped[MediaType]" = mapped_column(
         SAEnum(MediaType, native_enum=False, length=50),
         index=True,
     )
-    title: Mapped[str] = mapped_column(String(500), index=True)
-    author: Mapped[str | None] = mapped_column(String(255), default=None)
-    year: Mapped[int | None] = mapped_column(default=None)
-    description: Mapped[str | None] = mapped_column(String(2000), default=None)
-    cover_url: Mapped[str | None] = mapped_column(String(1000), default=None)
+    title: "Mapped[str]" = mapped_column(String(500), index=True)
+    author: "Mapped[str | None]" = mapped_column(String(255), default=None)
+    year: "Mapped[int | None]" = mapped_column(default=None)
+    description: "Mapped[str | None]" = mapped_column(String(2000), default=None)
+    cover_url: "Mapped[str | None]" = mapped_column(String(1000), default=None)
     # External identifiers and provenance written by enrichment providers.
-    google_books_id: Mapped[str | None] = mapped_column(String(50), default=None)
-    open_library_id: Mapped[str | None] = mapped_column(String(50), default=None)
-    imdb_id: Mapped[str | None] = mapped_column(String(20), default=None)
-    tmdb_id: Mapped[int | None] = mapped_column(default=None)
-    wikipedia_id: Mapped[str | None] = mapped_column(String(100), default=None)
-    pubmed_id: Mapped[str | None] = mapped_column(String(50), default=None)
-    doi: Mapped[str | None] = mapped_column(String(100), default=None)
-    semantic_scholar_id: Mapped[str | None] = mapped_column(
+    google_books_id: "Mapped[str | None]" = mapped_column(String(50), default=None)
+    open_library_id: "Mapped[str | None]" = mapped_column(String(50), default=None)
+    imdb_id: "Mapped[str | None]" = mapped_column(String(20), default=None)
+    tmdb_id: "Mapped[int | None]" = mapped_column(default=None)
+    wikipedia_id: "Mapped[str | None]" = mapped_column(String(100), default=None)
+    pubmed_id: "Mapped[str | None]" = mapped_column(String(50), default=None)
+    doi: "Mapped[str | None]" = mapped_column(String(100), default=None)
+    semantic_scholar_id: "Mapped[str | None]" = mapped_column(
         String(50),
         default=None,
     )
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(
         JSON,
         default=None,
     )
-    verification_sources: Mapped[list[str] | None] = mapped_column(
+    verification_sources: "Mapped[list[str] | None]" = mapped_column(
         JSON,
         default=None,
     )
-    doi_verified: Mapped[bool | None] = mapped_column(Boolean, default=False)
-    enriched_at: Mapped[datetime | None] = mapped_column(
+    doi_verified: "Mapped[bool | None]" = mapped_column(Boolean, default=False)
+    enriched_at: "Mapped[datetime | None]" = mapped_column(
         DateTime(timezone=True),
         default=None,
     )
-    enrichment_source: Mapped[str | None] = mapped_column(
+    enrichment_source: "Mapped[str | None]" = mapped_column(
         String(50),
         default=None,
     )
-    enrichment_confidence: Mapped[float | None] = mapped_column(
+    enrichment_confidence: "Mapped[float | None]" = mapped_column(
         Float,
         default=None,
     )
-    created_at: Mapped[datetime] = mapped_column(
+    created_at: "Mapped[datetime]" = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
 
-    aliases: Mapped[list["MediaAlias"]] = relationship(back_populates="media")
-    external_refs: Mapped[list["MediaExternalRef"]] = relationship(
+    aliases: 'Mapped[list["MediaAlias"]]' = relationship(back_populates="media")
+    external_refs: 'Mapped[list["MediaExternalRef"]]' = relationship(
         back_populates="media",
     )
-    outgoing_relations: Mapped[list["MediaRelation"]] = relationship(
+    outgoing_relations: 'Mapped[list["MediaRelation"]]' = relationship(
         back_populates="subject_media",
         foreign_keys="MediaRelation.subject_media_id",
     )
-    incoming_relations: Mapped[list["MediaRelation"]] = relationship(
+    incoming_relations: 'Mapped[list["MediaRelation"]]' = relationship(
         back_populates="object_media",
         foreign_keys="MediaRelation.object_media_id",
     )
-    summaries: Mapped[list["MediaSummary"]] = relationship(
+    summaries: 'Mapped[list["MediaSummary"]]' = relationship(
         back_populates="media",
     )
-    subject_graph_triples: Mapped[list["GraphTriple"]] = relationship(
+    subject_graph_triples: 'Mapped[list["GraphTriple"]]' = relationship(
         back_populates="subject_media",
         foreign_keys="GraphTriple.subject_media_id",
     )
-    object_graph_triples: Mapped[list["GraphTriple"]] = relationship(
+    object_graph_triples: 'Mapped[list["GraphTriple"]]' = relationship(
         back_populates="object_media",
         foreign_keys="GraphTriple.object_media_id",
     )

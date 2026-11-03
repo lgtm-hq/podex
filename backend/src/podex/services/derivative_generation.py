@@ -23,6 +23,12 @@ from podex.services.derivative_summaries import (
     generate_media_summary,
     stable_source_text_hash,
 )
+from podex.services.field_normalization import (
+    normalize_required as _normalize_required,
+)
+from podex.services.field_normalization import (
+    normalize_source_hash as _normalize_source_hash,
+)
 from podex.services.graph_relations import GraphTripleInputData, upsert_graph_triple
 from podex.services.semantic_chunks import (
     EmbeddingProvider,
@@ -40,6 +46,8 @@ class DerivativeGenerationConfig:
     summary_prompt_version: str = "summary-prompt-v1"
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def generate_episode_derivatives(
     *,
     db: Session,
@@ -69,35 +77,38 @@ def generate_episode_derivatives(
     Returns:
         Persisted derivative generation run summary.
     """
-    effective_config = config or DerivativeGenerationConfig()
-    effective_now = now or datetime.now(UTC)
-    effective_transcript = transcript or _latest_transcript(db=db, episode=episode)
-    source_text_hash = _run_source_hash(
-        db=db,
-        episode=episode,
-        transcript=effective_transcript,
-    )
-    effective_policy = chunking_policy or SemanticChunkingPolicy(
-        pipeline_version=effective_config.chunk_pipeline_version,
+    config = config or DerivativeGenerationConfig()
+    now = now or datetime.now(UTC)
+    transcript = transcript or _latest_transcript(db=db, episode=episode)
+    chunking_policy = chunking_policy or SemanticChunkingPolicy(
+        pipeline_version=config.chunk_pipeline_version,
     )
     run = _upsert_generation_run(
         db=db,
-        episode=episode,
-        transcript=effective_transcript,
-        config=effective_config,
-        summary_model=summary_provider.model_name if summary_provider else None,
-        source_text_hash=source_text_hash,
-        started_at=effective_now,
+        candidate=DerivativeGenerationRun(
+            episode_id=episode.id,
+            transcript_id=(transcript.id if transcript is not None else None),
+            pipeline_version=config.pipeline_version,
+            chunk_pipeline_version=config.chunk_pipeline_version,
+            summary_prompt_version=config.summary_prompt_version,
+            summary_model=summary_provider.model_name if summary_provider else None,
+            source_text_hash=_run_source_hash(
+                db=db,
+                episode=episode,
+                transcript=transcript,
+            ),
+            started_at=now,
+        ),
     )
 
     semantic_result = None
-    if effective_transcript is not None:
+    if transcript is not None:
         semantic_result = sync_semantic_chunks_for_transcript(
             db=db,
-            transcript=effective_transcript,
+            transcript=transcript,
             embedding_provider=embedding_provider,
-            policy=effective_policy,
-            now=effective_now,
+            policy=chunking_policy,
+            now=now,
         )
 
     episode_summary = None
@@ -107,25 +118,23 @@ def generate_episode_derivatives(
             db=db,
             episode=episode,
             provider=summary_provider,
-            pipeline_version=effective_config.pipeline_version,
-            prompt_version=effective_config.summary_prompt_version,
-            generated_at=effective_now,
+            pipeline_version=config.pipeline_version,
+            prompt_version=config.summary_prompt_version,
+            generated_at=now,
         )
         for media in _episode_media(db=db, episode=episode):
             generate_media_summary(
                 db=db,
                 media=media,
                 provider=summary_provider,
-                pipeline_version=effective_config.pipeline_version,
-                prompt_version=effective_config.summary_prompt_version,
-                generated_at=effective_now,
+                pipeline_version=config.pipeline_version,
+                prompt_version=config.summary_prompt_version,
+                generated_at=now,
             )
             media_summary_count += 1
 
-    graph_triple_count = 0
     for graph_triple in graph_triples or []:
         upsert_graph_triple(db=db, payload=graph_triple)
-        graph_triple_count += 1
 
     run.status = DerivativeGenerationRunStatus.COMPLETED.value
     run.episode_summary_id = episode_summary.id if episode_summary else None
@@ -145,8 +154,8 @@ def generate_episode_derivatives(
         semantic_result.failed_count if semantic_result is not None else 0
     )
     run.media_summaries_generated = media_summary_count
-    run.graph_triples_upserted = graph_triple_count
-    run.completed_at = effective_now
+    run.graph_triples_upserted = len(graph_triples or [])
+    run.completed_at = now
     run.error_message = None
     run.metadata_json = {
         "semantic_chunk_keys": (
@@ -157,6 +166,8 @@ def generate_episode_derivatives(
     return run
 
 
+# Each identity field is explicit so persisted hash keys remain compatible.
+# pylint: disable-next=too-many-arguments
 def stable_derivative_generation_run_key(
     *,
     episode_id: int,
@@ -199,7 +210,7 @@ def stable_derivative_generation_run_key(
                     field_name="summary_prompt_version",
                 ),
                 summary_model or "",
-                _normalize_source_hash(source_text_hash),
+                _normalize_source_hash(source_text_hash=source_text_hash),
             ),
         ).encode("utf-8"),
     ).hexdigest()
@@ -209,22 +220,25 @@ def stable_derivative_generation_run_key(
 def _upsert_generation_run(
     *,
     db: Session,
-    episode: Episode,
-    transcript: Transcript | None,
-    config: DerivativeGenerationConfig,
-    summary_model: str | None,
-    source_text_hash: str,
-    started_at: datetime,
+    candidate: DerivativeGenerationRun,
 ) -> DerivativeGenerationRun:
-    """Create or reset a derivative generation run record."""
+    """Create or reset a run using its complete persisted identity record.
+
+    Args:
+        db: Database session responsible for the run.
+        candidate: Unpersisted run fields for this generation attempt.
+
+    Returns:
+        The newly created or reset persisted run.
+    """
     run_key = stable_derivative_generation_run_key(
-        episode_id=episode.id,
-        transcript_id=transcript.id if transcript is not None else None,
-        pipeline_version=config.pipeline_version,
-        chunk_pipeline_version=config.chunk_pipeline_version,
-        summary_prompt_version=config.summary_prompt_version,
-        summary_model=summary_model,
-        source_text_hash=source_text_hash,
+        episode_id=candidate.episode_id,
+        transcript_id=candidate.transcript_id,
+        pipeline_version=candidate.pipeline_version,
+        chunk_pipeline_version=candidate.chunk_pipeline_version,
+        summary_prompt_version=candidate.summary_prompt_version,
+        summary_model=candidate.summary_model,
+        source_text_hash=candidate.source_text_hash,
     )
     run = (
         db.query(DerivativeGenerationRun)
@@ -232,21 +246,11 @@ def _upsert_generation_run(
         .first()
     )
     if run is None:
-        run = DerivativeGenerationRun(
-            run_key=run_key,
-            episode_id=episode.id,
-            transcript_id=transcript.id if transcript is not None else None,
-            pipeline_version=config.pipeline_version,
-            chunk_pipeline_version=config.chunk_pipeline_version,
-            summary_prompt_version=config.summary_prompt_version,
-            summary_model=summary_model,
-            source_text_hash=source_text_hash,
-            started_at=started_at,
-        )
+        candidate.run_key = run_key
+        run = candidate
         db.add(run)
-
     run.status = DerivativeGenerationRunStatus.RUNNING.value
-    run.started_at = started_at
+    run.started_at = candidate.started_at
     run.completed_at = None
     run.error_message = None
     db.flush()
@@ -298,28 +302,3 @@ def _episode_media(
         .distinct()
         .all(),
     )
-
-
-def _normalize_source_hash(
-    source_text_hash: str,
-) -> str:
-    """Validate and normalize a source text hash."""
-    normalized = _normalize_required(
-        value=source_text_hash,
-        field_name="source_text_hash",
-    )
-    if len(normalized) != 64:
-        raise ValueError("source_text_hash must be a SHA-256 hex digest")
-    return normalized
-
-
-def _normalize_required(
-    *,
-    value: str,
-    field_name: str,
-) -> str:
-    """Normalize a required string field."""
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} must be non-empty")
-    return normalized

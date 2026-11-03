@@ -1,34 +1,21 @@
 """Tests for the ops console API surface."""
 
 from assertpy import assert_that
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.api.deps import get_app_settings
-from podex.config import Settings
 from podex.models import IngestionRun, IngestionRunStatus, Transcript
-from tests.conftest import seed_catalog_graph
+from tests.conftest import enable_ops, seed_catalog_graph
 
 _OPS_KEY = "test-ops-key"
 _HEADERS = {"X-Ops-Key": _OPS_KEY}
-
-
-def _enable_ops(client: TestClient) -> None:
-    """Configure the ops surface for a test app."""
-    app = client.app
-    if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
-        raise AssertionError
-    app.dependency_overrides[get_app_settings] = lambda: Settings(
-        ops_api_key=_OPS_KEY,
-    )
 
 
 def test_ops_surface_requires_configuration_and_key(client: TestClient) -> None:
     """Unconfigured ops reports 503; wrong key reports 401."""
     assert_that(client.get("/api/v2/ops/metrics").status_code).is_equal_to(503)
 
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     unauthenticated = client.get("/api/v2/ops/metrics")
     assert_that(unauthenticated.status_code).is_equal_to(401)
     wrong = client.get("/api/v2/ops/metrics", headers={"X-Ops-Key": "wrong"})
@@ -40,10 +27,9 @@ def test_ops_surface_requires_configuration_and_key(client: TestClient) -> None:
 
 def test_ops_podcast_management_round_trip(
     client: TestClient,
-    db_session: Session,
 ) -> None:
     """Podcasts create, list, update, and archive with audit records."""
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
 
     created = client.post(
         "/api/v2/ops/podcasts",
@@ -109,7 +95,7 @@ def test_ops_pipelines_lists_recent_runs(
     db_session: Session,
 ) -> None:
     """Pipeline activity returns recent ingestion runs."""
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     db_session.add(IngestionRun(status=IngestionRunStatus.COMPLETED))
     db_session.commit()
 
@@ -124,7 +110,7 @@ def test_ops_retention_preview_apply_and_purge_gate(
     db_session: Session,
 ) -> None:
     """Retention endpoints preview, apply, and refuse unsafe purges."""
-    _enable_ops(client)
+    enable_ops(client, api_key=_OPS_KEY)
     graph = seed_catalog_graph(db_session)
     transcript = Transcript(
         episode_id=graph.episode_id,

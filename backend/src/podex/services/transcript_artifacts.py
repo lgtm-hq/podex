@@ -18,6 +18,7 @@ from podex.config import Settings
 from podex.models import Episode, Transcript, TranscriptArtifact, TranscriptDigest
 from podex.services.transcript_acquisition import (
     TranscriptAcquisitionResult,
+    TranscriptResult,
 )
 from podex.services.transcript_retention_policies import (
     apply_stored_acquisition_opt_out,
@@ -175,6 +176,8 @@ class EncryptedS3TranscriptArtifactStore:
         client: Optional injected S3 client for tests.
     """
 
+    # Keep the existing named command inputs compatible with callers.
+    # pylint: disable-next=too-many-arguments
     def __init__(
         self,
         *,
@@ -342,8 +345,7 @@ def persist_transcript_acquisition(
         db=db,
         transcript=transcript,
         artifact_store=artifact_store,
-        raw_text=result.raw_text,
-        segments=result.segments,
+        result=result,
         reacquired_from_digest=reacquired_from_digest,
     )
     return transcript, artifact
@@ -466,19 +468,18 @@ def _store_raw_transcript_artifact(
     db: Session,
     transcript: Transcript,
     artifact_store: TranscriptArtifactStore,
-    raw_text: str,
-    segments: list[dict[str, Any]],
+    result: TranscriptResult,
     reacquired_from_digest: TranscriptDigest | None,
 ) -> TranscriptArtifact:
     """Write one raw transcript payload and persist its provenance metadata."""
-    source_hash = sha256(raw_text.encode("utf-8")).hexdigest()
+    source_hash = sha256(result.raw_text.encode("utf-8")).hexdigest()
     storage_key = f"transcripts/{transcript.episode_id}/{transcript.id}/raw.json.enc"
     stored = artifact_store.put_json(
         storage_key=storage_key,
         payload={
             "provider": transcript.provider,
-            "raw_text": raw_text,
-            "segments": segments,
+            "raw_text": result.raw_text,
+            "segments": result.segments,
             "fetched_at": (
                 transcript.fetched_at.isoformat()
                 if transcript.fetched_at is not None
@@ -524,3 +525,17 @@ def _decode_encrypted_payload(
     if not isinstance(payload, dict):
         raise ValueError("Encrypted transcript artifact JSON must be an object")
     return payload
+
+
+def list_retained_artifacts(
+    *, db: Session, transcript_id: int
+) -> list[TranscriptArtifact]:
+    """Return unpurged encrypted artifacts attached to one transcript."""
+    return list(
+        db.query(TranscriptArtifact)
+        .filter(
+            TranscriptArtifact.transcript_id == transcript_id,
+            TranscriptArtifact.purged_at.is_(None),
+        )
+        .all()
+    )

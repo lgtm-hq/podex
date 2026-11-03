@@ -4,12 +4,16 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import MediaType
-from tests.enrichment.conftest import _media, _swap_client
+from podex.services.enrichment import GoogleBooksProvider
+from tests.enrichment.conftest import (
+    _media,
+    _swap_client,
+    enrich_result,
+)
 
 
 def test_google_books_isbn10_and_sparse_volume() -> None:
     """ISBN-10-only volumes without images still enrich."""
-    from podex.services.enrichment import GoogleBooksProvider
 
     payload = {
         "items": [
@@ -31,17 +35,12 @@ def test_google_books_isbn10_and_sparse_volume() -> None:
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
-    result = provider.search_and_enrich(_media("Dune", MediaType.BOOK))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, _media("Dune", MediaType.BOOK))
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_google_books_second_item_selected_on_better_match() -> None:
     """Best-match selection scans beyond the first volume."""
-    from podex.services.enrichment import GoogleBooksProvider
 
     payload = {
         "items": [
@@ -71,9 +70,5 @@ def test_google_books_second_item_selected_on_better_match() -> None:
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
-    result = provider.search_and_enrich(_media("Dune", MediaType.BOOK))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("gbY")
+    result = enrich_result(provider, _media("Dune", MediaType.BOOK))
+    assert_that(str(result.external_ids)).contains("gbY")

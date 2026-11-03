@@ -54,13 +54,6 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if Google Books supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Google Books and enrich media item.
 
@@ -87,7 +80,7 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         results = self._search(query)
 
         if not results:
-            logger.debug(f"No Google Books results for: {media.title}")
+            logger.debug("No Google Books results for: %s", media.title)
             return None
 
         # Find best match
@@ -132,12 +125,11 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                     "langRestrict": "en",
                 },
             )
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("items", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"Google Books search error: {describe_http_error(e)}")
+            logger.warning("Google Books search error: %s", describe_http_error(e))
             return []
 
     def _get_volume(self, volume_id: str) -> dict[str, Any] | None:
@@ -151,12 +143,13 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         """
         try:
             response = self.client.get(f"/volumes/{volume_id}")
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
             logger.warning(
-                f"Google Books volume error for {volume_id}: {describe_http_error(e)}",
+                "Google Books volume error for %s: %s",
+                volume_id,
+                describe_http_error(e),
             )
             return None
 
@@ -184,26 +177,11 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             volume_info = item.get("volumeInfo", {})
             result_title = volume_info.get("title", "")
 
-            # Calculate title similarity
-            title_score = self._calculate_title_similarity(
-                media.title,
-                result_title,
+            title_author_score = self._book_match_score(
+                media, result_title, volume_info.get("authors", [])
             )
 
-            # Check author match
-            author_boost = 0.0
-            if media.author:
-                authors = volume_info.get("authors", [])
-                for author in authors:
-                    author_sim = self._calculate_title_similarity(
-                        media.author,
-                        author,
-                    )
-                    if author_sim > 0.7:
-                        author_boost = 0.15
-                        break
-
-            total_score = title_score + author_boost
+            total_score = title_author_score
 
             if total_score > best_score:
                 best_score = total_score
@@ -259,6 +237,32 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 external_ids["isbn_10"] = id_value
 
         # Build metadata
+        metadata = self._build_metadata(volume_info=volume_info)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=cover_url,
+            description=description,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(
+        self,
+        volume_info: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect provider-specific metadata from the response.
+
+        Args:
+            volume_info: Provider response data for the metadata fields.
+
+        Returns:
+            Metadata fields supported by this provider.
+        """
         metadata: dict[str, Any] = {}
 
         # Page count
@@ -280,6 +284,26 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
                 0,
             )
 
+        self._add_publication_metadata(metadata=metadata, volume_info=volume_info)
+
+        # Maturity rating
+        maturity = volume_info.get("maturityRating")
+        if maturity and maturity != "NOT_MATURE":
+            metadata["maturity_rating"] = maturity
+
+        return metadata
+
+    def _add_publication_metadata(
+        self,
+        metadata: dict[str, Any],
+        volume_info: dict[str, Any],
+    ) -> None:
+        """Add publication fields to the provider metadata.
+
+        Args:
+            metadata: Metadata dictionary to populate.
+            volume_info: Provider response data for these fields.
+        """
         # Publisher
         publisher = volume_info.get("publisher")
         if publisher:
@@ -304,27 +328,3 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
         preview_link = volume_info.get("previewLink")
         if preview_link:
             metadata["preview_link"] = preview_link
-
-        # Maturity rating
-        maturity = volume_info.get("maturityRating")
-        if maturity and maturity != "NOT_MATURE":
-            metadata["maturity_rating"] = maturity
-
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=cover_url,
-            description=description,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> GoogleBooksProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()

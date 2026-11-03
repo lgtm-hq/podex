@@ -20,7 +20,7 @@ class AccountFollowedPodcast(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    user_id: Mapped[int] = mapped_column(ForeignKey("account_users.id"), index=True)
-    podcast_id: Mapped[int] = mapped_column(ForeignKey("podcasts.id"), index=True)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    user_id: "Mapped[int]" = mapped_column(ForeignKey("account_users.id"), index=True)
+    podcast_id: "Mapped[int]" = mapped_column(ForeignKey("podcasts.id"), index=True)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))

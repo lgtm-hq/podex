@@ -4,15 +4,17 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import Media, MediaType
+from podex.services.enrichment import CrossRefProvider, OMDBProvider
 from tests.enrichment.conftest import (
     _CountingLimiter,
     _swap_client,
+    enrich_result,
+    require_result,
 )
 
 
 def test_omdb_series_path() -> None:
     """TV shows query OMDB with the series type."""
-    from podex.services.enrichment import OMDBProvider
 
     payload = {
         "Response": "True",
@@ -33,17 +35,12 @@ def test_omdb_series_path() -> None:
     )
     media = Media(type=MediaType.TV_SHOW, title="Example Show")
     media.id = 3
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("tt9999999")
+    result = enrich_result(provider, media)
+    assert_that(str(result.external_ids)).contains("tt9999999")
 
 
 def test_omdb_year_and_documentary_paths() -> None:
     """Documentaries and year-bearing media flow through OMDB search."""
-    from podex.services.enrichment import OMDBProvider
 
     payload = {
         "Response": "True",
@@ -66,17 +63,12 @@ def test_omdb_year_and_documentary_paths() -> None:
         year=2020,
     )
     media.id = 4
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("tt7777777")
+    result = enrich_result(provider, media)
+    assert_that(str(result.external_ids)).contains("tt7777777")
 
 
 def test_omdb_falls_back_to_title_search_variants() -> None:
     """A miss on the exact title retries stripped-title variants."""
-    from podex.services.enrichment import OMDBProvider
 
     calls: list[str] = []
 
@@ -111,15 +103,13 @@ def test_omdb_falls_back_to_title_search_variants() -> None:
 
     assert_that(calls).is_equal_to(["Dune: Part One", "Dune"])
     assert_that(limiter.waits).is_equal_to(len(calls))
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.description).is_equal_to("Found on retry.")
-        assert_that(result.confidence).is_greater_than_or_equal_to(0.7)
+    result = require_result(result)
+    assert_that(result.description).is_equal_to("Found on retry.")
+    assert_that(result.confidence).is_greater_than_or_equal_to(0.7)
 
 
 def test_omdb_title_variant_retry_misses_when_all_variants_fail() -> None:
     """All title variants missing yields None."""
-    from podex.services.enrichment import OMDBProvider
 
     calls: list[str] = []
 
@@ -143,7 +133,6 @@ def test_omdb_title_variant_retry_misses_when_all_variants_fail() -> None:
 
 def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
     """OMDB imdb-id fetch and CrossRef year matching both execute."""
-    from podex.services.enrichment import CrossRefProvider, OMDBProvider
 
     omdb_payload = {
         "Response": "True",
@@ -204,7 +193,6 @@ def test_omdb_direct_imdb_lookup_and_crossref_year_boost() -> None:
 
 def test_omdb_waits_before_every_request() -> None:
     """A failed IMDB-ID lookup plus title search wait once per request."""
-    from podex.services.enrichment import OMDBProvider
 
     requests_seen: list[str] = []
 
@@ -245,6 +233,5 @@ def test_omdb_waits_before_every_request() -> None:
 
 def test_omdb_uses_https_base_url() -> None:
     """The OMDB base URL uses the https scheme (api key in query)."""
-    from podex.services.enrichment import OMDBProvider
 
     assert_that(OMDBProvider.BASE_URL).starts_with("https://")

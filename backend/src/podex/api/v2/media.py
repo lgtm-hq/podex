@@ -61,12 +61,15 @@ def list_media_mentions(
     if rows is None:
         raise HTTPException(status_code=404, detail="Media not found")
     total = media_queries.count_media_mentions(db, media_id)
+    # This endpoint explicitly maps the shared public page contract.
+    # pylint: disable=duplicate-code
     return Page[MentionRead](
         items=[MentionRead.model_validate(row) for row in rows],
         total=total,
         limit=pagination.limit,
         offset=pagination.offset,
     )
+    # pylint: enable=duplicate-code
 
 
 router.add_api_route(

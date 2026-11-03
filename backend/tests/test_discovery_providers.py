@@ -14,6 +14,7 @@ from podex.services.discovery_orchestrator import DiscoveryOrchestrator
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
+from tests.conftest import persist_episode
 
 _FEED = """<?xml version="1.0"?>
 <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
@@ -50,10 +51,9 @@ class _StubProvider:
     def __init__(self, episodes: list[DiscoveredEpisode]) -> None:
         self._episodes = episodes
 
-    def discover_podcast(self, identifier: str) -> DiscoveredPodcast | None:
+    def discover_podcast(self, identifier: str) -> None:
         """Return no podcast metadata; unused by these tests."""
         del identifier
-        return None
 
     def discover_episodes(
         self,
@@ -83,7 +83,7 @@ def test_rss_discover_podcast_parses_channel_metadata() -> None:
     podcast = RSSDiscovery().discover_podcast(_FEED)
 
     assert_that(podcast).is_not_none()
-    parsed = cast("DiscoveredPodcast", podcast)
+    parsed = cast(DiscoveredPodcast, podcast)
     assert_that(parsed.name).is_equal_to("Example Show")
     assert_that(parsed.description).contains("examples")
     assert_that(parsed.discovery_source).is_equal_to("rss")
@@ -113,9 +113,17 @@ def test_rss_duration_and_slug_helpers() -> None:
     """Duration strings and slugs normalise across shapes."""
     rss = RSSDiscovery()
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(rss._parse_duration("2:30")).is_equal_to(150)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(rss._parse_duration("90")).is_equal_to(90)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(rss._parse_duration("nope")).is_none()
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(rss._generate_slug("The Example Show!")).is_equal_to(
         "the-example-show",
     )
@@ -147,6 +155,8 @@ def test_spotify_parse_episode_maps_api_fields() -> None:
         "images": [{"url": "https://i.scdn.co/image/x"}],
     }
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     episode = SpotifyDiscovery()._parse_episode(item)
 
     assert_that(episode).is_not_none()
@@ -187,6 +197,8 @@ def test_orchestrator_merges_sources_and_records_errors(
     )
 
     orchestrator = DiscoveryOrchestrator(db_session)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     orchestrator._sources = {
         "rss": _StubProvider([rss_ep]),
         "podscripts": _BoomProvider([pod_ep]),
@@ -199,6 +211,8 @@ def test_orchestrator_merges_sources_and_records_errors(
     assert_that(result.errors[0]).contains("podscripts")
 
     # Second run with both sources healthy dedups into the same episode.
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     orchestrator._sources["podscripts"] = _StubProvider([pod_ep])
     second = orchestrator.discover_for_podcast(podcast)
     assert_that(second.new_episodes).is_equal_to(0)
@@ -235,7 +249,7 @@ def test_podscripts_discover_podcast_parses_page() -> None:
         source.close()
 
     assert_that(podcast).is_not_none()
-    parsed = cast("DiscoveredPodcast", podcast)
+    parsed = cast(DiscoveredPodcast, podcast)
     assert_that(parsed.name).is_equal_to("Example Show")
     assert_that(parsed.description).is_equal_to("A show about examples.")
     assert_that(parsed.cover_url).is_equal_to("https://cdn.example.com/c.jpg")
@@ -318,11 +332,13 @@ def test_spotify_configured_paths_use_client() -> None:
         client_id="id",
         client_secret="secret",  # nosec B106 - fake test credential
     )
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     spotify._spotify = _FakeSpotify()
 
     podcast = spotify.discover_podcast("0abc123")
     assert_that(podcast).is_not_none()
-    parsed = cast("DiscoveredPodcast", podcast)
+    parsed = cast(DiscoveredPodcast, podcast)
     assert_that(parsed.name).is_equal_to("Example Show")
     assert_that(parsed.cover_url).is_equal_to("https://i.scdn.co/large")
 
@@ -358,6 +374,8 @@ def test_orchestrator_merge_prefers_transcript_source_and_fills_gaps() -> None:
         discovery_source="podscripts",
     )
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     merged = DiscoveryOrchestrator._merge_episodes(
         cast("DiscoveryOrchestrator", object()),
         [base, other],
@@ -378,14 +396,9 @@ def test_orchestrator_update_fills_missing_episode_fields(
 ) -> None:
     """Re-discovery fills gaps on an existing episode without overwriting."""
     podcast = Podcast(name="Example Show", slug="example-show-update")
-    db_session.add(podcast)
-    db_session.commit()
-    episode = Episode(
-        podcast_id=podcast.id,
-        title="Pilot",
-        rss_guid="urn:example:episode:1",
+    episode = persist_episode(
+        db_session, podcast=podcast, title="Pilot", rss_guid="urn:example:episode:1"
     )
-    db_session.add(episode)
     db_session.commit()
 
     richer = DiscoveredEpisode(
@@ -401,6 +414,8 @@ def test_orchestrator_update_fills_missing_episode_fields(
         discovery_source="rss",
     )
     orchestrator = DiscoveryOrchestrator(db_session)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     new_count, updated_count = orchestrator._upsert_episodes(podcast, [richer])
 
     assert_that(new_count).is_equal_to(0)

@@ -39,25 +39,28 @@ class TakedownRequest(Base):
 
     __tablename__ = "takedown_requests"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    subject_type: Mapped[str] = mapped_column(String(32), index=True)
-    subject_id: Mapped[int] = mapped_column(Integer, index=True)
-    requester_type: Mapped[str] = mapped_column(String(32), index=True)
-    requester_name: Mapped[str] = mapped_column(String(255))
-    requester_email: Mapped[str] = mapped_column(String(320))
-    basis: Mapped[str] = mapped_column(Text)
-    requested_actions_json: Mapped[list[str]] = mapped_column(JSON)
-    status: Mapped[str] = mapped_column(
+    # Explicit mapped/input fields preserve this independent table or boundary contract.
+    # pylint: disable=duplicate-code
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    subject_type: "Mapped[str]" = mapped_column(String(32), index=True)
+    subject_id: "Mapped[int]" = mapped_column(Integer, index=True)
+    requester_type: "Mapped[str]" = mapped_column(String(32), index=True)
+    requester_name: "Mapped[str]" = mapped_column(String(255))
+    requester_email: "Mapped[str]" = mapped_column(String(320))
+    basis: "Mapped[str]" = mapped_column(Text)
+    requested_actions_json: "Mapped[list[str]]" = mapped_column(JSON)
+    status: "Mapped[str]" = mapped_column(
         String(32),
         index=True,
         default=TakedownRequestStatus.PENDING.value,
     )
-    decision_note: Mapped[str | None] = mapped_column(Text)
-    decided_by: Mapped[str | None] = mapped_column(String(100))
-    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
+    decision_note: "Mapped[str | None]" = mapped_column(Text)
+    decided_by: "Mapped[str | None]" = mapped_column(String(100))
+    decided_at: "Mapped[datetime | None]" = mapped_column(DateTime(timezone=True))
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    updated_at: "Mapped[datetime]" = mapped_column(
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
+    # pylint: enable=duplicate-code

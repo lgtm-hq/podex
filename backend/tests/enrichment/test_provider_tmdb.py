@@ -4,16 +4,27 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import Media, MediaType
+from podex.services.enrichment import TMDBPersonProvider, TMDBProvider
+from podex.services.enrichment.tmdb import (
+    _DETAIL_FALLBACK_CONFIDENCE_FACTOR as _MEDIA_DETAIL_CONFIDENCE_FACTOR,
+)
+from podex.services.enrichment.tmdb_person import (
+    _DETAIL_FALLBACK_CONFIDENCE_FACTOR as _PERSON_DETAIL_CONFIDENCE_FACTOR,
+)
 from tests.enrichment.conftest import (
     _CountingLimiter,
     _media,
     _swap_client,
+    dune_movie_details,
+    enrich_result,
+    require_result,
+    swap_search_details_client,
+    tmdb_person_search_result,
 )
 
 
 def test_tmdb_tv_show_path() -> None:
     """TV shows search the tv endpoint and parse air dates."""
-    from podex.services.enrichment import TMDBProvider
 
     search_payload = {
         "results": [
@@ -47,39 +58,22 @@ def test_tmdb_tv_show_path() -> None:
         "credits": {"cast": [], "crew": []},
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "/search/" in request.url.path:
-            return httpx.Response(200, json=search_payload)
-        return httpx.Response(200, json=detail_payload)
-
     provider = TMDBProvider(api_key="key")
-    _swap_client(provider, handler)
+    swap_search_details_client(
+        provider, search_payload=search_payload, detail_payload=detail_payload
+    )
     media = Media(type=MediaType.TV_SHOW, title="Example Show")
     media.id = 2
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, media)
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_tmdb_person_detail_failure_falls_back() -> None:
     """Person detail failures fall back to reduced-confidence search-doc data."""
-    from podex.services.enrichment import TMDBPersonProvider
-    from podex.services.enrichment.tmdb_person import (
-        _DETAIL_FALLBACK_CONFIDENCE_FACTOR,
-    )
 
     search_payload = {
         "results": [
-            {
-                "id": 505710,
-                "name": "Frank Herbert",
-                "known_for_department": "Writing",
-                "popularity": 5.0,
-                "profile_path": "/fh.jpg",
-            },
+            tmdb_person_search_result(),
         ],
     }
 
@@ -90,25 +84,17 @@ def test_tmdb_person_detail_failure_falls_back() -> None:
 
     provider = TMDBPersonProvider(api_key="key")
     _swap_client(provider, handler)
-    result = provider.search_and_enrich(
-        _media("Frank Herbert", MediaType.PERSON),
+    result = enrich_result(provider, _media("Frank Herbert", MediaType.PERSON))
+    assert_that(result.external_ids.get("tmdb_person_id")).is_equal_to(505710)
+    assert_that(result.cover_url).ends_with("/fh.jpg")
+    assert_that(result.confidence).is_less_than(1.0)
+    assert_that(result.confidence).is_equal_to(
+        1.0 * _PERSON_DETAIL_CONFIDENCE_FACTOR,
     )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.external_ids.get("tmdb_person_id")).is_equal_to(505710)
-        assert_that(result.cover_url).ends_with("/fh.jpg")
-        assert_that(result.confidence).is_less_than(1.0)
-        assert_that(result.confidence).is_equal_to(
-            1.0 * _DETAIL_FALLBACK_CONFIDENCE_FACTOR,
-        )
 
 
 def test_tmdb_year_filter_and_missing_details() -> None:
     """Year-bearing media picks the matching hit; detail failures fall back."""
-    from podex.services.enrichment import TMDBProvider
-    from podex.services.enrichment.tmdb import _DETAIL_FALLBACK_CONFIDENCE_FACTOR
 
     search_payload = {
         "results": [
@@ -142,33 +128,24 @@ def test_tmdb_year_filter_and_missing_details() -> None:
     _swap_client(provider, handler)
     media = Media(type=MediaType.MOVIE, title="Dune", year=2021)
     media.id = 5
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.external_ids.get("tmdb_id")).is_equal_to(2)
-        assert_that(result.description).is_equal_to("New adaptation.")
-        # Perfect title + year boost + popularity → 1.0 before the factor.
-        assert_that(result.confidence).is_equal_to(
-            1.0 * _DETAIL_FALLBACK_CONFIDENCE_FACTOR,
-        )
+    result = enrich_result(provider, media)
+    assert_that(result.external_ids.get("tmdb_id")).is_equal_to(2)
+    assert_that(result.description).is_equal_to("New adaptation.")
+    # Perfect title + year boost + popularity → 1.0 before the factor.
+    assert_that(result.confidence).is_equal_to(
+        1.0 * _MEDIA_DETAIL_CONFIDENCE_FACTOR,
+    )
 
 
 def test_tmdb_person_by_known_id() -> None:
     """A stored tmdb id fetches person details directly at confidence 1.0."""
-    from podex.services.enrichment import TMDBPersonProvider
 
     seen_paths: list[str] = []
     detail = {
-        "id": 505710,
-        "name": "Frank Herbert",
+        **tmdb_person_search_result(),
         "biography": "Author.",
         "birthday": "1920-10-08",
-        "profile_path": "/fh.jpg",
         "external_ids": {"imdb_id": "nm0378394"},
-        "known_for_department": "Writing",
-        "popularity": 5.0,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -183,36 +160,21 @@ def test_tmdb_person_by_known_id() -> None:
     provider.close()
 
     assert_that(seen_paths).is_equal_to(["/person/505710"])
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_equal_to(1.0)
-        assert_that(result.description).is_equal_to("Author.")
-        assert_that(result.external_ids.get("imdb_id")).is_equal_to("nm0378394")
+    result = require_result(result)
+    assert_that(result.confidence).is_equal_to(1.0)
+    assert_that(result.description).is_equal_to("Author.")
+    assert_that(result.external_ids.get("imdb_id")).is_equal_to("nm0378394")
 
 
 def test_tmdb_person_known_id_falls_back_to_name_search() -> None:
     """A failing stored-id lookup falls through to name search."""
-    from podex.services.enrichment import TMDBPersonProvider
 
     search_payload = {
         "results": [
-            {
-                "id": 505710,
-                "name": "Frank Herbert",
-                "known_for_department": "Writing",
-                "popularity": 5.0,
-                "profile_path": "/fh.jpg",
-            },
+            tmdb_person_search_result(),
         ],
     }
-    detail = {
-        "id": 505710,
-        "name": "Frank Herbert",
-        "biography": "Author via search.",
-        "profile_path": "/fh.jpg",
-        "known_for_department": "Writing",
-        "popularity": 5.0,
-    }
+    detail = {**tmdb_person_search_result(), "biography": "Author via search."}
     seen_paths: list[str] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -233,15 +195,13 @@ def test_tmdb_person_known_id_falls_back_to_name_search() -> None:
     assert_that(seen_paths[0]).is_equal_to("/person/999")
     assert_that(seen_paths).contains("/search/person")
     assert_that(seen_paths).contains("/person/505710")
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.description).is_equal_to("Author via search.")
-        assert_that(result.external_ids.get("tmdb_person_id")).is_equal_to(505710)
+    result = require_result(result)
+    assert_that(result.description).is_equal_to("Author via search.")
+    assert_that(result.external_ids.get("tmdb_person_id")).is_equal_to(505710)
 
 
 def test_tmdb_waits_before_every_request() -> None:
     """Search-with-year, search-without-year, and details each wait once."""
-    from podex.services.enrichment import TMDBProvider
 
     requests_seen: list[str] = []
 
@@ -289,15 +249,10 @@ def test_tmdb_waits_before_every_request() -> None:
 
 def test_tmdb_direct_id_lookup_skips_search() -> None:
     """A stored tmdb_id fetches details directly without any search."""
-    from podex.services.enrichment import TMDBProvider
 
     seen_paths: list[str] = []
     detail_payload = {
-        "id": 438631,
-        "title": "Dune",
-        "overview": "Desert planet epic.",
-        "release_date": "2021-10-22",
-        "poster_path": "/dune.jpg",
+        **dune_movie_details(),
         "external_ids": {"imdb_id": "tt1160419"},
         "credits": {"cast": [], "crew": []},
     }
@@ -318,15 +273,13 @@ def test_tmdb_direct_id_lookup_skips_search() -> None:
     provider.close()
 
     assert_that(seen_paths).is_equal_to(["/movie/438631"])
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_equal_to(1.0)
-        assert_that(str(result.external_ids)).contains("438631")
+    result = require_result(result)
+    assert_that(result.confidence).is_equal_to(1.0)
+    assert_that(str(result.external_ids)).contains("438631")
 
 
 def test_tmdb_direct_id_404_falls_back_to_search() -> None:
     """A 404 on the stored tmdb_id falls back to title search."""
-    from podex.services.enrichment import TMDBProvider
 
     seen_paths: list[str] = []
 

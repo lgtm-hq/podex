@@ -11,21 +11,31 @@ from podex.api.query_helpers import (
     mention_count_by_media_subquery,
 )
 from podex.models import (
+    GraphTriple,
     Media,
     MediaAlias,
     MediaAliasSourceType,
     MediaExternalRef,
     MediaExternalRefSource,
     MediaRelation,
+    MediaRelationType,
+    MediaSummary,
     MediaType,
     Mention,
 )
-from podex.services.graph_relations import upsert_media_external_ref
+from podex.services.graph_relations import (
+    GraphTripleInputData,
+    stable_graph_triple_key,
+    stable_media_relation_key,
+    upsert_media_external_ref,
+)
 from podex.services.media_alias_repository import ensure_media_alias
 from podex.services.media_aliases import normalize_media_alias
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class OpsMergedMediaSummaryData:
     """Merged media summary for ops mutation responses."""
 
@@ -123,6 +133,8 @@ class OpsMediaMentionData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class OpsMediaDetailData:
     """Canonical media record details for ops management."""
 
@@ -144,6 +156,8 @@ class OpsMediaDetailData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class UpdateOpsMediaInputData:
     """Partial editable fields for canonical media correction."""
 
@@ -854,17 +868,6 @@ def _repoint_derivatives_to_target(
         source_media: Media record being merged away.
         target_media: Surviving canonical media record.
     """
-    from podex.models import (
-        GraphTriple,
-        MediaRelation,
-        MediaRelationType,
-        MediaSummary,
-    )
-    from podex.services.graph_relations import (
-        GraphTripleInputData,
-        stable_graph_triple_key,
-        stable_media_relation_key,
-    )
 
     for ref in list(source_media.external_refs):
         duplicate = (

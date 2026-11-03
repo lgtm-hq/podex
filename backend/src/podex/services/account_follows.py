@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from podex.database import delete_if_present
 from podex.models import AccountFollowedPodcast, Podcast
 from podex.services.podcast_queries import get_podcast
 
@@ -83,8 +84,4 @@ def unfollow_podcast(*, db: Session, user_id: int, podcast_id: int) -> bool:
         )
         .first()
     )
-    if row is None:
-        return False
-    db.delete(row)
-    db.flush()
-    return True
+    return bool(delete_if_present(db=db, row=row))

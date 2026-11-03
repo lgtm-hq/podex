@@ -121,7 +121,11 @@ def test_stale_keys_are_swept_to_bound_memory() -> None:
     # stale relative to the window ending at t=100.
     limiter.check("fresh", now=100.0)
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(limiter._hits).is_length(1)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     assert_that(limiter._hits).contains_key("fresh")
 
 
@@ -302,7 +306,6 @@ def test_build_rate_limiter_returns_redis_backend_when_url_set(
     The factory imports ``redis`` lazily; we swap in a fakeredis-backed
     ``from_url`` so no real network connection is attempted.
     """
-    import redis
 
     client = fakeredis.FakeStrictRedis()
 

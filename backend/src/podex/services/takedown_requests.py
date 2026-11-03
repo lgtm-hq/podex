@@ -18,9 +18,11 @@ from podex.models import (
     TakedownRequestStatus,
     TakedownSubjectType,
     Transcript,
-    TranscriptArtifact,
 )
-from podex.services.transcript_artifacts import TranscriptArtifactStore
+from podex.services.transcript_artifacts import (
+    TranscriptArtifactStore,
+    list_retained_artifacts,
+)
 from podex.services.transcript_retention import TranscriptRetentionPolicy
 from podex.services.transcript_retention_commands import create_transcript_digest
 from podex.services.transcript_retention_policies import (
@@ -221,14 +223,7 @@ def _suppress_raw_transcripts(
     """Immediately delete retained raw payloads covered by an approval."""
     suppressed = 0
     for transcript in transcripts:
-        artifacts = (
-            db.query(TranscriptArtifact)
-            .filter(
-                TranscriptArtifact.transcript_id == transcript.id,
-                TranscriptArtifact.purged_at.is_(None),
-            )
-            .all()
-        )
+        artifacts = list_retained_artifacts(db=db, transcript_id=transcript.id)
         if (
             not artifacts
             and transcript.raw_text is None

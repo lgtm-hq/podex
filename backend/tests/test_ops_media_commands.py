@@ -1,19 +1,52 @@
 """Tests for ops media canonicalization commands."""
 
+from datetime import UTC, datetime
+
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
+from podex.api.query_helpers import (
+    episode_count_by_media_subquery,
+    episode_count_by_podcast_subquery,
+    mention_count_by_episode_subquery,
+    mention_count_by_media_subquery,
+)
 from podex.models import (
     Episode,
+    GraphTriple,
+    GraphTripleObjectKind,
     Media,
     MediaAlias,
     MediaAliasSourceType,
+    MediaExternalRef,
+    MediaExternalRefSource,
+    MediaRelation,
     MediaRelationType,
+    MediaSummary,
+    MediaType,
     Mention,
     Podcast,
 )
+from podex.services.graph_relations import (
+    GraphTripleInputData,
+    stable_media_relation_key,
+    upsert_graph_triple,
+    upsert_media_external_ref,
+    upsert_media_relation,
+)
 from podex.services.media_alias_repository import ensure_media_alias
-from podex.services.ops_media_commands import merge_ops_media, preview_ops_media_merge
+from podex.services.ops_media_commands import (
+    SplitOpsMediaInputData,
+    UpdateOpsMediaInputData,
+    UpsertOpsMediaExternalRefInputData,
+    add_ops_media_alias,
+    get_ops_media_detail,
+    merge_ops_media,
+    preview_ops_media_merge,
+    split_ops_media,
+    update_ops_media,
+    upsert_ops_media_external_ref,
+)
 
 
 def test_preview_ops_media_merge_reports_fields_aliases_and_mentions(
@@ -101,17 +134,6 @@ def test_update_split_alias_and_external_ref_services(
     db_session: Session,
 ) -> None:
     """Edit, alias, external-ref, and split services operate directly."""
-    from podex.models import MediaExternalRefSource, MediaType
-    from podex.services.ops_media_commands import (
-        SplitOpsMediaInputData,
-        UpdateOpsMediaInputData,
-        UpsertOpsMediaExternalRefInputData,
-        add_ops_media_alias,
-        get_ops_media_detail,
-        split_ops_media,
-        update_ops_media,
-        upsert_ops_media_external_ref,
-    )
 
     podcast = Podcast(name="Show", slug="ops-split-show")
     db_session.add(podcast)
@@ -176,12 +198,6 @@ def test_update_split_alias_and_external_ref_services(
 
 def test_media_relation_upserts_and_query_helpers(db_session: Session) -> None:
     """Relation upserts are idempotent; query helpers decode identifiers."""
-    from podex.api.query_helpers import mention_count_by_media_subquery
-    from podex.models import MediaExternalRefSource, MediaType
-    from podex.services.graph_relations import (
-        upsert_media_external_ref,
-        upsert_media_relation,
-    )
 
     a = Media(type=MediaType.BOOK, title="Dune")
     b = Media(type=MediaType.MOVIE, title="Dune (1984)")
@@ -232,17 +248,6 @@ def test_query_helper_subqueries_and_edit_edge_cases(
     db_session: Session,
 ) -> None:
     """Remaining query helpers build; edit edge cases behave."""
-    from podex.api.query_helpers import (
-        episode_count_by_media_subquery,
-        episode_count_by_podcast_subquery,
-        mention_count_by_episode_subquery,
-    )
-    from podex.models import MediaType
-    from podex.services.ops_media_commands import (
-        UpdateOpsMediaInputData,
-        add_ops_media_alias,
-        update_ops_media,
-    )
 
     assert_that(episode_count_by_media_subquery(db_session)).is_not_none()
     assert_that(episode_count_by_podcast_subquery(db_session)).is_not_none()
@@ -291,22 +296,6 @@ def test_query_helper_subqueries_and_edit_edge_cases(
 
 def test_merge_repoints_derivative_data_to_target(db_session: Session) -> None:
     """Merging re-points refs, relations, and triples; drops source summaries."""
-    from datetime import UTC, datetime
-
-    from podex.models import (
-        GraphTriple,
-        GraphTripleObjectKind,
-        MediaExternalRef,
-        MediaRelation,
-        MediaSummary,
-        MediaType,
-    )
-    from podex.services.graph_relations import (
-        GraphTripleInputData,
-        stable_media_relation_key,
-        upsert_graph_triple,
-        upsert_media_relation,
-    )
 
     source = Media(type=MediaType.BOOK, title="Dune (dupe)")
     target = Media(type=MediaType.BOOK, title="Dune")

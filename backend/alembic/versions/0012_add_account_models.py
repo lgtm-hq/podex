@@ -8,7 +8,6 @@ Create Date: 2026-07-19 00:34:32.831077
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op  # type: ignore[attr-defined]
 
 revision: str = "0012"
@@ -19,6 +18,8 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     """Apply the migration."""
+    # Historical DDL stays self-contained; shared mutable schema helpers are unsafe.
+    # pylint: disable=duplicate-code
     op.create_table(
         "account_users",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -175,6 +176,7 @@ def upgrade() -> None:
     op.create_index(
         op.f("ix_user_sessions_user_id"), "user_sessions", ["user_id"], unique=False
     )
+    # pylint: enable=duplicate-code
 
 
 def downgrade() -> None:

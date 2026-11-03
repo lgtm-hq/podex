@@ -28,7 +28,11 @@ def test_upsert_matches_unnumbered_episode_by_provider_url(
     )
 
     with DiscoveryOrchestrator(db_session) as orchestrator:
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         created = orchestrator._upsert_episodes(podcast, [discovered])
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         repeated = orchestrator._upsert_episodes(podcast, [discovered])
 
     assert_that(created).is_equal_to((1, 0))
@@ -52,6 +56,8 @@ def test_deduplicate_matches_repeated_provider_urls(db_session: Session) -> None
     )
 
     with DiscoveryOrchestrator(db_session) as orchestrator:
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         episodes = orchestrator._deduplicate_episodes([first, repeated])
 
     assert_that(episodes).is_length(1)
@@ -69,10 +75,11 @@ def test_podscripts_episode_comment_link_falls_back_to_url_title() -> None:
 
     source = PodscriptsDiscovery(delay=0)
     try:
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         episode = source._parse_episode_link(
             link,
             "/podcasts/example-show/42-pilot",
-            "example-show",
         )
     finally:
         source.close()
@@ -95,6 +102,8 @@ def test_upsert_persists_discovered_episode(db_session: Session) -> None:
         rss_guid="urn:example:episode:1",
         discovery_source="rss",
     )
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     new_count, updated_count = orchestrator._upsert_episodes(
         podcast,
         [discovered],

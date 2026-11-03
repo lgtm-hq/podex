@@ -252,6 +252,20 @@ def apply_external_ids(
         media.metadata_json = metadata
 
 
+def apply_enrichment_fields(*, media: Media, result: EnrichmentResult) -> None:
+    """Apply shared identity fields while preserving existing descriptive data.
+
+    Args:
+        media: Media record receiving enrichment.
+        result: Provider output containing descriptions and external identifiers.
+    """
+    if result.cover_url and not media.cover_url:
+        media.cover_url = result.cover_url
+    if result.description and not media.description:
+        media.description = result.description
+    apply_external_ids(media=media, external_ids=result.external_ids)
+
+
 class MediaEnricher:
     """Enrich media items with external data from multiple sources.
 
@@ -312,16 +326,21 @@ class MediaEnricher:
                 result = self.academic_enricher.enrich_with_verification(media)
                 if result and result.confidence >= min_confidence:
                     logger.info(
-                        f"Enriched '{media.title}' via academic enricher "
-                        f"(confidence: {result.confidence:.2f}, "
-                        f"verified_by: {[s.value for s in result.verified_by]})"
+                        "Enriched '%s' via academic enricher "
+                        "(confidence: %s, verified_by: %s)",
+                        media.title,
+                        format(result.confidence, ".2f"),
+                        [s.value for s in result.verified_by],
                     )
                     return result
-                elif result:
+                if result:
                     logger.debug(
-                        f"Low confidence academic match: {result.confidence:.2f}"
+                        "Low confidence academic match: %s",
+                        format(result.confidence, ".2f"),
                     )
                     result = None  # Reset for Wikipedia fallback
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception:
                 logger.exception("Error in academic enrichment")
 
@@ -332,23 +351,29 @@ class MediaEnricher:
             for source in provider_sources:
                 provider = self.providers.get(source)
                 if not provider:
-                    logger.debug(f"Provider {source} not configured, skipping")
+                    logger.debug("Provider %s not configured, skipping", source)
                     continue
 
                 try:
                     result = provider.search_and_enrich(media)
                     if result and result.confidence >= min_confidence:
                         logger.info(
-                            f"Enriched '{media.title}' from {source} "
-                            f"(confidence: {result.confidence:.2f})"
+                            "Enriched '%s' from %s (confidence: %s)",
+                            media.title,
+                            source,
+                            format(result.confidence, ".2f"),
                         )
                         return result
-                    elif result:
+                    if result:
                         conf = result.confidence
-                        logger.debug(f"Low confidence from {source}: {conf:.2f}")
+                        logger.debug(
+                            "Low confidence from %s: %s", source, format(conf, ".2f")
+                        )
                         result = None  # Reset for next provider
+                # Keep other providers and tasks running after this failure.
+                # pylint: disable-next=broad-exception-caught
                 except Exception:
-                    logger.exception(f"Error enriching from {source}")
+                    logger.exception("Error enriching from %s", source)
                     continue
 
         # Wikipedia fallback for any media type
@@ -357,24 +382,37 @@ class MediaEnricher:
             and use_wikipedia_fallback
             and media.type in PROVIDER_PRIORITY
         ):
-            wikipedia = self.providers.get(EnrichmentSource.WIKIPEDIA)
-            if wikipedia:
-                try:
-                    result = wikipedia.search_and_enrich(media)
-                    if result and result.confidence >= min_confidence:
-                        logger.info(
-                            f"Enriched '{media.title}' from Wikipedia fallback "
-                            f"(confidence: {result.confidence:.2f})"
-                        )
-                        return result
-                    elif result:
-                        logger.debug(
-                            f"Low confidence Wikipedia match: {result.confidence:.2f}"
-                        )
-                except Exception:
-                    logger.exception("Error in Wikipedia fallback")
+            result = self._enrich_from_wikipedia(media, min_confidence)
+            if result is not None:
+                return result
 
-        logger.debug(f"No enrichment found for: {media.title}")
+        logger.debug("No enrichment found for: %s", media.title)
+        return None
+
+    def _enrich_from_wikipedia(
+        self, media: Media, min_confidence: float
+    ) -> EnrichmentResult | None:
+        """Try the universal fallback and enforce the confidence threshold."""
+        wikipedia = self.providers.get(EnrichmentSource.WIKIPEDIA)
+        if wikipedia:
+            try:
+                result = wikipedia.search_and_enrich(media)
+                if result and result.confidence >= min_confidence:
+                    logger.info(
+                        "Enriched '%s' from Wikipedia fallback (confidence: %s)",
+                        media.title,
+                        format(result.confidence, ".2f"),
+                    )
+                    return result
+                if result:
+                    logger.debug(
+                        "Low confidence Wikipedia match: %s",
+                        format(result.confidence, ".2f"),
+                    )
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
+            except Exception:
+                logger.exception("Error in Wikipedia fallback")
         return None
 
     def apply_enrichment(self, media: Media, result: EnrichmentResult) -> None:
@@ -386,16 +424,7 @@ class MediaEnricher:
             media: The media item to update.
             result: The enrichment result to apply.
         """
-        # Update cover if we don't have one or the new one is from a better source
-        if result.cover_url and not media.cover_url:
-            media.cover_url = result.cover_url
-
-        # Update description if we don't have one
-        if result.description and not media.description:
-            media.description = result.description
-
-        # Update external IDs (columns plus metadata_json fallback)
-        apply_external_ids(media=media, external_ids=result.external_ids)
+        apply_enrichment_fields(media=media, result=result)
 
         # Merge metadata
         if result.metadata:

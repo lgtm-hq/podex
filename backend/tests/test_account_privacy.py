@@ -12,11 +12,11 @@ from podex.models import (
     MagicLinkToken,
     UserSession,
 )
-from podex.services.account_alerts import create_alert_rule, evaluate_alert_rules
+from podex.services.account_alerts import evaluate_alert_rules
 from podex.services.account_follows import follow_podcast
 from podex.services.account_preferences import get_account_preferences
 from podex.services.account_saves import save_media
-from tests.conftest import seed_catalog_graph
+from tests.conftest import create_media_alert_rule, seed_catalog_graph
 from tests.test_api_auth import _sign_in
 
 
@@ -26,13 +26,7 @@ def _populate(client: TestClient, db_session: Session) -> dict[str, str]:
     user = db_session.query(AccountUser).one()
     save_media(db=db_session, user_id=user.id, media_id=graph.media_id)
     follow_podcast(db=db_session, user_id=user.id, podcast_id=graph.podcast_id)
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
-    )
+    create_media_alert_rule(db=db_session, user_id=user.id, media_id=graph.media_id)
     get_account_preferences(db=db_session, user_id=user.id)
     db_session.commit()
     return cookie

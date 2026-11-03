@@ -5,6 +5,7 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
+from podex.database import delete_if_present
 from podex.models import AccountSavedMedia, Media
 from podex.services.media_queries import get_media
 
@@ -64,8 +65,4 @@ def remove_saved_media(*, db: Session, user_id: int, media_id: int) -> bool:
         )
         .first()
     )
-    if row is None:
-        return False
-    db.delete(row)
-    db.flush()
-    return True
+    return bool(delete_if_present(db=db, row=row))

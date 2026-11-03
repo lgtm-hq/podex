@@ -4,12 +4,12 @@ import httpx
 from assertpy import assert_that
 
 from podex.models import Media, MediaType
+from podex.services.enrichment import WikipediaProvider
 from tests.enrichment.conftest import _media, _swap_client
 
 
 def test_wikipedia_person_and_place_paths() -> None:
     """Person and place media types walk their variation flows."""
-    from podex.services.enrichment import WikipediaProvider
 
     search_payload = {
         "query": {
@@ -71,11 +71,7 @@ def test_wikipedia_person_and_place_paths() -> None:
 
 def test_wikipedia_variations_across_types() -> None:
     """Every media type's search-variation builder executes."""
-    import pytest as _pytest
 
-    from podex.services.enrichment import WikipediaProvider
-
-    del _pytest
     for media_type in (
         MediaType.MOVIE,
         MediaType.TV_SHOW,

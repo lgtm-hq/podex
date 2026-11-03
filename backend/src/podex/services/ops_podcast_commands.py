@@ -15,11 +15,14 @@ from podex.services.ops_podcast_queries import (
 class OpsPodcastSourceInputData:
     """Source fields provided for ops podcast mutations."""
 
+    # Explicit mapped/input fields preserve this independent table or boundary contract.
+    # pylint: disable=duplicate-code
     rss_url: str | None = None
     spotify_id: str | None = None
     apple_id: str | None = None
     youtube_channel_id: str | None = None
     podscripts_slug: str | None = None
+    # pylint: enable=duplicate-code
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +39,8 @@ class CreateOpsPodcastInputData:
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class UpdateOpsPodcastInputData:
     """Partial fields accepted for podcast updates."""
 
@@ -93,6 +98,24 @@ def create_ops_podcast(
     return created_podcast
 
 
+def _update_required_fields(
+    *, podcast: Podcast, payload: UpdateOpsPodcastInputData
+) -> None:
+    """Validate and apply non-nullable fields in a partial update."""
+    if "name" in payload.provided_fields:
+        if payload.name is None:
+            raise ValueError("name cannot be cleared")
+        podcast.name = payload.name
+    if "slug" in payload.provided_fields:
+        if payload.slug is None:
+            raise ValueError("slug cannot be cleared")
+        podcast.slug = payload.slug
+    if "status" in payload.provided_fields:
+        if payload.status is None:
+            raise ValueError("status cannot be cleared")
+        podcast.status = payload.status.value
+
+
 def update_ops_podcast(
     *,
     db: Session,
@@ -116,18 +139,7 @@ def update_ops_podcast(
     if podcast is None:
         return None
 
-    if "name" in payload.provided_fields:
-        if payload.name is None:
-            raise ValueError("name cannot be cleared")
-        podcast.name = payload.name
-    if "slug" in payload.provided_fields:
-        if payload.slug is None:
-            raise ValueError("slug cannot be cleared")
-        podcast.slug = payload.slug
-    if "status" in payload.provided_fields:
-        if payload.status is None:
-            raise ValueError("status cannot be cleared")
-        podcast.status = payload.status.value
+    _update_required_fields(podcast=podcast, payload=payload)
     if "description" in payload.provided_fields:
         podcast.description = payload.description
     if "cover_url" in payload.provided_fields:

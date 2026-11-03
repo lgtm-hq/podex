@@ -13,7 +13,6 @@ from podex.models import (
     MediaSummary,
     MediaType,
     Mention,
-    Podcast,
     SemanticChunk,
     Transcript,
 )
@@ -26,8 +25,11 @@ from podex.services.derivative_summaries import (
     stable_source_text_hash,
     upsert_episode_summary,
 )
+from tests.conftest import create_jre_episode
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class FakeSummaryProvider:
     """Deterministic summary provider for derivative summary tests."""
 
@@ -142,6 +144,8 @@ def test_generate_media_summary_is_version_tracked(
     )
     db_session.add(media)
     db_session.flush()
+    # This scenario explicitly persists the episode/media mention relationship.
+    # pylint: disable=duplicate-code
     db_session.add(
         Mention(
             episode_id=episode.id,
@@ -149,6 +153,7 @@ def test_generate_media_summary_is_version_tracked(
             context="Joe discussed Dune and its ecology.",
         ),
     )
+    # pylint: enable=duplicate-code
     db_session.flush()
 
     first = generate_media_summary(
@@ -215,14 +220,5 @@ def _create_episode(
     db_session: Session,
 ) -> Episode:
     """Create a persisted JRE episode."""
-    podcast = Podcast(name="The Joe Rogan Experience", slug="jre")
-    db_session.add(podcast)
-    db_session.flush()
-    episode = Episode(
-        podcast_id=podcast.id,
-        title="JRE #1",
-        episode_number=1,
-    )
-    db_session.add(episode)
-    db_session.flush()
+    episode = create_jre_episode(db_session)
     return episode

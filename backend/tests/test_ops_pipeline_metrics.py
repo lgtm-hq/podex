@@ -145,6 +145,8 @@ def test_ops_retention_preview_and_apply(db_session: Session) -> None:
     graph = seed_catalog_graph(db_session)
     transcript = Transcript(
         episode_id=graph.episode_id,
+        # Retention tests explicitly describe the upstream transcript contract.
+        # pylint: disable-next=duplicate-code
         provider="podscripts",
         raw_text="raw text",
         fetched_at=_NOW - timedelta(days=400),

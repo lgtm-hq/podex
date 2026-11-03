@@ -20,6 +20,15 @@ from podex.models import (
     SemanticChunk,
     Transcript,
 )
+from podex.services.field_normalization import (
+    normalize_optional as _normalize_optional,
+)
+from podex.services.field_normalization import (
+    normalize_required as _normalize_required,
+)
+from podex.services.field_normalization import (
+    normalize_source_hash as _normalize_source_hash,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +72,8 @@ class SummaryProvider(Protocol):
         """
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def generate_episode_summary(
     *,
     db: Session,
@@ -109,6 +120,8 @@ def generate_episode_summary(
     )
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def generate_media_summary(
     *,
     db: Session,
@@ -155,6 +168,9 @@ def generate_media_summary(
     )
 
 
+# Keep the existing named command inputs compatible with callers.
+# The named persistence fields consume the local budget before model lookup.
+# pylint: disable-next=too-many-arguments,too-many-locals
 def upsert_episode_summary(
     *,
     db: Session,
@@ -225,18 +241,20 @@ def upsert_episode_summary(
                 value=source_model,
                 field_name="source_model",
             ),
-            source_text_hash=_normalize_source_hash(source_text_hash),
+            source_text_hash=_normalize_source_hash(source_text_hash=source_text_hash),
             generated_at=generated_at or datetime.now(UTC),
         )
         db.add(summary)
 
     _apply_summary_fields(
         summary=summary,
-        summary_text=summary_text,
-        short_summary=short_summary,
-        highlights_json=highlights_json,
-        citations_json=citations_json,
-        metadata_json=metadata_json,
+        payload=GeneratedSummaryData(
+            summary_text=summary_text,
+            short_summary=short_summary,
+            highlights=highlights_json,
+            citations=citations_json,
+            metadata_json=metadata_json,
+        ),
         status=status,
         error_message=error_message,
         generated_at=generated_at,
@@ -245,6 +263,9 @@ def upsert_episode_summary(
     return summary
 
 
+# Keep the existing named command inputs compatible with callers.
+# The named persistence fields consume the local budget before model lookup.
+# pylint: disable-next=too-many-arguments,too-many-locals
 def upsert_media_summary(
     *,
     db: Session,
@@ -313,18 +334,20 @@ def upsert_media_summary(
                 value=source_model,
                 field_name="source_model",
             ),
-            source_text_hash=_normalize_source_hash(source_text_hash),
+            source_text_hash=_normalize_source_hash(source_text_hash=source_text_hash),
             generated_at=generated_at or datetime.now(UTC),
         )
         db.add(summary)
 
     _apply_summary_fields(
         summary=summary,
-        summary_text=summary_text,
-        short_summary=short_summary,
-        highlights_json=highlights_json,
-        citations_json=citations_json,
-        metadata_json=metadata_json,
+        payload=GeneratedSummaryData(
+            summary_text=summary_text,
+            short_summary=short_summary,
+            highlights=highlights_json,
+            citations=citations_json,
+            metadata_json=metadata_json,
+        ),
         status=status,
         error_message=error_message,
         generated_at=generated_at,
@@ -435,6 +458,8 @@ def build_media_summary_source(
     )
 
 
+# Each identity field is explicit so persisted hash keys remain compatible.
+# pylint: disable-next=too-many-arguments
 def stable_episode_summary_key(
     *,
     episode_id: int,
@@ -465,11 +490,13 @@ def stable_episode_summary_key(
             _normalize_required(value=pipeline_version, field_name="pipeline_version"),
             _normalize_required(value=prompt_version, field_name="prompt_version"),
             _normalize_required(value=source_model, field_name="source_model"),
-            _normalize_source_hash(source_text_hash),
+            _normalize_source_hash(source_text_hash=source_text_hash),
         ),
     )
 
 
+# Each identity field is explicit so persisted hash keys remain compatible.
+# pylint: disable-next=too-many-arguments
 def stable_media_summary_key(
     *,
     media_id: int,
@@ -500,7 +527,7 @@ def stable_media_summary_key(
             _normalize_required(value=pipeline_version, field_name="pipeline_version"),
             _normalize_required(value=prompt_version, field_name="prompt_version"),
             _normalize_required(value=source_model, field_name="source_model"),
-            _normalize_source_hash(source_text_hash),
+            _normalize_source_hash(source_text_hash=source_text_hash),
         ),
     )
 
@@ -523,24 +550,20 @@ def stable_source_text_hash(
 def _apply_summary_fields(
     *,
     summary: EpisodeSummary | MediaSummary,
-    summary_text: str,
-    short_summary: str | None,
-    highlights_json: list[str] | None,
-    citations_json: list[dict[str, object]] | None,
-    metadata_json: dict[str, object] | None,
+    payload: GeneratedSummaryData,
     status: DerivativeSummaryStatus,
     error_message: str | None,
     generated_at: datetime | None,
 ) -> None:
     """Apply mutable summary fields to an existing summary model."""
     summary.summary_text = _normalize_required(
-        value=summary_text,
+        value=payload.summary_text,
         field_name="summary_text",
     )
-    summary.short_summary = _normalize_optional(short_summary)
-    summary.highlights_json = highlights_json
-    summary.citations_json = citations_json
-    summary.metadata_json = metadata_json
+    summary.short_summary = _normalize_optional(payload.short_summary)
+    summary.highlights_json = payload.highlights
+    summary.citations_json = payload.citations
+    summary.metadata_json = payload.metadata_json
     summary.status = status.value
     summary.error_message = _normalize_optional(error_message)
     if generated_at is not None:
@@ -555,38 +578,3 @@ def _stable_key(
     """Build a compact stable key from string parts."""
     digest = sha256("|".join(parts).encode("utf-8")).hexdigest()
     return f"{prefix}:{digest[:64]}"
-
-
-def _normalize_source_hash(
-    source_text_hash: str,
-) -> str:
-    """Validate and normalize a source text hash."""
-    normalized = _normalize_required(
-        value=source_text_hash,
-        field_name="source_text_hash",
-    )
-    if len(normalized) != 64:
-        raise ValueError("source_text_hash must be a SHA-256 hex digest")
-    return normalized
-
-
-def _normalize_required(
-    *,
-    value: str,
-    field_name: str,
-) -> str:
-    """Normalize a required string field."""
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} must be non-empty")
-    return normalized
-
-
-def _normalize_optional(
-    value: str | None,
-) -> str | None:
-    """Normalize an optional string field."""
-    if value is None:
-        return None
-    normalized = value.strip()
-    return normalized or None

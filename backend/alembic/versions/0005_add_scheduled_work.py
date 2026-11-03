@@ -8,7 +8,6 @@ Create Date: 2026-07-18 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op  # type: ignore[attr-defined]
 
 revision: str = "0005"

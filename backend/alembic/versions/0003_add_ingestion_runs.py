@@ -8,7 +8,6 @@ Create Date: 2026-07-18 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op  # type: ignore[attr-defined]
 
 revision: str = "0003"
@@ -21,6 +20,8 @@ _STATUSES = ("running", "completed", "failed")
 
 def upgrade() -> None:
     """Create the ingestion_runs audit table."""
+    # Historical DDL stays self-contained; shared mutable schema helpers are unsafe.
+    # pylint: disable=duplicate-code
     op.create_table(
         "ingestion_runs",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -46,6 +47,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index("ix_ingestion_runs_status", "ingestion_runs", ["status"])
+    # pylint: enable=duplicate-code
 
 
 def downgrade() -> None:

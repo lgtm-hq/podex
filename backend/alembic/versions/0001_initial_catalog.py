@@ -8,7 +8,6 @@ Create Date: 2026-07-06 00:00:00.000000
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-
 from alembic import op  # type: ignore[attr-defined]
 
 revision: str = "0001"
@@ -31,6 +30,8 @@ _MEDIA_TYPES = (
 
 def upgrade() -> None:
     """Create the podcasts, episodes, media, and mentions tables."""
+    # Historical DDL stays self-contained; shared mutable schema helpers are unsafe.
+    # pylint: disable=duplicate-code
     op.create_table(
         "podcasts",
         sa.Column("id", sa.Integer(), nullable=False),
@@ -132,6 +133,7 @@ def upgrade() -> None:
         "mentions",
         ["episode_id", "media_id"],
     )
+    # pylint: enable=duplicate-code
 
 
 def downgrade() -> None:

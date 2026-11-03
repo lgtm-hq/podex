@@ -5,6 +5,11 @@ from assertpy import assert_that
 
 from podex.models import Media, MediaType
 from podex.services.academic_enrichment import AcademicEnricher
+from podex.services.enrichment import (
+    CrossRefProvider,
+    OMDBProvider,
+    SemanticScholarProvider,
+)
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from tests.enrichment.conftest import (
     _academic_with,
@@ -14,6 +19,10 @@ from tests.enrichment.conftest import (
     _SlowProvider,
     _StubProvider,
     _swap_client,
+    crossref_sleep_work,
+    enrich_result,
+    require_result,
+    semantic_sleep_metadata,
 )
 
 
@@ -40,9 +49,13 @@ def test_academic_enricher_doi_normalization() -> None:
     """DOI and title normalization behave as documented."""
     enricher = AcademicEnricher()
     assert_that(
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         enricher._normalize_doi("https://doi.org/10.1000/Example.DOI"),
     ).is_equal_to("10.1000/example.doi")
     assert_that(
+        # Direct unit coverage of the private normalization/protocol boundary.
+        # pylint: disable-next=protected-access
         enricher._normalize_title("The Study: A Review!"),
     ).does_not_contain(":")
     assert_that(enricher.supports_media_type("study")).is_true()
@@ -78,110 +91,33 @@ def test_academic_enricher_cross_validates_by_doi() -> None:
         _media("Sleep study", MediaType.STUDY),
     )
 
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(len(result.verified_by)).is_greater_than(1)
-        assert_that(result.confidence).is_greater_than(0.8)
-        assert_that(result.doi_verified).is_true()
-
-
-def test_pubmed_happy_path_via_esearch_and_efetch() -> None:
-    """PubMed search ids resolve through the XML fetch into a result."""
-    from podex.services.enrichment import PubMedProvider
-
-    article_xml = """<?xml version="1.0"?>
-<PubmedArticleSet>
-  <PubmedArticle>
-    <MedlineCitation>
-      <PMID>12345</PMID>
-      <Article>
-        <ArticleTitle>Sleep and memory consolidation</ArticleTitle>
-        <Abstract><AbstractText>A study of sleep.</AbstractText></Abstract>
-        <AuthorList>
-          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
-        </AuthorList>
-        <Journal>
-          <Title>Journal of Sleep</Title>
-          <JournalIssue>
-            <PubDate><Year>2020</Year></PubDate>
-          </JournalIssue>
-        </Journal>
-        <ELocationID EIdType="doi">10.1000/example.doi</ELocationID>
-      </Article>
-    </MedlineCitation>
-  </PubmedArticle>
-</PubmedArticleSet>"""
-
-    summary_payload = {
-        "result": {
-            "uids": ["12345"],
-            "12345": {
-                "uid": "12345",
-                "title": "Sleep and memory consolidation",
-                "pubdate": "2020",
-                "fulljournalname": "Journal of Sleep",
-                "authors": [{"name": "Doe J"}],
-                "elocationid": "doi: 10.1000/example.doi",
-            },
-        },
-    }
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "esearch" in request.url.path:
-            return httpx.Response(
-                200,
-                json={"esearchresult": {"idlist": ["12345"]}},
-            )
-        if "esummary" in request.url.path:
-            return httpx.Response(200, json=summary_payload)
-        return httpx.Response(200, text=article_xml)
-
-    provider = PubMedProvider()
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    result = provider.search_and_enrich(
-        _media("Sleep and memory consolidation", MediaType.STUDY),
-    )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
-        assert_that(result.metadata["title"]).is_equal_to(
-            "Sleep and memory consolidation",
-        )
+    result = require_result(result)
+    assert_that(len(result.verified_by)).is_greater_than(1)
+    assert_that(result.confidence).is_greater_than(0.8)
+    assert_that(result.doi_verified).is_true()
 
 
 def test_crossref_direct_doi_lookup() -> None:
     """A known DOI fetches the work directly."""
     work = {
         "message": {
-            "DOI": "10.1000/example.doi",
-            "title": ["Sleep and memory consolidation"],
-            "author": [{"given": "Jane", "family": "Doe"}],
-            "issued": {"date-parts": [[2020, 1, 1]]},
-            "container-title": ["Journal of Sleep"],
-            "URL": "https://doi.invalid/example",
+            **crossref_sleep_work(),
             "abstract": "A study of sleep.",
             "is-referenced-by-count": 42,
             "type": "journal-article",
             "publisher": "Example Press",
         },
     }
-    from podex.services.enrichment import CrossRefProvider
 
     provider = CrossRefProvider()
     _swap_client(provider, lambda request: httpx.Response(200, json=work))
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.doi = "10.1000/example.doi"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_greater_than(0.8)
-        assert_that(result.metadata["title"]).is_equal_to(
-            "Sleep and memory consolidation",
-        )
+    result = enrich_result(provider, media)
+    assert_that(result.confidence).is_greater_than(0.8)
+    assert_that(result.metadata["title"]).is_equal_to(
+        "Sleep and memory consolidation",
+    )
 
 
 def test_academic_verifies_by_title_without_dois() -> None:
@@ -210,25 +146,18 @@ def test_academic_verifies_by_title_without_dois() -> None:
         _media("Sleep study", MediaType.STUDY),
     )
 
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(len(result.verified_by)).is_greater_than(1)
+    result = require_result(result)
+    assert_that(len(result.verified_by)).is_greater_than(1)
 
 
 def test_semantic_scholar_direct_paper_id() -> None:
     """A stored semantic_scholar_id fetches the paper directly."""
-    from podex.services.enrichment import SemanticScholarProvider
 
     paper = {
+        **semantic_sleep_metadata(),
         "paperId": "abc123",
         "title": "Sleep and memory consolidation",
         "abstract": "A study.",
-        "year": 2020,
-        "citationCount": 100,
-        "authors": [{"name": "Jane Doe"}],
-        "externalIds": {"DOI": "10.1000/example.doi"},
-        "url": "https://ss.invalid/abc123",
-        "venue": "Journal of Sleep",
     }
     seen_paths: list[str] = []
 
@@ -244,57 +173,15 @@ def test_semantic_scholar_direct_paper_id() -> None:
     provider.close()
 
     assert_that(seen_paths).is_equal_to(["/paper/abc123"])
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_equal_to(1.0)
-        assert_that(result.metadata["title"]).is_equal_to(
-            "Sleep and memory consolidation",
-        )
-
-
-def test_pubmed_direct_pmid_fetch() -> None:
-    """A stored pubmed_id skips search and fetches the article."""
-    from podex.services.enrichment import PubMedProvider
-
-    xml = """<?xml version="1.0"?>
-<PubmedArticleSet>
-  <PubmedArticle>
-    <MedlineCitation>
-      <PMID>777</PMID>
-      <Article>
-        <ArticleTitle>Direct fetch study</ArticleTitle>
-        <Abstract><AbstractText>Direct.</AbstractText></Abstract>
-        <AuthorList>
-          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
-        </AuthorList>
-        <Journal>
-          <Title>Journal</Title>
-          <JournalIssue><PubDate><Year>2021</Year></PubDate></JournalIssue>
-        </Journal>
-      </Article>
-    </MedlineCitation>
-  </PubmedArticle>
-</PubmedArticleSet>"""
-    provider = PubMedProvider()
-    provider.client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, text=xml),
-        ),
+    result = require_result(result)
+    assert_that(result.confidence).is_equal_to(1.0)
+    assert_that(result.metadata["title"]).is_equal_to(
+        "Sleep and memory consolidation",
     )
-    media = _media("Direct fetch study", MediaType.STUDY)
-    media.pubmed_id = "777"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_equal_to(1.0)
-        assert_that(result.metadata["title"]).is_equal_to("Direct fetch study")
 
 
 def test_crossref_search_with_author() -> None:
     """Author names flow into CrossRef search queries."""
-    from podex.services.enrichment import CrossRefProvider
 
     payload = {
         "message": {
@@ -327,72 +214,12 @@ def test_crossref_search_with_author() -> None:
     assert_that(
         [q for q in seen_queries if "query.author=Doe" in q],
     ).is_not_empty()
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
-
-
-def test_pubmed_doi_search_path() -> None:
-    """A media DOI resolves through the PubMed DOI search to an article."""
-    from podex.services.enrichment import PubMedProvider
-
-    xml = """<?xml version="1.0"?>
-<PubmedArticleSet>
-  <PubmedArticle>
-    <MedlineCitation>
-      <PMID>888</PMID>
-      <Article>
-        <ArticleTitle>DOI-resolved study</ArticleTitle>
-        <Abstract><AbstractText>Resolved.</AbstractText></Abstract>
-        <AuthorList>
-          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
-        </AuthorList>
-        <Journal>
-          <Title>Journal</Title>
-          <JournalIssue><PubDate><Year>2021</Year></PubDate></JournalIssue>
-        </Journal>
-      </Article>
-    </MedlineCitation>
-  </PubmedArticle>
-</PubmedArticleSet>"""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "esearch" in request.url.path:
-            return httpx.Response(
-                200,
-                json={"esearchresult": {"idlist": ["888"]}},
-            )
-        if "esummary" in request.url.path:
-            return httpx.Response(
-                200,
-                json={
-                    "result": {
-                        "uids": ["888"],
-                        "888": {
-                            "uid": "888",
-                            "title": "DOI-resolved study",
-                            "pubdate": "2021",
-                        },
-                    },
-                },
-            )
-        return httpx.Response(200, text=xml)
-
-    provider = PubMedProvider(api_key="key")
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    media = _media("DOI-resolved study", MediaType.STUDY)
-    media.doi = "10.1000/example.doi"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = require_result(result)
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_crossref_rich_work_parsing() -> None:
     """Print dates, subjects, and JATS abstracts parse into metadata."""
-    from podex.services.enrichment import CrossRefProvider
 
     payload = {
         "message": {
@@ -425,66 +252,10 @@ def test_crossref_rich_work_parsing() -> None:
         provider,
         lambda request: httpx.Response(200, json=payload),
     )
-    result = provider.search_and_enrich(
-        _media("Sleep and memory consolidation", MediaType.ARTICLE),
+    result = enrich_result(
+        provider, _media("Sleep and memory consolidation", MediaType.ARTICLE)
     )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.description or "").does_not_contain("jats")
-
-
-def test_pubmed_rich_article_parse() -> None:
-    """Mesh terms, PMC ids, months, and DOIs parse from article XML."""
-    from podex.services.enrichment import PubMedProvider
-
-    xml = """<?xml version="1.0"?>
-<PubmedArticleSet>
-  <PubmedArticle>
-    <MedlineCitation>
-      <PMID>999</PMID>
-      <Article>
-        <ArticleTitle>Rich parse study</ArticleTitle>
-        <Abstract><AbstractText>Rich.</AbstractText></Abstract>
-        <AuthorList>
-          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
-          <Author><CollectiveName>The Consortium</CollectiveName></Author>
-        </AuthorList>
-        <Journal>
-          <Title>Journal</Title>
-          <JournalIssue>
-            <PubDate><Year>2021</Year><Month>06</Month></PubDate>
-          </JournalIssue>
-        </Journal>
-      </Article>
-      <MeshHeadingList>
-        <MeshHeading><DescriptorName>Sleep</DescriptorName></MeshHeading>
-        <MeshHeading><DescriptorName>Memory</DescriptorName></MeshHeading>
-      </MeshHeadingList>
-    </MedlineCitation>
-    <PubmedData>
-      <ArticleIdList>
-        <ArticleId IdType="doi">10.1000/rich.doi</ArticleId>
-        <ArticleId IdType="pmc">PMC12345</ArticleId>
-      </ArticleIdList>
-    </PubmedData>
-  </PubmedArticle>
-</PubmedArticleSet>"""
-    provider = PubMedProvider()
-    provider.client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, text=xml),
-        ),
-    )
-    media = _media("Rich parse study", MediaType.STUDY)
-    media.pubmed_id = "999"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.metadata)).contains("Sleep")
+    assert_that(result.description or "").does_not_contain("jats")
 
 
 def test_academic_single_source_with_doi_verification() -> None:
@@ -520,7 +291,6 @@ def test_academic_single_source_with_doi_verification() -> None:
 
 def test_crossref_doi_prefix_normalization_and_404() -> None:
     """Prefixed DOIs normalize; 404 falls back to search gracefully."""
-    from podex.services.enrichment import CrossRefProvider
 
     seen_paths: list[str] = []
 
@@ -543,7 +313,6 @@ def test_crossref_doi_prefix_normalization_and_404() -> None:
 
 def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
     """A media DOI tries the paper endpoint, then falls back to search."""
-    from podex.services.enrichment import SemanticScholarProvider
 
     paper = {
         "paperId": "viaDoi",
@@ -566,46 +335,12 @@ def test_semantic_scholar_doi_lookup_and_search_fallback() -> None:
     _swap_client(provider, handler)
     media = _media("Sleep and memory consolidation", MediaType.STUDY)
     media.doi = "10.1000/via.doi"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_greater_than(0.8)
-
-
-def test_pubmed_author_scoped_search() -> None:
-    """Author names scope the PubMed query with the [Author] field."""
-    from podex.services.enrichment import PubMedProvider
-
-    seen_terms: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        term = request.url.params.get("term", "")
-        seen_terms.append(term)
-        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
-
-    provider = PubMedProvider()
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    media = Media(
-        type=MediaType.STUDY,
-        title="Sleep and memory consolidation",
-        author="Jane Doe and John Smith",
-    )
-    media.id = 6
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_none()
-    assert_that(" ".join(seen_terms)).contains("[Author]")
+    result = enrich_result(provider, media)
+    assert_that(result.confidence).is_greater_than(0.8)
 
 
 def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
     """Sparse payloads parse without optional fields."""
-    from podex.services.enrichment import (
-        CrossRefProvider,
-        SemanticScholarProvider,
-    )
 
     sparse_paper = {
         "data": [
@@ -648,7 +383,6 @@ def test_semantic_scholar_minimal_paper_and_crossref_no_doi() -> None:
 
 def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
     """PMID-based lookup and OMDB weak-match rejection both execute."""
-    from podex.services.enrichment import OMDBProvider, SemanticScholarProvider
 
     paper = {
         "paperId": "viaPmid",
@@ -693,7 +427,6 @@ def test_semantic_scholar_pmid_route_and_omdb_weak_match() -> None:
 
 def test_crossref_doi_lookup_http_error() -> None:
     """Transport failures on the DOI endpoint degrade to search."""
-    from podex.services.enrichment import CrossRefProvider
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path.startswith("/works/"):
@@ -710,83 +443,8 @@ def test_crossref_doi_lookup_http_error() -> None:
     assert_that(result).is_none()
 
 
-def test_pubmed_and_semantic_scholar_reject_paths() -> None:
-    """Unsupported types and title mismatches yield None."""
-    from podex.services.enrichment import PubMedProvider, SemanticScholarProvider
-
-    pm = PubMedProvider()
-    pm.client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, json={}),
-        ),
-    )
-    movie = Media(type=MediaType.MOVIE, title="Dune")
-    movie.id = 13
-    assert_that(pm.search_and_enrich(movie)).is_none()
-
-    def mismatch_handler(request: httpx.Request) -> httpx.Response:
-        if "esearch" in request.url.path:
-            return httpx.Response(
-                200,
-                json={"esearchresult": {"idlist": ["555"]}},
-            )
-        if "esummary" in request.url.path:
-            return httpx.Response(
-                200,
-                json={
-                    "result": {
-                        "uids": ["555"],
-                        "555": {
-                            "uid": "555",
-                            "title": "A Totally Unrelated Paper",
-                            "pubdate": "1999",
-                        },
-                    },
-                },
-            )
-        return httpx.Response(200, text="<PubmedArticleSet/>")
-
-    pm2 = PubMedProvider()
-    pm2.client = httpx.Client(transport=httpx.MockTransport(mismatch_handler))
-    assert_that(
-        pm2.search_and_enrich(
-            _media("Sleep and memory consolidation", MediaType.STUDY),
-        ),
-    ).is_none()
-    pm.close()
-    pm2.close()
-
-    ss = SemanticScholarProvider()
-    _swap_client(ss, lambda request: httpx.Response(200, json={}))
-    assert_that(ss.search_and_enrich(movie)).is_none()
-    ss.close()
-
-
-def test_pubmed_doi_search_canonicalizes_prefixed_doi() -> None:
-    """A prefixed DOI is canonicalized before the [doi] search term."""
-    from podex.services.enrichment import PubMedProvider
-
-    seen_terms: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        seen_terms.append(request.url.params.get("term", ""))
-        return httpx.Response(200, json={"esearchresult": {"idlist": []}})
-
-    provider = PubMedProvider()
-    provider.rate_limiter = _CountingLimiter()
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    media = _media("Sleep study", MediaType.STUDY)
-    media.doi = "https://doi.org/10.1000/x"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_none()
-    assert_that(seen_terms[0]).is_equal_to("10.1000/x[doi]")
-
-
 def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
     """A prefixed DOI is canonicalized before the DOI: paper lookup."""
-    from podex.services.enrichment import SemanticScholarProvider
 
     seen_paths: list[str] = []
 
@@ -806,92 +464,6 @@ def test_semantic_scholar_canonicalizes_prefixed_doi() -> None:
 
     assert_that(result).is_none()
     assert_that(seen_paths[0]).is_equal_to("/paper/DOI:10.1000/x")
-
-
-def test_pubmed_waits_before_every_request() -> None:
-    """The esearch + esummary flow waits once per HTTP request."""
-    from podex.services.enrichment import PubMedProvider
-
-    requests_seen: list[str] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests_seen.append(request.url.path)
-        if "esearch" in request.url.path:
-            return httpx.Response(
-                200,
-                json={"esearchresult": {"idlist": ["555"]}},
-            )
-        return httpx.Response(
-            200,
-            json={
-                "result": {
-                    "uids": ["555"],
-                    "555": {
-                        "uid": "555",
-                        "title": "A Totally Unrelated Paper",
-                        "pubdate": "1999",
-                    },
-                },
-            },
-        )
-
-    provider = PubMedProvider()
-    limiter = _CountingLimiter()
-    provider.rate_limiter = limiter
-    provider.client = httpx.Client(transport=httpx.MockTransport(handler))
-    result = provider.search_and_enrich(_media("Sleep study", MediaType.STUDY))
-    provider.close()
-
-    assert_that(result).is_none()
-    assert_that(len(requests_seen)).is_equal_to(2)
-    assert_that(limiter.waits).is_equal_to(len(requests_seen))
-
-
-def test_pubmed_structured_abstract_joins_sections() -> None:
-    """Structured abstracts keep every AbstractText section."""
-    from podex.services.enrichment import PubMedProvider
-
-    xml = """<?xml version="1.0"?>
-<PubmedArticleSet>
-  <PubmedArticle>
-    <MedlineCitation>
-      <PMID>4242</PMID>
-      <Article>
-        <ArticleTitle>Structured abstract study</ArticleTitle>
-        <Abstract>
-          <AbstractText Label="BACKGROUND">Sleep matters.</AbstractText>
-          <AbstractText Label="CONCLUSIONS">Rest improves recall.</AbstractText>
-        </Abstract>
-        <AuthorList>
-          <Author><LastName>Doe</LastName><ForeName>Jane</ForeName></Author>
-        </AuthorList>
-        <Journal>
-          <Title>Journal</Title>
-          <JournalIssue><PubDate><Year>2021</Year></PubDate></JournalIssue>
-        </Journal>
-      </Article>
-    </MedlineCitation>
-  </PubmedArticle>
-</PubmedArticleSet>"""
-    provider = PubMedProvider()
-    provider.rate_limiter = _CountingLimiter()
-    provider.client = httpx.Client(
-        transport=httpx.MockTransport(
-            lambda request: httpx.Response(200, text=xml),
-        ),
-    )
-    media = _media("Structured abstract study", MediaType.STUDY)
-    media.pubmed_id = "4242"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        description = result.description or ""
-        assert_that(description).contains("Sleep matters.")
-        assert_that(description).contains("Rest improves recall.")
-        assert_that(description).contains("BACKGROUND")
-        assert_that(description).contains("CONCLUSIONS")
 
 
 def test_academic_fanout_isolates_provider_failures() -> None:
@@ -914,9 +486,8 @@ def test_academic_fanout_isolates_provider_failures() -> None:
         _media("Sleep study", MediaType.STUDY),
     )
 
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+    result = require_result(result)
+    assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
 
 
 def test_academic_fanout_drops_slow_provider() -> None:
@@ -947,9 +518,8 @@ def test_academic_fanout_drops_slow_provider() -> None:
         _media("Sleep study", MediaType.STUDY),
     )
 
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
+    result = require_result(result)
+    assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
 
 
 def test_academic_title_verification_requires_explicit_titles() -> None:
@@ -971,6 +541,8 @@ def test_academic_title_verification_requires_explicit_titles() -> None:
         },
     )
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     verified = enricher._verify_by_title(
         {
             EnrichmentSource.CROSSREF: a,
@@ -982,9 +554,8 @@ def test_academic_title_verification_requires_explicit_titles() -> None:
     result = enricher.enrich_with_verification(
         _media("Sleep study", MediaType.STUDY),
     )
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(len(result.verified_by)).is_equal_to(1)
+    result = require_result(result)
+    assert_that(len(result.verified_by)).is_equal_to(1)
 
 
 def test_academic_title_verification_needs_two_title_bearers() -> None:
@@ -1001,6 +572,8 @@ def test_academic_title_verification_needs_two_title_bearers() -> None:
     )
     enricher = _academic_with({})
 
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     verified = enricher._verify_by_title(
         {
             EnrichmentSource.CROSSREF: titled,

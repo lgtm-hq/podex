@@ -37,6 +37,8 @@ RequestResponder = Callable[[Request], Awaitable[Response]]
 
 
 @dataclass(frozen=True, slots=True)
+# This flat data record mirrors its published fields; nesting changes the contract.
+# pylint: disable-next=too-many-instance-attributes
 class AppMetrics:
     """Prometheus collectors bound to one registry.
 

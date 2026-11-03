@@ -26,11 +26,18 @@ from podex.services.notification_delivery import (
     SmtpDigestSender,
     build_digest_sender,
 )
-from tests.conftest import SeededGraph, seed_catalog_graph
+from tests.conftest import (
+    SeededGraph,
+    create_media_alert_rule,
+    create_podcast_alert_rule,
+    seed_catalog_graph,
+)
 
 _NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class RecordingDigestSender:
     """In-memory digest delivery for tests."""
 
@@ -58,29 +65,17 @@ def test_create_alert_rule_requires_linked_target(db_session: Session) -> None:
     db_session.add(user)
     db_session.flush()
 
-    orphan = create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
+    orphan = create_media_alert_rule(
+        db=db_session, user_id=user.id, media_id=graph.media_id
     )
     assert_that(orphan).is_none()
 
     save_media(db=db_session, user_id=user.id, media_id=graph.media_id)
-    rule = create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
+    rule = create_media_alert_rule(
+        db=db_session, user_id=user.id, media_id=graph.media_id
     )
-    duplicate = create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
+    duplicate = create_media_alert_rule(
+        db=db_session, user_id=user.id, media_id=graph.media_id
     )
     db_session.commit()
 
@@ -105,19 +100,9 @@ def test_evaluate_alert_rules_generates_events_on_growth(
     """Evaluation emits one event per rule whose observed count grew."""
     graph = seed_catalog_graph(db_session)
     user = _create_linked_user(db_session, graph)
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
-    )
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="podcast",
-        target_id=graph.podcast_id,
-        event_type="new_episode",
+    create_media_alert_rule(db=db_session, user_id=user.id, media_id=graph.media_id)
+    create_podcast_alert_rule(
+        db=db_session, user_id=user.id, podcast_id=graph.podcast_id
     )
     db_session.commit()
 
@@ -148,12 +133,8 @@ def test_alert_rule_enable_and_delete(db_session: Session) -> None:
     """Rules can be paused, resumed, and removed by their owner only."""
     graph = seed_catalog_graph(db_session)
     user = _create_linked_user(db_session, graph)
-    rule = create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
+    rule = create_media_alert_rule(
+        db=db_session, user_id=user.id, media_id=graph.media_id
     )
     if rule is None:  # pragma: no cover - narrowed above
         raise AssertionError
@@ -191,12 +172,8 @@ def test_send_pending_digest_delivers_once(db_session: Session) -> None:
     """Undigested events deliver as one digest and never redeliver."""
     graph = seed_catalog_graph(db_session)
     user = _create_linked_user(db_session, graph)
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="podcast",
-        target_id=graph.podcast_id,
-        event_type="new_episode",
+    create_podcast_alert_rule(
+        db=db_session, user_id=user.id, podcast_id=graph.podcast_id
     )
     db_session.add(
         Episode(podcast_id=graph.podcast_id, title="Pilot II", episode_number=2),
@@ -236,13 +213,7 @@ def test_digest_summarizes_media_mentions(db_session: Session) -> None:
     """Media-mention events render the media title in the digest body."""
     graph = seed_catalog_graph(db_session)
     user = _create_linked_user(db_session, graph)
-    create_alert_rule(
-        db=db_session,
-        user_id=user.id,
-        target_type="media",
-        target_id=graph.media_id,
-        event_type="new_mention",
-    )
+    create_media_alert_rule(db=db_session, user_id=user.id, media_id=graph.media_id)
     db_session.add(
         Mention(
             episode_id=graph.episode_id,

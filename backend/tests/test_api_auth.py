@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from httpx import Response
+from httpx2 import Response
 from sqlalchemy.orm import Session
 
 from podex.api.v2 import auth as v2_auth_api
@@ -14,6 +14,8 @@ from podex.models import Episode, MagicLinkToken, UserSession
 from tests.conftest import seed_catalog_graph
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class CapturingMagicLinkSender:
     """Capture delivered sign-in links for deterministic API tests."""
 
@@ -25,6 +27,8 @@ class CapturingMagicLinkSender:
         self.deliveries.append((email, verification_url))
 
 
+# This adapter implements one protocol operation; extra methods have no purpose.
+# pylint: disable-next=too-few-public-methods
 class CapturingDigestSender:
     """Capture delivered notification digests for deterministic API tests."""
 

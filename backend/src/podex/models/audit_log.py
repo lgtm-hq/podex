@@ -46,12 +46,12 @@ class AuditLog(Base):
 
     __tablename__ = "audit_logs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    action: Mapped[str] = mapped_column(String(64), index=True)
-    resource_type: Mapped[str] = mapped_column(String(64), index=True)
-    resource_id: Mapped[int | None] = mapped_column(index=True)
-    resource_identifier: Mapped[str | None] = mapped_column(String(120))
-    actor_name: Mapped[str | None] = mapped_column(String(100))
-    summary: Mapped[str] = mapped_column(Text)
-    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON)
-    created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    action: "Mapped[str]" = mapped_column(String(64), index=True)
+    resource_type: "Mapped[str]" = mapped_column(String(64), index=True)
+    resource_id: "Mapped[int | None]" = mapped_column(index=True)
+    resource_identifier: "Mapped[str | None]" = mapped_column(String(120))
+    actor_name: "Mapped[str | None]" = mapped_column(String(100))
+    summary: "Mapped[str]" = mapped_column(Text)
+    metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
+    created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))

@@ -9,9 +9,9 @@ import httpx
 
 from podex.models.media import MediaType
 from podex.services.enrichment.base import (
-    EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    TMDBApiProvider,
     describe_http_error,
 )
 
@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 _DETAIL_FALLBACK_CONFIDENCE_FACTOR = 0.75
 
 
-class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
+class TMDBPersonProvider(TMDBApiProvider):  # type: ignore[misc, unused-ignore]
     """Enrich people from TMDB Person API.
 
     Also used as fallback for standup_special when the title
@@ -44,32 +44,12 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         requests_per_second: Rate limit for API calls.
     """
 
-    BASE_URL = "https://api.themoviedb.org/3"
-    IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
-
     source = EnrichmentSource.TMDB_PERSON
 
     SUPPORTED_TYPES = {MediaType.PERSON, "standup_special"}
 
-    def __init__(
-        self,
-        *,
-        api_key: str,
-        base_url: str | None = None,
-        requests_per_second: float = 3.0,
-    ) -> None:
-        super().__init__(requests_per_second)
-        self.api_key = api_key
-        self.client = httpx.Client(
-            base_url=base_url or self.BASE_URL,
-            params={"api_key": api_key},
-            timeout=30.0,
-        )
-
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if TMDB Person supports this media type."""
-        return media_type in self.SUPPORTED_TYPES
-
+    # Independent lookup guards preserve the existing identifier/fallback order.
+    # pylint: disable-next=too-many-return-statements
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search TMDB for a person and enrich.
 
@@ -100,7 +80,7 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         results = self._search_person(media.title)
 
         if not results:
-            logger.debug(f"No TMDB person results for: {media.title}")
+            logger.debug("No TMDB person results for: %s", media.title)
             return None
 
         best_match = self._find_best_match(results, media)
@@ -166,13 +146,13 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
                 "/search/person",
                 params={"query": query},
             )
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
-            result: list[dict[str, Any]] = data.get("results", [])
+            result: list[dict[str, Any]] = self._response_results(response)
             return result
         except httpx.HTTPError as e:
             logger.warning(
-                f"TMDB person search error for '{query}': {describe_http_error(e)}",
+                "TMDB person search error for '%s': %s",
+                query,
+                describe_http_error(e),
             )
             return []
 
@@ -190,9 +170,6 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         Returns:
             Tuple of (person_id, confidence) or None.
         """
-        if not results:
-            return None
-
         best_id = None
         best_score = 0.0
 
@@ -246,13 +223,13 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         try:
             params = {"append_to_response": "combined_credits,external_ids"}
             response = self.client.get(f"/person/{person_id}", params=params)
-            response.raise_for_status()
-            result: dict[str, Any] = response.json()
+            result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
             logger.warning(
-                f"TMDB person details error for ID {person_id}: "
-                f"{describe_http_error(e)}",
+                "TMDB person details error for ID %s: %s",
+                person_id,
+                describe_http_error(e),
             )
             return None
 
@@ -296,6 +273,32 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
             external_ids["instagram_id"] = ext_ids["instagram_id"]
 
         # Build metadata
+        metadata = self._build_metadata(details=details)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=cover_url,
+            description=description,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(
+        self,
+        details: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect provider-specific metadata from the response.
+
+        Args:
+            details: Provider response data for the metadata fields.
+
+        Returns:
+            Metadata fields supported by this provider.
+        """
         metadata: dict[str, Any] = {}
 
         # Basic info
@@ -317,8 +320,8 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
             metadata["tmdb_popularity"] = round(popularity, 1)
 
         # Notable works (top 5 by popularity)
-        credits = details.get("combined_credits", {})
-        cast_credits = credits.get("cast", [])
+        credit_details = details.get("combined_credits", {})
+        cast_credits = credit_details.get("cast", [])
         if cast_credits:
             # Sort by popularity and take top 5
             sorted_credits = sorted(
@@ -343,21 +346,4 @@ class TMDBPersonProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignor
         if also_known_as:
             metadata["also_known_as"] = also_known_as[:5]
 
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=cover_url,
-            description=description,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> TMDBPersonProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        return metadata

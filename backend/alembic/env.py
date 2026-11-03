@@ -2,9 +2,9 @@
 
 from logging.config import fileConfig
 
+from alembic import context  # type: ignore[attr-defined]
 from sqlalchemy import engine_from_config, pool, text
 
-from alembic import context  # type: ignore[attr-defined]
 from podex.config import get_settings
 from podex.models import Base
 

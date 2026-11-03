@@ -3,6 +3,7 @@
 from pathlib import Path
 from typing import cast
 
+from alembic import command  # type: ignore[attr-defined]
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
@@ -12,7 +13,6 @@ from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.elements import ClauseElement
 
-from alembic import command  # type: ignore[attr-defined]
 from podex.models import Base, Episode, Media, MediaType, Mention
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"

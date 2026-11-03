@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
@@ -59,13 +60,6 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             timeout=30.0,
         )
 
-    def supports_media_type(self, media_type: str | MediaType) -> bool:
-        """Check if CrossRef supports this media type."""
-        try:
-            return MediaType(media_type) in self.SUPPORTED_TYPES
-        except ValueError:
-            return False
-
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search CrossRef and enrich media item.
 
@@ -90,7 +84,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         results = self._search(media.title, media.author)
 
         if not results:
-            logger.debug(f"No CrossRef results for: {media.title}")
+            logger.debug("No CrossRef results for: %s", media.title)
             return None
 
         # Find best match
@@ -118,12 +112,11 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             response = self.client.get(f"/works/{normalized_doi}")
             if response.status_code == 404:
                 return None
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: dict[str, Any] | None = data.get("message")
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"CrossRef lookup error for {doi}: {e}")
+            logger.warning("CrossRef lookup error for %s: %s", doi, e)
             return None
 
     def _search(self, title: str, author: str | None) -> list[dict[str, Any]]:
@@ -153,12 +146,11 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
         try:
             response = self.client.get("/works", params=params)
-            response.raise_for_status()
-            data: dict[str, Any] = response.json()
+            data: dict[str, Any] = self._response_json(response)
             result: list[dict[str, Any]] = data.get("message", {}).get("items", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning(f"CrossRef search error: {e}")
+            logger.warning("CrossRef search error: %s", e)
             return []
 
     def _find_best_match(
@@ -189,28 +181,13 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             # Calculate title similarity
             title_score = self._calculate_title_similarity(media.title, result_title)
 
-            # Check author match
+            # Use the same author names for matching and stored metadata.
             author_boost = 0.0
-            if media.author:
-                work_authors = work.get("author", [])
-                for author in work_authors:
-                    # CrossRef uses given/family name structure
-                    author_name = ""
-                    if author.get("given") and author.get("family"):
-                        author_name = f"{author['given']} {author['family']}"
-                    elif author.get("family"):
-                        author_name = author["family"]
-                    elif author.get("name"):
-                        author_name = author["name"]
-
-                    if author_name:
-                        author_sim = self._calculate_title_similarity(
-                            media.author,
-                            author_name,
-                        )
-                        if author_sim > 0.5:
-                            author_boost = 0.15
-                            break
+            if media.author and any(
+                self._calculate_title_similarity(media.author, author_name) > 0.5
+                for author_name in self._author_names(work)
+            ):
+                author_boost = 0.15
 
             # Check year match
             year_boost = 0.0
@@ -256,6 +233,39 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if issn:
             external_ids["issn"] = issn[0]
 
+        metadata = self._build_metadata(work=work)
+
+        # Abstract (not always available from CrossRef)
+        abstract = work.get("abstract", "")
+        if abstract:
+            # CrossRef abstracts may have JATS XML tags, strip them
+
+            abstract = re.sub(r"<[^>]+>", "", abstract)
+
+        # Keep the result field mapping explicit at this provider boundary.
+        # pylint: disable=duplicate-code
+        return EnrichmentResult(
+            source=self.source,
+            cover_url=None,  # CrossRef doesn't provide cover images
+            description=abstract if abstract else None,
+            external_ids=external_ids,
+            metadata=metadata,
+            confidence=confidence,
+        )
+        # pylint: enable=duplicate-code
+
+    def _build_metadata(
+        self,
+        work: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Collect provider-specific metadata from the response.
+
+        Args:
+            work: Provider response data for the metadata fields.
+
+        Returns:
+            Metadata fields supported by this provider.
+        """
         metadata: dict[str, Any] = {}
 
         # Title (explicit contract for cross-source title verification)
@@ -263,19 +273,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if titles:
             metadata["title"] = titles[0]
 
-        # Authors
-        authors = work.get("author", [])
-        if authors:
-            author_names = []
-            for author in authors:
-                if author.get("given") and author.get("family"):
-                    author_names.append(f"{author['given']} {author['family']}")
-                elif author.get("family"):
-                    author_names.append(author["family"])
-                elif author.get("name"):
-                    author_names.append(author["name"])
-            if author_names:
-                metadata["authors"] = author_names
+        self._add_authors_metadata(metadata=metadata, work=work)
 
         # Publisher
         if work.get("publisher"):
@@ -286,6 +284,64 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
         if container_title:
             metadata["journal"] = container_title[0]
 
+        self._add_publication_metadata(metadata=metadata, work=work)
+
+        # Citation counts
+        if work.get("is-referenced-by-count") is not None:
+            metadata["citation_count"] = work["is-referenced-by-count"]
+        if work.get("references-count") is not None:
+            metadata["reference_count"] = work["references-count"]
+
+        # Type
+        if work.get("type"):
+            metadata["work_type"] = work["type"]
+
+        self._add_license_metadata(metadata=metadata, work=work)
+
+        # Subject areas
+        subjects = work.get("subject", [])
+        if subjects:
+            metadata["subjects"] = subjects
+
+        return metadata
+
+    def _add_license_metadata(
+        self,
+        metadata: dict[str, Any],
+        work: dict[str, Any],
+    ) -> None:
+        """Add license fields to the provider metadata.
+
+        Args:
+            metadata: Metadata dictionary to populate.
+            work: Provider response data for these fields.
+        """
+        # License/open access
+        licenses = work.get("license", [])
+        if licenses:
+            # Get the most recent license
+            license_url = licenses[0].get("URL")
+            if license_url:
+                metadata["license_url"] = license_url
+                # Check if it's open access — parse the host rather than
+                # substring-matching so a lookalike URL cannot spoof it.
+                host = urlparse(license_url).hostname or ""
+                if host == "creativecommons.org" or host.endswith(
+                    ".creativecommons.org",
+                ):
+                    metadata["open_access"] = True
+
+    def _add_publication_metadata(
+        self,
+        metadata: dict[str, Any],
+        work: dict[str, Any],
+    ) -> None:
+        """Add publication fields to the provider metadata.
+
+        Args:
+            metadata: Metadata dictionary to populate.
+            work: Provider response data for these fields.
+        """
         # Publication date
         published = work.get("published-print") or work.get("published-online")
         if published:
@@ -304,59 +360,37 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
 
                 metadata["year"] = year
 
-        # Citation counts
-        if work.get("is-referenced-by-count") is not None:
-            metadata["citation_count"] = work["is-referenced-by-count"]
-        if work.get("references-count") is not None:
-            metadata["reference_count"] = work["references-count"]
+    @staticmethod
+    def _author_names(work: dict[str, Any]) -> list[str]:
+        """Read the author names shared by matching and metadata.
 
-        # Type
-        if work.get("type"):
-            metadata["work_type"] = work["type"]
+        Args:
+            work: CrossRef work response.
 
-        # License/open access
-        licenses = work.get("license", [])
-        if licenses:
-            # Get the most recent license
-            license_url = licenses[0].get("URL")
-            if license_url:
-                metadata["license_url"] = license_url
-                # Check if it's open access — parse the host rather than
-                # substring-matching so a lookalike URL cannot spoof it.
-                host = urlparse(license_url).hostname or ""
-                if host == "creativecommons.org" or host.endswith(
-                    ".creativecommons.org",
-                ):
-                    metadata["open_access"] = True
+        Returns:
+            Nonempty author names in source order.
+        """
+        names: list[str] = []
+        for author in work.get("author", []):
+            if author.get("given") and author.get("family"):
+                names.append(f"{author['given']} {author['family']}")
+            elif author.get("family"):
+                names.append(author["family"])
+            elif author.get("name"):
+                names.append(author["name"])
+        return names
 
-        # Subject areas
-        subjects = work.get("subject", [])
-        if subjects:
-            metadata["subjects"] = subjects
+    def _add_authors_metadata(
+        self,
+        metadata: dict[str, Any],
+        work: dict[str, Any],
+    ) -> None:
+        """Add authors fields to the provider metadata.
 
-        # Abstract (not always available from CrossRef)
-        abstract = work.get("abstract", "")
-        if abstract:
-            # CrossRef abstracts may have JATS XML tags, strip them
-            import re
-
-            abstract = re.sub(r"<[^>]+>", "", abstract)
-
-        return EnrichmentResult(
-            source=self.source,
-            cover_url=None,  # CrossRef doesn't provide cover images
-            description=abstract if abstract else None,
-            external_ids=external_ids,
-            metadata=metadata,
-            confidence=confidence,
-        )
-
-    def close(self) -> None:
-        """Close the HTTP client."""
-        self.client.close()
-
-    def __enter__(self) -> CrossRefProvider:
-        return self
-
-    def __exit__(self, *args: object) -> None:
-        self.close()
+        Args:
+            metadata: Metadata dictionary to populate.
+            work: Provider response data for these fields.
+        """
+        author_names = self._author_names(work)
+        if author_names:
+            metadata["authors"] = author_names

@@ -27,22 +27,22 @@ class Mention(Base):
         ),
     )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    episode_id: Mapped[int] = mapped_column(
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    episode_id: "Mapped[int]" = mapped_column(
         ForeignKey("episodes.id", ondelete="CASCADE"),
         index=True,
     )
-    media_id: Mapped[int] = mapped_column(
+    media_id: "Mapped[int]" = mapped_column(
         ForeignKey("media.id", ondelete="CASCADE"),
         index=True,
     )
-    timestamp_seconds: Mapped[int | None] = mapped_column(default=None)
-    context: Mapped[str | None] = mapped_column(String(2000), default=None)
-    confidence: Mapped[float | None] = mapped_column(Float, default=None)
-    created_at: Mapped[datetime] = mapped_column(
+    timestamp_seconds: "Mapped[int | None]" = mapped_column(default=None)
+    context: "Mapped[str | None]" = mapped_column(String(2000), default=None)
+    confidence: "Mapped[float | None]" = mapped_column(Float, default=None)
+    created_at: "Mapped[datetime]" = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
     )
 
-    episode: Mapped["Episode"] = relationship()
-    media: Mapped["Media"] = relationship()
+    episode: 'Mapped["Episode"]' = relationship()
+    media: 'Mapped["Media"]' = relationship()

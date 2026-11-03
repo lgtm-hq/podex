@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from podex.models import Media, MediaAliasSourceType
 from podex.services.enrichment.base import EnrichmentResult, VerifiedEnrichmentResult
 from podex.services.media_alias_repository import ensure_media_alias
-from podex.services.media_enrichment import MediaEnricher, apply_external_ids
+from podex.services.media_enrichment import MediaEnricher, apply_enrichment_fields
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,6 +38,8 @@ class MediaEnrichmentRunData:
 EnrichmentLoader = Callable[[Media], EnrichmentResult | None]
 
 
+# Keep the existing named command inputs compatible with callers.
+# pylint: disable-next=too-many-arguments
 def enrich_pending_media(
     *,
     db: Session,
@@ -154,12 +156,7 @@ def _apply_enrichment_result(
     now: datetime,
 ) -> None:
     """Apply enrichment result fields without constructing provider clients."""
-    if result.cover_url and not media.cover_url:
-        media.cover_url = result.cover_url
-    if result.description and not media.description:
-        media.description = result.description
-
-    apply_external_ids(media=media, external_ids=result.external_ids)
+    apply_enrichment_fields(media=media, result=result)
 
     media.metadata_json = _merge_metadata(
         existing=media.metadata_json,

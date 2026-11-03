@@ -14,11 +14,14 @@ class OpsPodcastSourcesRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     rss_url: str | None
     spotify_id: str | None
     apple_id: str | None
     youtube_channel_id: str | None
     podscripts_slug: str | None
+    # pylint: enable=duplicate-code
 
 
 class OpsPodcastRead(BaseModel):
@@ -26,6 +29,8 @@ class OpsPodcastRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     id: int
     name: str
     slug: str
@@ -37,6 +42,7 @@ class OpsPodcastRead(BaseModel):
     episode_count: int
     mention_count: int
     sources: OpsPodcastSourcesRead
+    # pylint: enable=duplicate-code
 
 
 class OpsPodcastListRead(BaseModel):
@@ -87,6 +93,8 @@ class OpsIngestionRunRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     id: int
     status: str
     error_summary: str | None
@@ -94,6 +102,7 @@ class OpsIngestionRunRead(BaseModel):
     completed_at: datetime | None
     created_at: datetime
     duration_seconds: int | None
+    # pylint: enable=duplicate-code
 
 
 class OpsPipelineActivityRead(BaseModel):
@@ -136,6 +145,8 @@ class OpsOperationalAlertRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     key: str
     severity: str
     title: str
@@ -143,6 +154,7 @@ class OpsOperationalAlertRead(BaseModel):
     current_value: int
     threshold: int
     playbook_slug: str
+    # pylint: enable=duplicate-code
 
 
 class OpsOperationalAlertListRead(BaseModel):
@@ -157,6 +169,8 @@ class OpsTranscriptRetentionRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     id: int
     episode_id: int
     episode_title: str
@@ -172,6 +186,7 @@ class OpsTranscriptRetentionRead(BaseModel):
     has_raw_payload: bool
     has_stored_artifact: bool
     digest_id: int | None
+    # pylint: enable=duplicate-code
 
 
 class OpsRetentionDecisionRead(BaseModel):
@@ -206,6 +221,8 @@ class OpsAuditLogEntryRead(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
+    # API validation intentionally mirrors the independent service DTO.
+    # pylint: disable=duplicate-code
     id: int
     action: str
     resource_type: str
@@ -215,6 +232,7 @@ class OpsAuditLogEntryRead(BaseModel):
     summary: str
     metadata_json: dict[str, Any] | None
     created_at: datetime
+    # pylint: enable=duplicate-code
 
 
 class OpsAuditLogListRead(BaseModel):

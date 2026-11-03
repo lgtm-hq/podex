@@ -17,7 +17,15 @@ from podex.services.enrichment import (
     TMDBProvider,
     iTunesProvider,
 )
-from tests.enrichment.conftest import _swap_client
+from tests.enrichment.conftest import (
+    _swap_client,
+    crossref_sleep_work,
+    dune_movie_details,
+    enrich_result,
+    semantic_sleep_metadata,
+    swap_search_details_client,
+    tmdb_person_search_result,
+)
 
 
 def _media(title: str, media_type: MediaType) -> Media:
@@ -37,13 +45,13 @@ _EMPTY_RESPONSES: dict[str, dict[str, Any]] = {
 }
 
 _PROVIDERS: list[tuple[str, Any, MediaType]] = [
-    ("google_books", lambda: GoogleBooksProvider(), MediaType.BOOK),
-    ("itunes", lambda: iTunesProvider(), MediaType.PODCAST),
+    ("google_books", GoogleBooksProvider, MediaType.BOOK),
+    ("itunes", iTunesProvider, MediaType.PODCAST),
     ("omdb", lambda: OMDBProvider(api_key="key"), MediaType.MOVIE),
-    ("crossref", lambda: CrossRefProvider(), MediaType.ARTICLE),
+    ("crossref", CrossRefProvider, MediaType.ARTICLE),
     (
         "semantic_scholar",
-        lambda: SemanticScholarProvider(),
+        SemanticScholarProvider,
         MediaType.STUDY,
     ),
     ("tmdb", lambda: TMDBProvider(api_key="key"), MediaType.MOVIE),
@@ -51,15 +59,15 @@ _PROVIDERS: list[tuple[str, Any, MediaType]] = [
 ]
 
 
-@pytest.mark.parametrize(("name", "factory", "media_type"), _PROVIDERS)
+@pytest.mark.parametrize(("_name", "factory", "media_type"), _PROVIDERS)
 def test_provider_handles_empty_results(
-    name: str,
+    _name: str,
     factory: Any,
     media_type: MediaType,
 ) -> None:
     """Empty upstream responses yield None without raising."""
     provider = factory()
-    payload = _EMPTY_RESPONSES[name]
+    payload = _EMPTY_RESPONSES[_name]
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
 
     result = provider.search_and_enrich(_media("Nothing Findable", media_type))
@@ -68,9 +76,9 @@ def test_provider_handles_empty_results(
     assert_that(result).is_none()
 
 
-@pytest.mark.parametrize(("name", "factory", "media_type"), _PROVIDERS)
+@pytest.mark.parametrize(("_name", "factory", "media_type"), _PROVIDERS)
 def test_provider_handles_http_errors(
-    name: str,
+    _name: str,
     factory: Any,
     media_type: MediaType,
 ) -> None:
@@ -84,9 +92,9 @@ def test_provider_handles_http_errors(
     assert_that(result).is_none()
 
 
-@pytest.mark.parametrize(("name", "factory", "media_type"), _PROVIDERS)
+@pytest.mark.parametrize(("_name", "factory", "media_type"), _PROVIDERS)
 def test_provider_rejects_unsupported_types(
-    name: str,
+    _name: str,
     factory: Any,
     media_type: MediaType,
 ) -> None:
@@ -155,12 +163,8 @@ def test_google_books_happy_path() -> None:
     provider = GoogleBooksProvider()
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
 
-    result = provider.search_and_enrich(_media("Dune", MediaType.BOOK))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, _media("Dune", MediaType.BOOK))
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_itunes_happy_path() -> None:
@@ -185,14 +189,8 @@ def test_itunes_happy_path() -> None:
     provider = iTunesProvider()
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
 
-    result = provider.search_and_enrich(
-        _media("Example Podcast", MediaType.PODCAST),
-    )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, _media("Example Podcast", MediaType.PODCAST))
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_omdb_happy_path() -> None:
@@ -219,12 +217,8 @@ def test_omdb_happy_path() -> None:
     provider = OMDBProvider(api_key="key")
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
 
-    result = provider.search_and_enrich(_media("Dune", MediaType.MOVIE))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("tt1160419")
+    result = enrich_result(provider, _media("Dune", MediaType.MOVIE))
+    assert_that(str(result.external_ids)).contains("tt1160419")
 
 
 def test_tmdb_happy_path() -> None:
@@ -232,11 +226,7 @@ def test_tmdb_happy_path() -> None:
     search_payload = {
         "results": [
             {
-                "id": 438631,
-                "title": "Dune",
-                "release_date": "2021-10-22",
-                "overview": "Desert planet epic.",
-                "poster_path": "/dune.jpg",
+                **dune_movie_details(),
                 "vote_average": 7.8,
                 "vote_count": 10000,
                 "popularity": 100.0,
@@ -244,11 +234,7 @@ def test_tmdb_happy_path() -> None:
         ],
     }
     detail_payload = {
-        "id": 438631,
-        "title": "Dune",
-        "overview": "Desert planet epic.",
-        "release_date": "2021-10-22",
-        "poster_path": "/dune.jpg",
+        **dune_movie_details(),
         "imdb_id": "tt1160419",
         "external_ids": {"imdb_id": "tt1160419"},
         "genres": [{"name": "Science Fiction"}],
@@ -266,45 +252,28 @@ def test_tmdb_happy_path() -> None:
         },
     }
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if "/search/" in request.url.path:
-            return httpx.Response(200, json=search_payload)
-        return httpx.Response(200, json=detail_payload)
-
     provider = TMDBProvider(api_key="key")
-    _swap_client(provider, handler)
-    result = provider.search_and_enrich(_media("Dune", MediaType.MOVIE))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("438631")
+    swap_search_details_client(
+        provider, search_payload=search_payload, detail_payload=detail_payload
+    )
+    result = enrich_result(provider, _media("Dune", MediaType.MOVIE))
+    assert_that(str(result.external_ids)).contains("438631")
 
 
 def test_tmdb_person_happy_path() -> None:
     """A matching person search plus details produce a useful result."""
     search_payload = {
         "results": [
-            {
-                "id": 505710,
-                "name": "Frank Herbert",
-                "known_for_department": "Writing",
-                "popularity": 5.0,
-                "profile_path": "/fh.jpg",
-            },
+            tmdb_person_search_result(),
         ],
     }
     detail_payload = {
-        "id": 505710,
-        "name": "Frank Herbert",
+        **tmdb_person_search_result(),
         "biography": "American science fiction author.",
         "birthday": "1920-10-08",
         "deathday": "1986-02-11",
         "place_of_birth": "Tacoma, Washington",
-        "profile_path": "/fh.jpg",
         "imdb_id": "nm0378394",
-        "known_for_department": "Writing",
-        "popularity": 5.0,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -314,14 +283,8 @@ def test_tmdb_person_happy_path() -> None:
 
     provider = TMDBPersonProvider(api_key="key")
     _swap_client(provider, handler)
-    result = provider.search_and_enrich(
-        _media("Frank Herbert", MediaType.PERSON),
-    )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, _media("Frank Herbert", MediaType.PERSON))
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_crossref_happy_path() -> None:
@@ -330,12 +293,7 @@ def test_crossref_happy_path() -> None:
         "message": {
             "items": [
                 {
-                    "DOI": "10.1000/example.doi",
-                    "title": ["Sleep and memory consolidation"],
-                    "author": [{"given": "Jane", "family": "Doe"}],
-                    "issued": {"date-parts": [[2020, 1, 1]]},
-                    "container-title": ["Journal of Sleep"],
-                    "URL": "https://doi.invalid/example",
+                    **crossref_sleep_work(),
                     "abstract": "A study of sleep and memory.",
                     "is-referenced-by-count": 42,
                     "type": "journal-article",
@@ -346,46 +304,32 @@ def test_crossref_happy_path() -> None:
     }
     provider = CrossRefProvider()
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
-    result = provider.search_and_enrich(
-        _media("Sleep and memory consolidation", MediaType.ARTICLE),
+    result = enrich_result(
+        provider, _media("Sleep and memory consolidation", MediaType.ARTICLE)
     )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(str(result.external_ids)).contains("10.1000")
-        assert_that(result.metadata["title"]).is_equal_to(
-            "Sleep and memory consolidation",
-        )
+    assert_that(str(result.external_ids)).contains("10.1000")
+    assert_that(result.metadata["title"]).is_equal_to(
+        "Sleep and memory consolidation",
+    )
 
 
 def test_semantic_scholar_happy_path() -> None:
     """A matching paper produces id-backed enrichment."""
+    title = "Sleep and memory consolidation"
     payload = {
         "data": [
             {
+                **semantic_sleep_metadata(),
                 "paperId": "abc123",
-                "title": "Sleep and memory consolidation",
+                "title": title,
                 "abstract": "A study of sleep and memory.",
-                "year": 2020,
-                "citationCount": 100,
-                "authors": [{"name": "Jane Doe"}],
-                "externalIds": {"DOI": "10.1000/example.doi"},
-                "url": "https://ss.invalid/abc123",
-                "venue": "Journal of Sleep",
             },
         ],
     }
     provider = SemanticScholarProvider()
     _swap_client(provider, lambda request: httpx.Response(200, json=payload))
-    result = provider.search_and_enrich(
-        _media("Sleep and memory consolidation", MediaType.STUDY),
+    result = enrich_result(provider, _media(title, MediaType.STUDY))
+    assert_that(result.has_useful_data()).is_true()
+    assert_that(result.metadata["title"]).is_equal_to(
+        title,
     )
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
-        assert_that(result.metadata["title"]).is_equal_to(
-            "Sleep and memory consolidation",
-        )

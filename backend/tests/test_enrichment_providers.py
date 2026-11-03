@@ -1,5 +1,6 @@
 """Tests for the enrichment provider base, utils, and free providers."""
 
+import asyncio
 from typing import Any
 
 import httpx
@@ -7,12 +8,24 @@ from assertpy import assert_that
 
 from podex.models import Media, MediaType
 from podex.services.enrichment import OpenLibraryProvider, WikipediaProvider
+from podex.services.enrichment.base import (
+    RateLimiter,
+    canonicalize_doi,
+    describe_http_error,
+)
 from podex.services.enrichment.search_utils import (
     calculate_similarity,
+    extract_key_words,
     generate_search_variations,
+    get_primary_name,
+    is_likely_match,
     normalize_title,
+    remove_parentheticals,
+    remove_subtitle,
+    remove_with_clause,
     strip_articles,
 )
+from tests.enrichment.conftest import enrich_result
 
 
 def _media(title: str, media_type: MediaType = MediaType.BOOK) -> Media:
@@ -37,7 +50,7 @@ def test_search_utils_normalize_and_variations() -> None:
     assert_that(calculate_similarity("Dune", "Dune")).is_equal_to(1.0)
 
 
-def test_open_library_enriches_book(monkeypatch: Any) -> None:
+def test_open_library_enriches_book() -> None:
     """A matching search doc plus work detail produce a useful result."""
     search_payload = {
         "docs": [
@@ -64,13 +77,9 @@ def test_open_library_enriches_book(monkeypatch: Any) -> None:
 
     provider = OpenLibraryProvider(requests_per_second=1000)
     provider.client = _mock_client(handler)
-    result = provider.search_and_enrich(_media("Dune"))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
-        assert_that(str(result.external_ids)).contains("OL893415W")
+    result = enrich_result(provider, _media("Dune"))
+    assert_that(result.has_useful_data()).is_true()
+    assert_that(str(result.external_ids)).contains("OL893415W")
 
 
 def test_open_library_handles_no_results_and_errors() -> None:
@@ -96,7 +105,7 @@ def test_open_library_handles_no_results_and_errors() -> None:
 def test_wikipedia_provider_returns_none_gracefully() -> None:
     """Wikipedia provider degrades to None on empty search results."""
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={"query": {"search": []}},
@@ -163,25 +172,13 @@ def test_wikipedia_enriches_book_via_search_and_page() -> None:
 
     provider = WikipediaProvider(requests_per_second=1000)
     provider.client = _mock_client(handler)
-    result = provider.search_and_enrich(_media("Dune"))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
-        assert_that(result.description or "").contains("Frank Herbert")
+    result = enrich_result(provider, _media("Dune"))
+    assert_that(result.has_useful_data()).is_true()
+    assert_that(result.description or "").contains("Frank Herbert")
 
 
 def test_search_utils_helper_coverage() -> None:
     """Subtitle/parenthetical/name/keyword helpers behave as documented."""
-    from podex.services.enrichment.search_utils import (
-        extract_key_words,
-        get_primary_name,
-        is_likely_match,
-        remove_parentheticals,
-        remove_subtitle,
-        remove_with_clause,
-    )
 
     assert_that(remove_subtitle("Dune: The Saga")).is_equal_to("Dune")
     assert_that(remove_parentheticals("Dune (Deluxe)")).is_equal_to("Dune")
@@ -220,13 +217,9 @@ def test_open_library_direct_id_fetch() -> None:
     )
     media = _media("Dune")
     media.open_library_id = "OL893415W"
-    result = provider.search_and_enrich(media)
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.confidence).is_equal_to(1.0)
-        assert_that(result.description or "").contains("Desert planet")
+    result = enrich_result(provider, media)
+    assert_that(result.confidence).is_equal_to(1.0)
+    assert_that(result.description or "").contains("Desert planet")
 
 
 def test_open_library_falls_back_to_search_doc() -> None:
@@ -252,12 +245,8 @@ def test_open_library_falls_back_to_search_doc() -> None:
 
     provider = OpenLibraryProvider(requests_per_second=1000)
     provider.client = _mock_client(handler)
-    result = provider.search_and_enrich(_media("Dune"))
-    provider.close()
-
-    assert_that(result).is_not_none()
-    if result is not None:
-        assert_that(result.has_useful_data()).is_true()
+    result = enrich_result(provider, _media("Dune"))
+    assert_that(result.has_useful_data()).is_true()
 
 
 def test_wikipedia_study_search_path() -> None:
@@ -318,7 +307,11 @@ def test_wikipedia_study_search_path() -> None:
 def test_base_title_similarity() -> None:
     """The base similarity helper scores near-identical titles high."""
     provider = OpenLibraryProvider(requests_per_second=1000)
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     same = provider._calculate_title_similarity("Dune", "Dune")
+    # Direct unit coverage of the private normalization/protocol boundary.
+    # pylint: disable-next=protected-access
     partial = provider._calculate_title_similarity("Dune", "The Dune Saga")
     provider.close()
 
@@ -328,9 +321,6 @@ def test_base_title_similarity() -> None:
 
 def test_rate_limiter_and_context_managers() -> None:
     """Rate limiting waits between calls; providers work as context managers."""
-    import asyncio
-
-    from podex.services.enrichment.base import RateLimiter
 
     limiter = RateLimiter(requests_per_second=10000)
     limiter.wait_sync()
@@ -339,9 +329,13 @@ def test_rate_limiter_and_context_managers() -> None:
 
     with OpenLibraryProvider(requests_per_second=1000) as ol:
         assert_that(
+            # Direct unit coverage of the private normalization/protocol boundary.
+            # pylint: disable-next=protected-access
             ol._calculate_title_similarity("Dune Saga", "Saga of Dune"),
         ).is_greater_than(0.0)
         assert_that(
+            # Direct unit coverage of the private normalization/protocol boundary.
+            # pylint: disable-next=protected-access
             ol._calculate_title_similarity("Dune", ""),
         ).is_equal_to(0.0)
     with WikipediaProvider(requests_per_second=1000) as wiki:
@@ -350,7 +344,6 @@ def test_rate_limiter_and_context_managers() -> None:
 
 def test_canonicalize_doi_strips_prefixes() -> None:
     """Bare DOIs pass through; every prefix form is stripped."""
-    from podex.services.enrichment.base import canonicalize_doi
 
     assert_that(canonicalize_doi("10.1000/x")).is_equal_to("10.1000/x")
     assert_that(canonicalize_doi("https://doi.org/10.1000/x")).is_equal_to("10.1000/x")
@@ -366,7 +359,6 @@ def test_canonicalize_doi_strips_prefixes() -> None:
 
 def test_describe_http_error_redacts_details() -> None:
     """Status errors report the code; transport errors report the class."""
-    from podex.services.enrichment.base import describe_http_error
 
     request = httpx.Request("GET", "https://api.invalid/?apikey=sekret")
     response = httpx.Response(500, request=request)

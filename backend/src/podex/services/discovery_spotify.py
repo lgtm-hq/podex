@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
+    slugify_podcast_name,
 )
 
 if TYPE_CHECKING:
@@ -41,6 +42,7 @@ class SpotifyDiscovery:
 
     @property
     def name(self) -> str:
+        """Return the discovery provider identifier."""
         return "spotify"
 
     @property
@@ -85,8 +87,10 @@ class SpotifyDiscovery:
         try:
             client = self._get_client()
             show = client.show(spotify_id, market="US")
+        # Keep other providers and tasks running after this failure.
+        # pylint: disable-next=broad-exception-caught
         except Exception as e:
-            logger.warning(f"Failed to fetch Spotify show {spotify_id}: {e}")
+            logger.warning("Failed to fetch Spotify show %s: %s", spotify_id, e)
             return None
 
         if not show:
@@ -138,13 +142,13 @@ class SpotifyDiscovery:
             List of discovered episodes
         """
         if not podcast.spotify_id:
-            logger.warning(f"Podcast {podcast.slug} has no spotify_id")
+            logger.warning("Podcast %s has no spotify_id", podcast.slug)
             return []
 
         try:
             client = self._get_client()
         except (ValueError, ImportError) as e:
-            logger.warning(f"Cannot use Spotify discovery: {e}")
+            logger.warning("Cannot use Spotify discovery: %s", e)
             return []
 
         episodes: list[DiscoveredEpisode] = []
@@ -159,8 +163,10 @@ class SpotifyDiscovery:
                     offset=offset,
                     market="US",
                 )
+            # Keep other providers and tasks running after this failure.
+            # pylint: disable-next=broad-exception-caught
             except Exception as e:
-                logger.warning(f"Failed to fetch episodes from Spotify: {e}")
+                logger.warning("Failed to fetch episodes from Spotify: %s", e)
                 break
 
             items = result.get("items", [])
@@ -175,7 +181,7 @@ class SpotifyDiscovery:
                     if since and episode.published_at and episode.published_at < since:
                         # Spotify returns newest first, so we can stop
                         logger.debug(
-                            f"Stopping at episode {episode.title} (before {since})"
+                            "Stopping at episode %s (before %s)", episode.title, since
                         )
                         return episodes
 
@@ -187,7 +193,7 @@ class SpotifyDiscovery:
 
             offset += len(items)
 
-        logger.info(f"Discovered {len(episodes)} episodes from Spotify")
+        logger.info("Discovered %s episodes from Spotify", len(episodes))
         return episodes
 
     def _parse_episode(self, item: dict[str, Any]) -> DiscoveredEpisode | None:
@@ -260,14 +266,8 @@ class SpotifyDiscovery:
         )
 
     def _generate_slug(self, name: str) -> str:
-        """Generate a URL-safe slug from a name."""
-        import re
-
-        slug = name.lower().strip()
-        slug = re.sub(r"[^\w\s-]", "", slug)
-        slug = re.sub(r"[\s_]+", "-", slug)
-        slug = re.sub(r"-+", "-", slug)
-        return slug.strip("-")
+        """Generate the common discovery slug for a podcast name."""
+        return str(slugify_podcast_name(name))
 
     def search_podcasts(
         self,
@@ -286,8 +286,10 @@ class SpotifyDiscovery:
         try:
             client = self._get_client()
             result = client.search(q=query, type="show", limit=limit, market="US")
+        # Keep other providers and tasks running after this failure.
+        # pylint: disable-next=broad-exception-caught
         except Exception as e:
-            logger.warning(f"Spotify search failed: {e}")
+            logger.warning("Spotify search failed: %s", e)
             return []
 
         podcasts = []
