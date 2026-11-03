@@ -1,4 +1,8 @@
 // @vitest-environment node
+// Deliberately import openapi-typescript's hoisted transitive Redocly dependency
+// to exercise the patched resolver. When lock maintenance changes Redocly,
+// refresh its versioned patch/registration; remove them only once the resolved
+// release supports the overridden minimatch API and these cases still pass.
 import { readFileFromUrl } from "@redocly/openapi-core";
 import { describe, expect, it } from "vitest";
 
