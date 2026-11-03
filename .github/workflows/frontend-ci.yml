@@ -19,7 +19,7 @@ concurrency:
 jobs:
   frontend:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-node-custom.yml@8f0fd9339df5d30a529aa572ceb51345b8be33a0 # v0.79.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-node-custom.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
     with:
       package-manager: bun
       working-directory: frontend
@@ -30,7 +30,7 @@ jobs:
       job-name: '🎨 Frontend Checks'
       node-version: '22'
       draft-pr-skip: true
-      tooling-ref: '8f0fd9339df5d30a529aa572ceb51345b8be33a0' # v0.79.2
+      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
       # The reusable's default allowlist already covers the node/bun install
       # registries (registry.npmjs.org, bun.sh); no caller override needed.
       egress-policy: block
@@ -46,7 +46,7 @@ jobs:
     needs: [frontend]
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@8f0fd9339df5d30a529aa572ceb51345b8be33a0 # v0.79.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
     permissions:
       actions: read
       contents: read
@@ -54,4 +54,4 @@ jobs:
     with:
       egress-policy: block
       workflow-key: frontend-ci
-      tooling-ref: '8f0fd9339df5d30a529aa572ceb51345b8be33a0' # v0.79.2
+      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
