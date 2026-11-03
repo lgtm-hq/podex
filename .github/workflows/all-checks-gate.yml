@@ -11,7 +11,7 @@ name: PR - All Checks Gate
     branches: [main]
   pull_request:
     # `edited` too: PR - Title Validation re-runs on title edits.
-    types: [opened, edited, synchronize, reopened, ready_for_review]
+    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
   merge_group:
 
 permissions: {}
