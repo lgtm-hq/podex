@@ -20,13 +20,13 @@ jobs:
   # Org ruleset (checks-podex): quality / 🛠️ Lintro Code Quality
   quality:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality-lint.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality-lint.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     permissions:
       contents: read
       packages: read
     with:
       job-name: '🛠️ Lintro Code Quality'
-      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
+      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
       working-directory: backend
       # Route semgrep to the repo-local #29 prompt-boundary rules (issue #236)
       # instead of the registry "auto" config, which egress-blocked CI cannot
@@ -47,7 +47,7 @@ jobs:
   # overwrite the quality job's linting-report.
   actionlint:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality-lint.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-quality-lint.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     permissions:
       contents: read
       packages: read
@@ -74,11 +74,11 @@ jobs:
         github.event.pull_request.draft == false
       )
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     permissions:
       contents: read
     with:
-      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
+      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
       job-name: '🛠️ Lintro Code Quality'
       # quality's result/status unless it succeeded, then actionlint's
       # yamllint disable rule:line-length
@@ -102,13 +102,13 @@ jobs:
         || github.event.action == 'ready_for_review'
       )
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-publish-quality-summary.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-publish-quality-summary.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     permissions:
       contents: read
       pull-requests: write
     with:
       exit-code: ${{ needs.quality.outputs.exit-code }}
-      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
+      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
       egress-policy: block
       egress-preset: github-tooling
 
@@ -119,7 +119,7 @@ jobs:
     needs: [quality, actionlint]
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     permissions:
       actions: read
       contents: read
@@ -127,4 +127,4 @@ jobs:
     with:
       egress-policy: block
       workflow-key: quality-ci
-      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
+      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1

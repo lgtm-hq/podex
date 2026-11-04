@@ -19,10 +19,10 @@ concurrency:
 jobs:
   check-suppressions:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-vuln-suppression-check.yml@42aad382e0ca51e425a24f54053c298e588a9862 # v0.82.2
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-vuln-suppression-check.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
     with:
       job-name: '🔍 Check Vulnerability Suppressions'
-      tooling-ref: '42aad382e0ca51e425a24f54053c298e588a9862' # v0.82.2
+      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
       workflow-file: vuln-suppression-check.yml
       egress-policy: block
       egress-preset: osv-scanner
