@@ -24,7 +24,7 @@ jobs:
   # combined gate over every test job (#550).
   test:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@b830ca6972f0c9cbaeb1363283de594f68d66acf # v0.87.0
     with:
       python-versions: '3.11,3.12,3.13,3.14,3.15'
       working-directory: backend
@@ -37,7 +37,7 @@ jobs:
       # so the shared default `python-results-3.13` would let one call's
       # results overwrite the other's.
       artifact-prefix: compat
-      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
+      tooling-ref: 'b830ca6972f0c9cbaeb1363283de594f68d66acf' # v0.87.0
       egress-policy: block
       egress-preset: quality
       # Keep the quality preset and permit the artifact service (#561).
@@ -127,7 +127,7 @@ jobs:
   # reporting and the PR test summary comment.
   test-coverage:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@b830ca6972f0c9cbaeb1363283de594f68d66acf # v0.87.0
     with:
       python-version: '3.13'
       working-directory: backend
@@ -140,7 +140,7 @@ jobs:
       draft-pr-skip: true
       job-name: '🧪 Python Coverage'
       artifact-prefix: coverage
-      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
+      tooling-ref: 'b830ca6972f0c9cbaeb1363283de594f68d66acf' # v0.87.0
       egress-policy: block
       egress-preset: quality
       # Keep the quality preset and permit the artifact service (#561).
@@ -154,14 +154,14 @@ jobs:
   # BATS tests for CI shell scripts under .github/scripts (#550).
   test-shell:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-shell.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-shell.yml@b830ca6972f0c9cbaeb1363283de594f68d66acf # v0.87.0
     with:
       job-name: '🐚 Shell Tests'
       test-path: tests/bats
       coverage: false
       publish-test-summary: false
       draft-pr-skip: true
-      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
+      tooling-ref: 'b830ca6972f0c9cbaeb1363283de594f68d66acf' # v0.87.0
       egress-policy: block
       egress-preset: github-tooling
     permissions:
@@ -214,11 +214,11 @@ jobs:
     needs: [test-gate]
     if: always() && !cancelled()
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-required-check.yml@b830ca6972f0c9cbaeb1363283de594f68d66acf # v0.87.0
     permissions:
       contents: read
     with:
-      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
+      tooling-ref: 'b830ca6972f0c9cbaeb1363283de594f68d66acf' # v0.87.0
       job-name: '🧪 Test Suite'
       upstream-result: ${{ needs.test-gate.result }}
       passed-output: ${{ needs.test-gate.outputs.passed }}
@@ -238,7 +238,7 @@ jobs:
       - test-suite
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@aaa960d8bfa543e532830c53e5446372c8e80c7e # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@b830ca6972f0c9cbaeb1363283de594f68d66acf # v0.87.0
     permissions:
       actions: read
       contents: read
@@ -246,4 +246,4 @@ jobs:
     with:
       egress-policy: block
       workflow-key: test-ci
-      tooling-ref: 'aaa960d8bfa543e532830c53e5446372c8e80c7e' # v0.84.1
+      tooling-ref: 'b830ca6972f0c9cbaeb1363283de594f68d66acf' # v0.87.0
