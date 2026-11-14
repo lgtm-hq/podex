@@ -90,13 +90,12 @@ jobs:
       sbom: >-
         ${{ github.event_name != 'pull_request'
         && github.event_name != 'merge_group' }}
-      # harden-runner composes its allowlist at job start; a non-empty list
-      # in replace mode bypasses the docker preset. Keep all docker preset
-      # hosts, including Docker Hub's S3 layer redirect and the OIDC/Sigstore
-      # attestation hosts, plus the existing Trivy registry/installer entries
-      # and sigstore hosts (cosign keyless signing on tag publish) + pypi hosts
-      # (uv sync in the builder stage resolves from pypi.org via the runner
-      # egress proxy under harden-runner).
+      # In replace mode the reusable workflow passes a non-empty list to
+      # harden-runner on its own, without the docker preset. So this list
+      # carries every docker preset host (lgtm-ci presets.sh at the pinned
+      # release) plus the caller-specific extras: Trivy database fallbacks
+      # (gcr.io, public.ecr.aws, get.trivy.dev), deb.debian.org, and PyPI
+      # for `uv sync` in the builder stage.
       allowed-endpoints-mode: replace
       allowed-endpoints: >
         github.com:443
