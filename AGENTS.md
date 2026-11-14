@@ -19,25 +19,26 @@ Podex is a monorepo with two apps that together form the product:
   with `bun`, which fetches podcasts from the backend.
 
 Standard commands live in `CONTRIBUTING.md` and the manifests
-(`backend/pyproject.toml`, `frontend/package.json`); prefer those. Key ones:
-backend tests `uv run pytest`, backend lint `uv run lintro chk` /
-`uv run lintro fmt`, frontend tests `bun run test:run`, frontend type/build
-check `bun run check`.
+(`backend/pyproject.toml`, `frontend/package.json`); prefer those. Key ones, run
+inside the app directory: backend tests `uv run pytest`, backend lint
+`uv run lintro chk` / `uv run lintro fmt`, frontend tests `bun run test:run`,
+frontend type/build check `bun run check`.
 
-Non-obvious caveats:
+Non-obvious caveats. Commands below run from the repository root; `( ... )`
+keeps each `cd` inside a subshell so the shell stays at the root.
 
 - **Run migrations before starting/using the API:**
-  `cd backend && uv run alembic upgrade head`. `alembic.ini` has an empty
+  `(cd backend && uv run alembic upgrade head)`. `alembic.ini` has an empty
   `sqlalchemy.url`; `alembic/env.py` falls back to `PODEX_DATABASE__URL`
   (default `sqlite:///./podex.db`), so migrations and the app share the same DB
   file created in the `backend/` working dir. This is a one-shot setup step and
   is intentionally NOT in the automatic update script.
-- **Run the servers from their app dirs:**
+- **Run the servers from their app dirs, each in its own terminal:**
   - Backend:
-    `cd backend && uv run uvicorn podex.main:app --reload --port 8000 --no-access-log`
+    `(cd backend && uv run uvicorn podex.main:app --reload --port 8000 --no-access-log)`
     (matches the container: Uvicorn's access log prints query strings, so
     request lines come from the app's path-only `podex.access` logger)
-  - Frontend: `cd frontend && bun run dev` (serves on `http://localhost:4321`)
+  - Frontend: `(cd frontend && bun run dev)` (serves on `http://localhost:4321`)
 - **Frontend → backend wiring:** the frontend calls
   `http://localhost:8000/api/v2` by default (override with `PUBLIC_API_URL`);
   backend CORS already allows `http://localhost:4321`. Start the backend before
@@ -56,12 +57,17 @@ Non-obvious caveats:
     Prometheus `/metrics` uses the same key.
   - Webhook: `POST /billing/webhooks/paddle`, verified with
     `PODEX_BILLING__PADDLE_WEBHOOK_SECRET`.
-- **Getting data in locally:** start the backend with `PODEX_OPS_API_KEY` set
-  and create podcasts through the ops API:
+- **Getting data in locally:** start the backend with an ops key in one
+  terminal, then create podcasts through the ops API from another:
+
+  ```bash
+  (cd backend && PODEX_OPS_API_KEY=local-dev-key \
+    uv run uvicorn podex.main:app --reload --port 8000 --no-access-log)
+  ```
 
   ```bash
   curl -X POST http://localhost:8000/api/v2/ops/podcasts \
-    -H "X-Ops-Key: $PODEX_OPS_API_KEY" -H 'Content-Type: application/json' \
+    -H 'X-Ops-Key: local-dev-key' -H 'Content-Type: application/json' \
     -d '{"name": "Example", "slug": "example", "status": "active",
          "sources": {"rss_url": "https://example.com/feed.xml"}}'
   ```
@@ -71,12 +77,12 @@ Non-obvious caveats:
   (`podex.database.SessionLocal` and the models in `podex.models`) also works.
   An empty catalog renders "No podcasts yet." in the UI.
 
-- **Scheduler:** `cd backend && uv run python -m podex.scheduler_runner` runs a
-  separate loop with no HTTP listener. Each tick it schedules and runs episode
-  discovery for active podcasts (podscripts.co, RSS, and Spotify when
-  `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are set), digest delivery
-  (needs SMTP) and retention sweeps. In containers it is the same image with the
-  command overridden to `python -m podex.scheduler_runner`.
+- **Scheduler:** `(cd backend && uv run python -m podex.scheduler_runner)`, in
+  its own terminal, runs a separate loop with no HTTP listener. Each tick it
+  schedules and runs episode discovery for active podcasts (podscripts.co, RSS,
+  and Spotify when `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are set),
+  digest delivery (needs SMTP) and retention sweeps. In containers it is the
+  same image with the command overridden to `python -m podex.scheduler_runner`.
 - **Ingestion pipeline is partial.** Discovery runs as above. Enrichment, LLM
   transcript cleanup, LLM mention extraction and extraction review exist as
   services but nothing in the API or scheduler calls them, and no transcript
