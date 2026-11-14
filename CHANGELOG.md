@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.14] - 2026-11-14
+
+### Changed
+
+- **deps**: update dependency minimatch to 11.0.7 (patch) (#743) (0c836f5)
+
+### Fixed
+
+- **scheduler**: preserve due scheduled work (#739) (a53c6e6)
+
 ## [0.41.13] - 2026-11-14
 
 ### Changed
