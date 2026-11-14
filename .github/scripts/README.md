@@ -1,4 +1,32 @@
-# Container smoke tests
+# CI scripts and workflow contracts
+
+## Scheduled maintenance failure reporting
+
+The suppression check, Scorecard analysis and GHCR cleanup workflows call the
+pinned `reusable-main-failure-notifier.yml` after an upstream failure on `main`.
+The cleanup dependency covers the complete `prune` matrix. Successful runs and
+dispatches from other branches do not report failures. The reusable owns issue
+creation and deduplication: repeated failures comment on the open issue for the
+same workflow key and branch. Notifier jobs retain blocked egress and grant only
+`actions: read`, `contents: read` and `issues: write`.
+
+`tests/bats/ci/test_maintenance_failure_notifier.bats` checks all three callers,
+including their full dependencies, conditions, stable keys and permissions. It
+replays the conditions with mocked success/failure results, either failed
+cleanup matrix leg, and off-main refs. Run it with the complete shell suite:
+
+```sh
+bats --recursive tests/bats
+```
+
+PR CI validates these contracts, workflow syntax and pin consistency. These
+scheduled workflows do not execute on PRs. Actual issue creation, failure
+details and repeated-failure deduplication require a failed scheduled run or a
+controlled `workflow_dispatch` from `main` after merge, followed by a failed
+retry. Verify that the retry comments on the same open issue and that successful
+runs remain quiet. Do not change maintenance gates to force a failure.
+
+## Container smoke tests
 
 Run from any working directory with Docker, GNU `timeout` and bash 4.4 or newer
 available (the stock macOS bash 3.2 is too old):
