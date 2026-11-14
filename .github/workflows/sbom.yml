@@ -40,6 +40,9 @@ jobs:
       # release-asset upload lives in the inline sbom-release-upload job
       # below (lgtm-ci#935), the only job in this path needing contents: write.
       contents: read
+      # read: the SBOM job uploads Grype SARIF, which needs actions: read
+      # since lgtm-ci v0.91.2 (lgtm-hq/lgtm-ci#1387)
+      actions: read
       # write: upload Grype SARIF findings when upload-sarif is enabled
       security-events: write
       # write: OIDC token for SBOM attestation signing (create-attestation)

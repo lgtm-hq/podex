@@ -45,5 +45,8 @@ jobs:
         www.bestpractices.dev:443
     permissions:
       contents: read
+      # read: the analysis job uploads SARIF, which needs actions: read
+      # since lgtm-ci v0.91.2 (lgtm-hq/lgtm-ci#1387)
+      actions: read
       security-events: write
       id-token: write

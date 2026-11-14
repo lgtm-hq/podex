@@ -39,6 +39,9 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     permissions:
       contents: read
+      # read: the nested build and scan jobs upload SARIF, which needs
+      # actions: read since lgtm-ci v0.91.2 (lgtm-hq/lgtm-ci#1387)
+      actions: read
       packages: write
       id-token: write
       attestations: write
@@ -132,6 +135,9 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-docker.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     permissions:
       contents: read
+      # read: the nested build and scan jobs upload SARIF, which needs
+      # actions: read since lgtm-ci v0.91.2 (lgtm-hq/lgtm-ci#1387)
+      actions: read
       packages: write
       id-token: write
       attestations: write
