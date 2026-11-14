@@ -1,21 +1,81 @@
 """Migration replay and schema-drift guard."""
 
+import importlib.util
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from types import ModuleType
+from typing import Any, NoReturn, cast
 
+import pytest
 from alembic import command  # type: ignore[attr-defined]
 from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from assertpy import assert_that
-from sqlalchemy import Engine, create_engine, inspect, select, text
+from sqlalchemy import (
+    Column,
+    Engine,
+    MetaData,
+    Table,
+    create_engine,
+    inspect,
+    select,
+    text,
+)
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
+from sqlalchemy.schema import CreateColumn
 from sqlalchemy.sql.elements import ClauseElement
 
-from podex.models import Base, Episode, Media, MediaType, Mention
+from podex.models import Base, Episode, Media, MediaType, Mention, semantic_chunk
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
+_VERSIONS_DIR = _ALEMBIC_INI.parent / "alembic" / "versions"
+
+
+def _refuse_runtime_vector_type(*_args: object, **_kwargs: object) -> NoReturn:
+    """Stand in for the live model vector type and refuse construction."""
+    msg = "migration 0010 constructed the runtime model vector type"
+    raise AssertionError(msg)
+
+
+class _RecordingOperations:
+    """Minimal ``alembic.op`` stand-in that records created table columns."""
+
+    def __init__(self) -> None:
+        self.tables: dict[str, list[Column[Any]]] = {}
+
+    def create_table(self, name: str, *elements: object, **_kwargs: object) -> None:
+        """Record the columns passed for a created table."""
+        self.tables[name] = [item for item in elements if isinstance(item, Column)]
+
+    def create_index(self, *_args: object, **_kwargs: object) -> None:
+        """Accept index creation without recording it."""
+
+    def f(self, name: str) -> str:
+        """Return a naming-convention name unchanged."""
+        return name
+
+
+def _load_revision(filename: str) -> ModuleType:
+    """Execute a migration file as a fresh, unregistered module.
+
+    Args:
+        filename: File name of the revision inside ``alembic/versions``.
+
+    Returns:
+        The loaded revision module.
+    """
+    spec = importlib.util.spec_from_file_location(
+        f"podex_test_revision_{Path(filename).stem}",
+        _VERSIONS_DIR / filename,
+    )
+    if spec is None or spec.loader is None:
+        msg = f"cannot load revision file {filename!r}"
+        raise AssertionError(msg)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _upgraded_engine(db_url: str, revision: str = "head") -> Engine:
@@ -156,3 +216,33 @@ def test_in_progress_ingestion_runs_become_failed(tmp_path: Path) -> None:
             (3, "FAILED", "feed timeout"),
         ],
     )
+
+
+def test_migration_0010_is_independent_of_runtime_vector_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Revision 0010 compiles its frozen embedding DDL without the model type."""
+    monkeypatch.setattr(semantic_chunk, "PgVectorType", _refuse_runtime_vector_type)
+    revision = _load_revision("0010_add_derivative_models.py")
+    operations = _RecordingOperations()
+    monkeypatch.setattr(revision, "op", operations)
+
+    upgrade = cast(Callable[[], None], revision.upgrade)
+    upgrade()
+
+    embedding = next(
+        column
+        for column in operations.tables["semantic_chunks"]
+        if column.name == "embedding_vector"
+    )
+    Table("semantic_chunks", MetaData(), embedding)
+    postgresql = create_engine("postgresql+psycopg://").dialect
+    sqlite = create_engine("sqlite://").dialect
+    assert_that(revision.revision).is_equal_to("0010")
+    assert_that(revision.down_revision).is_equal_to("0009")
+    assert_that(
+        str(CreateColumn(embedding).compile(dialect=postgresql)),
+    ).is_equal_to("embedding_vector vector(1536)")
+    assert_that(
+        str(CreateColumn(embedding).compile(dialect=sqlite)),
+    ).is_equal_to("embedding_vector TEXT")
