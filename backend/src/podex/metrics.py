@@ -15,7 +15,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from fastapi import HTTPException, Request, Response, status
+from fastapi import Request, Response
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     CollectorRegistry,
@@ -27,8 +27,7 @@ from prometheus_client import (
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from podex.api.deps import AppSettings, DbSession
-from podex.config import Settings
+from podex.api.deps import AppSettings, DbSession, require_ops_access
 from podex.services.ops_metrics import get_operational_metrics
 
 UNMATCHED_ROUTE = "unmatched"
@@ -275,33 +274,6 @@ class MetricsMiddleware(BaseHTTPMiddleware):
             )
 
 
-def _require_internal_access(*, request: Request, settings: Settings) -> None:
-    """Reject the request unless the configured ops key is presented.
-
-    Mirrors the gating used by the ops console endpoints
-    (:mod:`podex.api.v2.ops`): the surface is disabled (503) until
-    ``PODEX_OPS_API_KEY`` is configured, and requires the key in the
-    ``X-Ops-Key`` header (401 otherwise).
-
-    Args:
-        request: The incoming request carrying the ``X-Ops-Key`` header.
-        settings: Runtime settings providing the expected key.
-
-    Raises:
-        HTTPException: 503 when unconfigured, 401 on a missing/wrong key.
-    """
-    if not settings.ops_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Metrics endpoint is not configured",
-        )
-    if request.headers.get("X-Ops-Key") != settings.ops_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ops authentication required",
-        )
-
-
 def get_prometheus_metrics(
     request: Request,
     db: DbSession,
@@ -320,7 +292,11 @@ def get_prometheus_metrics(
     Returns:
         Response: Prometheus text-format exposition of the app registry.
     """
-    _require_internal_access(request=request, settings=settings)
+    require_ops_access(
+        request=request,
+        settings=settings,
+        unconfigured_detail="Metrics endpoint is not configured",
+    )
     metrics: AppMetrics = request.app.state.metrics
     update_operational_gauges(metrics=metrics, db=db)
     db.commit()

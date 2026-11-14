@@ -9,9 +9,10 @@ remain concise while ``mypy --strict`` can still infer the injected type.
 
 from __future__ import annotations
 
+import secrets
 from typing import Annotated, cast
 
-from fastapi import Depends, Request
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
 from podex.api.v2.schemas import PaginationParams, pagination_params
@@ -62,6 +63,37 @@ def get_app_settings(request: Request) -> Settings:
 
 AppSettings = Annotated[Settings, Depends(get_app_settings)]
 """Resolved application settings injected into route handlers."""
+
+
+def require_ops_access(
+    *,
+    request: Request,
+    settings: Settings,
+    unconfigured_detail: str,
+) -> None:
+    """Verify the shared ops credential without ordinary secret equality.
+
+    Args:
+        request: The request carrying the ``X-Ops-Key`` header.
+        settings: Runtime settings providing the expected key.
+        unconfigured_detail: The surface-specific message for disabled access.
+
+    Raises:
+        HTTPException: 503 when unconfigured, 401 on a missing or invalid key.
+    """
+    if not settings.ops_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=unconfigured_detail,
+        )
+    supplied_key = request.headers.get("X-Ops-Key", "").encode("utf-8")
+    expected_key = settings.ops_api_key.encode("utf-8")
+    if not secrets.compare_digest(supplied_key, expected_key):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Ops authentication required",
+        )
+
 
 SettingsDep = AppSettings
 """Backwards-compatible alias for :data:`AppSettings`."""
