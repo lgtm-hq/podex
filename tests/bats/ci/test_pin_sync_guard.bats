@@ -235,3 +235,297 @@ EOF
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"lgtm-ci pin sync guard passed"* ]]
 }
+
+# --- YAML forms: the guard parses workflows rather than matching columns ---
+
+@test "fails two different SHAs when one uses: key is double-quoted" {
+  cat >"${WF}/quoted.yml" <<EOF
+---
+jobs:
+  a:
+    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+  b:
+    "uses": "lgtm-hq/lgtm-ci/.github/workflows/y.yml@${SHA_B}" # v0.84.1
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"pinned to 2 different SHA/version pairs"* ]]
+  [[ "${output}" == *"${SHA_B} v0.84.1 (1 pin(s), first at ${WF}/quoted.yml:6)"* ]]
+}
+
+@test "fails a double-quoted lgtm-ci uses: pinned to a tag" {
+  cat >"${WF}/tag.yml" <<EOF
+---
+jobs:
+  a:
+    "uses": "lgtm-hq/lgtm-ci/.github/workflows/x.yml@v0.98.3"
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"tag.yml:4: lgtm-ci uses: must be pinned to a full commit SHA"* ]]
+}
+
+@test "fails a recovery caller indented by four spaces without tooling-ref" {
+  cat >"${WF}/recover.yml" <<EOF
+---
+jobs:
+    recover:
+        uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-release-recover.yml@${SHA_A} # v0.98.3
+        with:
+            job-name: recover
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"recover.yml:4: job 'recover' calls a release-recovery reusable, which requires an explicit tooling-ref"* ]]
+}
+
+@test "passes single- and double-quoted keys and values that agree" {
+  cat >"${WF}/quotes.yml" <<EOF
+---
+"jobs":
+  'single':
+    'uses': 'lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A}' # v0.98.3
+    'with':
+      'tooling-ref': '${SHA_A}' # v0.98.3
+  "double":
+    "uses": "lgtm-hq/lgtm-ci/.github/workflows/y.yml@${SHA_A}" # v0.98.3
+    "with":
+      "tooling-ref": "${SHA_A}" # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"2 uses: pin(s) and 2 tooling-ref pin(s) agree on ${SHA_A} v0.98.3"* ]]
+}
+
+@test "fails a quoted tooling-ref key that drifts from its uses: pin" {
+  cat >"${WF}/quoted-ref.yml" <<EOF
+---
+jobs:
+  a:
+    'uses': "lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A}" # v0.98.3
+    "with":
+      'tooling-ref': "${SHA_B}" # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"quoted-ref.yml:6: job 'a' tooling-ref '${SHA_B} v0.98.3' does not match its uses: pin '${SHA_A} v0.98.3'"* ]]
+}
+
+@test "checks jobs at any indentation width" {
+  cat >"${WF}/wide.yml" <<EOF
+---
+jobs:
+      wide:
+            uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+            with:
+                     tooling-ref: '${SHA_A}' # v0.98.3
+EOF
+  cat >"${WF}/narrow.yml" <<EOF
+---
+jobs:
+ narrow:
+  uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+  with:
+   tooling-ref: '${SHA_B}' # v0.84.1
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"narrow.yml:6: job 'narrow' tooling-ref '${SHA_B} v0.84.1' does not match"* ]]
+  [[ "${output}" != *"wide.yml"*"does not match"* ]]
+}
+
+@test "verifies a uses: inside a multi-line flow mapping" {
+  cat >"${WF}/flow.yml" <<EOF
+---
+jobs:
+  a: {
+    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_B}, # v0.84.1
+  }
+EOF
+  reusable_caller quality.yml quality reusable-quality-lint.yml "${SHA_A}" v0.98.3
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"${SHA_B} v0.84.1 (1 pin(s), first at ${WF}/flow.yml:4)"* ]]
+}
+
+@test "rejects a single-line flow mapping whose comment is not on the value" {
+  cat >"${WF}/flow.yml" <<EOF
+---
+jobs:
+  a: {uses: "lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A}", with: {tooling-ref: '${SHA_A}'}} # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"flow.yml:3: lgtm-ci uses: must be pinned to a full commit SHA with a '# vX.Y.Z' comment on the same line"* ]]
+  [[ "${output}" == *"flow.yml:3: unparsable tooling-ref line"* ]]
+}
+
+@test "rejects a uses: written as a multi-line block scalar" {
+  cat >"${WF}/block.yml" <<EOF
+---
+jobs:
+  a:
+    uses: >-
+      lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A}
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"block.yml:4: lgtm-ci uses: must be pinned"* ]]
+  [[ "${output}" == *"block.yml:5: unverifiable lgtm-ci reference"* ]]
+}
+
+@test "decodes escapes in double-quoted values" {
+  cat >"${WF}/escaped.yml" <<EOF
+---
+jobs:
+  a:
+    "u\\x73es": "lgtm-hq/lgtm\\x2Dci/.github/workflows/x.yml@${SHA_B}" # v0.84.1
+EOF
+  reusable_caller quality.yml quality reusable-quality-lint.yml "${SHA_A}" v0.98.3
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"${SHA_B} v0.84.1 (1 pin(s), first at ${WF}/escaped.yml:4)"* ]]
+}
+
+@test "matches the lgtm-ci owner and repository case-insensitively" {
+  cat >"${WF}/upper.yml" <<EOF
+---
+jobs:
+  a:
+    uses: LGTM-HQ/LGTM-CI/.github/workflows/x.yml@${SHA_A} # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"upper.yml:4: lgtm-ci uses: must be pinned"* ]]
+}
+
+@test "resolves aliases and requires the version comment where they are used" {
+  cat >"${WF}/alias.yml" <<EOF
+---
+jobs:
+  a:
+    uses: &pin lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+  b:
+    uses: *pin
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"alias.yml:6: lgtm-ci uses: must be pinned to a full commit SHA with a '# vX.Y.Z' comment on the same line"* ]]
+}
+
+@test "holds an aliased recovery caller to the recovery rule" {
+  cat >"${WF}/alias.yml" <<EOF
+---
+jobs:
+  a:
+    uses: &pin lgtm-hq/lgtm-ci/.github/workflows/reusable-release-recover.yml@${SHA_A} # v0.98.3
+    with:
+      tooling-ref: '${SHA_A}' # v0.98.3
+  b:
+    uses: *pin # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"alias.yml:8: job 'b' calls a release-recovery reusable"* ]]
+  [[ "${output}" != *"job 'a' calls"* ]]
+}
+
+@test "rejects YAML merge keys" {
+  cat >"${WF}/merge.yml" <<EOF
+---
+jobs:
+  a:
+    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+    with:
+      <<: {tooling-ref: '${SHA_A}'}
+      tooling-ref: '${SHA_A}' # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"merge.yml:6: YAML merge key (<<) is not supported"* ]]
+}
+
+@test "rejects a duplicate uses: key that shadows another pin" {
+  cat >"${WF}/dup.yml" <<EOF
+---
+jobs:
+  a:
+    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_B} # v0.84.1
+    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"dup.yml:4: unverifiable lgtm-ci reference"* ]]
+}
+
+@test "rejects a tooling-ref outside any job input" {
+  reusable_caller quality.yml quality reusable-quality-lint.yml "${SHA_A}" v0.98.3
+  echo "env:" >>"${WF}/quality.yml"
+  echo "  tooling-ref: '${SHA_B}' # v0.84.1" >>"${WF}/quality.yml"
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"quality.yml:15: unparsable tooling-ref line (not a job or step input"* ]]
+}
+
+@test "ignores commented-out uses: lines at any indentation" {
+  reusable_caller quality.yml quality reusable-quality-lint.yml "${SHA_A}" v0.98.3
+  {
+    echo "#uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@v0.84.1"
+    echo "        #   uses: 'lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_B}' # v0.84.1"
+    echo "  # - \"uses\": lgtm-hq/lgtm-ci/.github/actions/a@main"
+  } >>"${WF}/quality.yml"
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"1 uses: pin(s) and 0 tooling-ref pin(s) agree on ${SHA_A} v0.98.3"* ]]
+}
+
+@test "parses workflows with Windows line endings" {
+  printf -- '---\r\njobs:\r\n  a:\r\n    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@%s # v0.98.3\r\n    with:\r\n      tooling-ref: "%s" # v0.98.3\r\n    # uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@v1\r\n' \
+    "${SHA_A}" "${SHA_A}" >"${WF}/crlf.yml"
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"1 uses: pin(s) and 1 tooling-ref pin(s) agree on ${SHA_A} v0.98.3."* ]]
+}
+
+@test "detects drift in workflows with Windows line endings" {
+  printf -- '---\r\njobs:\r\n  a:\r\n    uses: lgtm-hq/lgtm-ci/.github/workflows/x.yml@%s # v0.98.3\r\n    with:\r\n      tooling-ref: %s # v0.84.1\r\n' \
+    "${SHA_A}" "${SHA_B}" >"${WF}/crlf.yml"
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"crlf.yml:6: job 'a' tooling-ref '${SHA_B} v0.84.1' does not match its uses: pin '${SHA_A} v0.98.3'"* ]]
+}
+
+@test "reports a workflow that is not valid YAML" {
+  cat >"${WF}/broken.yml" <<EOF
+---
+jobs:
+  a:
+    uses: "lgtm-hq/lgtm-ci/.github/workflows/x.yml@${SHA_A} # v0.98.3
+EOF
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"broken.yml: cannot parse as YAML"* ]]
+  [[ "${output}" == *"broken.yml:4: unverifiable lgtm-ci reference"* ]]
+}
+
+@test "exits 2 when mikefarah yq v4 is not available" {
+  mkdir -p "${BATS_TEST_TMPDIR}/bin"
+  printf '#!/bin/sh\necho "yq 3.4.1"\n' >"${BATS_TEST_TMPDIR}/bin/yq"
+  chmod +x "${BATS_TEST_TMPDIR}/bin/yq"
+  reusable_caller quality.yml quality reusable-quality-lint.yml "${SHA_A}" v0.98.3
+  PATH="${BATS_TEST_TMPDIR}/bin:${PATH}" run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 2 ]
+  [[ "${output}" == *"yq (mikefarah/yq v4) is required"* ]]
+}
+
+@test "the repository's own workflows pass without tooling-ref inputs" {
+  cp "${PROJECT_ROOT}"/.github/workflows/*.yml "${WF}/"
+  local file
+  for file in "${WF}"/*.yml; do
+    grep -v '^[[:space:]]*tooling-ref:' "${file}" >"${file}.tmp"
+    mv "${file}.tmp" "${file}"
+  done
+  run bash "${SCRIPT}" "${WF}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"0 tooling-ref pin(s)"* ]]
+}
