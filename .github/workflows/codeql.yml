@@ -23,10 +23,12 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-codeql.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
       job-name: '🔬 CodeQL Analysis'
-      languages: python
+      # The reusable reports this exact job-name for every language leg.
+      # Keep it stable for the required check; needs.codeql covers every leg.
+      languages: python,javascript-typescript,actions
       build-mode: none
       config-file: .github/codeql/codeql-config.yml
-      category: '/language:all'
+      # Leave category unset: the reusable assigns /language:<language>.
       egress-policy: block
       egress-preset: github-tooling
       # CodeQL bundle downloads redirect to
