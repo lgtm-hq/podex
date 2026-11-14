@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.22] - 2026-11-14
+
+### Changed
+
+- **ci**: remove obsolete lgtm-ci workarounds (#777) (3bbd2ed)
+- **deps**: update lintro to 0.180.31 (patch) (#772) (2a913ee)
+- **release**: version 0.41.21 (#775) (4bc405a)
+
+### Fixed
+
+- **security**: bound webhook and callback edges (#776) (a54cf72)
+
 ## [0.41.21] - 2026-11-14
 
 ### Changed
