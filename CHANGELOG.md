@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.24] - 2026-11-14
+
+### Fixed
+
+- **retention**: stop gating purge on episode-wide candidate confidence (#792) (ec65167)
+- **auth**: constrain sign-in redirects to this site (#791) (826f5a9)
+
 ## [0.41.23] - 2026-11-14
 
 ### Changed
