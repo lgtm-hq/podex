@@ -2,6 +2,8 @@
 
 from pydantic import HttpUrl, ValidationError
 
+from podex.models.magic_link_token import REDIRECT_PATH_MAX_LENGTH
+
 
 def site_path(*, target: object, origin: str) -> str:
     """Normalize a same-origin path or use the existing account landing page.
@@ -44,4 +46,6 @@ def site_path(*, target: object, origin: str) -> str:
         return fallback
     query = f"?{resolved.query}" if resolved.query else ""
     fragment = f"#{resolved.fragment}" if resolved.fragment else ""
-    return f"{path}{query}{fragment}"
+    normalized = f"{path}{query}{fragment}"
+    # Percent-encoding can expand a valid request beyond the persistence limit.
+    return normalized if len(normalized) <= REDIRECT_PATH_MAX_LENGTH else fallback

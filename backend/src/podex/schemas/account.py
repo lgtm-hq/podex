@@ -5,6 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
+from podex.models.magic_link_token import REDIRECT_PATH_MAX_LENGTH
 from podex.schemas.media import MediaRead
 from podex.schemas.podcast import PodcastRead
 
@@ -26,7 +27,7 @@ class AuthMagicLinkRequest(BaseModel):
     """Request delivery of a one-time email sign-in link."""
 
     email: EmailStr
-    redirect_path: str | None = Field(default=None, max_length=300)
+    redirect_path: str | None = Field(default=None, max_length=REDIRECT_PATH_MAX_LENGTH)
 
 
 class AuthMagicLinkRequestResponse(BaseModel):

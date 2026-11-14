@@ -144,6 +144,7 @@ def test_magic_link_request_requires_configured_delivery(
         ("/a/../account?tab=alerts#top", "/account?tab=alerts#top"),
         ("/%2F%2Fother.example", "/%2F%2Fother.example"),
         ("/%5Cother.example", "/%5Cother.example"),
+        ("/account?q=" + "a " * 100 + "z", "/account"),
     ],
 )
 def test_magic_link_email_constrains_redirect_path(

@@ -52,6 +52,9 @@ def test_site_path_rejects_controls(code: int) -> None:
         ("/%2F%2Fother.example", "/%2F%2Fother.example"),
         ("/%5Cother.example", "/%5Cother.example"),
         ("/%09/other.example", "/%09/other.example"),
+        ("/account?q=" + "a " * 100 + "z", "/account"),
+        ("/" + "é" * 100, "/account"),
+        ("/" + "a" * 299, "/" + "a" * 299),
     ],
 )
 def test_site_path_normalizes_paths(target: str, expected: str) -> None:
