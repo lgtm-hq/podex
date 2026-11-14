@@ -22,8 +22,11 @@ export function sitePath(
   }
 
   try {
-    const resolved = new URL(target, origin);
-    if (resolved.origin !== origin) return fallback;
+    // Compare canonical origins, so a base written with a trailing slash, a
+    // default port, upper case or a path still identifies this site.
+    const base = new URL(origin).origin;
+    const resolved = new URL(target, base);
+    if (resolved.origin !== base) return fallback;
     // Dot-segment normalization can expose a second leading slash. The path
     // returned here must also be safe when parsed again by a navigation sink.
     if (

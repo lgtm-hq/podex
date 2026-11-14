@@ -53,6 +53,18 @@ describe("sitePath", () => {
     expect(new URL(result, origin).origin).toBe(origin);
   });
 
+  it.each([
+    "https://podex.example/",
+    "https://podex.example:443",
+    "https://PODEX.example",
+    "https://podex.example/base",
+  ])("accepts a site path when the base is written as %s", (base) => {
+    expect(sitePath("/account/settings?tab=alerts#top", base)).toBe(
+      "/account/settings?tab=alerts#top",
+    );
+    expect(sitePath("//other.example", base)).toBe("/account");
+  });
+
   it("uses the current browser origin by default", () => {
     expect(sitePath("/account/saved")).toBe("/account/saved");
   });
