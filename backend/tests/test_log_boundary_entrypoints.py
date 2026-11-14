@@ -23,6 +23,7 @@ from tests import (
     boundary_scheduler_process,
 )
 from tests.database_error_support import SQLSTATE_DESCRIPTOR
+from tests.process_support import run_in_fresh_process, wait_forever
 
 _NOT_IMPORTED = "podex.main imported: False"
 _OFFLINE_POSTGRES = "postgresql+psycopg://podex@db.invalid:5432/podex"
@@ -45,16 +46,20 @@ def _run(
     monkeypatch.setenv("PODEX_DATABASE__URL", database_url)
     monkeypatch.setenv("PODEX_OBSERVABILITY__SENTRY_DSN", "")
     monkeypatch.setenv("PODEX_SCHEDULER_TICK_SECONDS", "0")
-    capfd.readouterr()
-    process = multiprocessing.get_context("spawn").Process(
-        target=target,
-        args=(row_value,),
-    )
-    process.start()
-    process.join(timeout=120)
-    captured = capfd.readouterr()
-    assert_that(process.exitcode).is_equal_to(0)
-    return row_value, captured.out, captured.err
+    stdout, stderr = run_in_fresh_process(target, (row_value,), capfd)
+    return row_value, stdout, stderr
+
+
+def test_timed_out_child_is_killed_and_reported(
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """A child that never finishes is killed, joined and reported with output."""
+    with pytest.raises(AssertionError) as caught:
+        run_in_fresh_process(wait_forever, (), capfd, timeout=0.5)
+
+    assert_that(str(caught.value)).contains("timed out after 0.5s")
+    assert_that(str(caught.value)).contains("--- stderr ---")
+    assert_that(multiprocessing.active_children()).is_empty()
 
 
 def test_scheduler_process_withholds_database_text(

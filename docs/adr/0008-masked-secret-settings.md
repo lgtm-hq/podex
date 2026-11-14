@@ -37,7 +37,19 @@ log line or a report, whatever field name surrounded it.
      the message; arguments, mapping arguments and nested containers) or in an
      uncaught exception, its message is replaced by its class and SQLSTATE (or
      SQLite error name); the rest of the traceback is unchanged. Reports carry
-     the same descriptor in place of the message.
+     the same descriptor in place of the message. The exception hooks pass a
+     sanitised copy of the exception to the hook installed before them, so an
+     error reporter's hook still reports it, in either installation order.
+   - The boundary is fail-safe. Whatever fails inside it, it never raises into a
+     logging call or out of an exception hook and never falls back to the
+     original text: the content is replaced by a fixed placeholder
+     (`<unprintable: sanitiser failed on TypeName>`) followed by the exception
+     class names. Traversal is bounded (256 exceptions per tree, 64 links when
+     rebuilding, 4 levels and 1,000 items per log record's arguments); past a
+     bound, the remainder is a placeholder
+     (`<unprintable: sanitiser limit reached on TypeName>`), and a tree walk cut
+     short is treated as holding a database error. Containers holding nothing to
+     sanitise are not copied.
    - Providers that accept a header take the key there (Google Books uses
      `x-goog-api-key`); enrichment providers log an allowlisted descriptor
      (status or error class) for HTTP failures.
@@ -47,12 +59,26 @@ log line or a report, whatever field name surrounded it.
      as a ConfigParser option.
 4. As a last resort, the reporter's `before_send` and `before_breadcrumb`
    replace URL userinfo and the known secret values of the loaded settings in
-   free-text and data-bearing fields: messages, exception values and source
-   context, breadcrumb messages and data, extra, contexts other than the SDK's
-   own, and request and user data. Structural fields (identifiers, enums,
-   timestamps, release and SDK metadata, tags, mapping keys) are never
-   rewritten, so an event stays valid however short a secret is. Breadcrumb data
-   keeps only the allowlisted request headers at any depth.
+   free-text and data-bearing fields: the message, transaction, culprit, server
+   name and logger name; exception values and source context; breadcrumb
+   messages and data (including tuples and sets); `extra`, tags, the
+   fingerprint, contexts other than the SDK's own, and request and user data.
+   Breadcrumb data keeps only the allowlisted request headers at any depth. If
+   minimising fails, a placeholder event (identifiers, level, timestamp, release
+   and SDK metadata, and a placeholder message with the exception class names)
+   or placeholder breadcrumb is sent instead. Reported database errors are
+   matched to their own exceptions, so errors of one class keep their own
+   SQLSTATE.
+
+   Never rewritten, because their values are schema-constrained or come from
+   code and the runtime rather than from application data, and rewriting them
+   could make an event invalid when a short secret matches: `event_id`,
+   `timestamp`, `start_timestamp`, `level`, `platform`, `release`, `dist`,
+   `environment`, `sdk`, `modules`; exception types, modules and mechanisms;
+   frame filenames, functions, modules and line numbers; the SDK-generated
+   contexts `trace`, `runtime`, `os`, `device`, `app`, `cloud_resource` and
+   `otel`; breadcrumb type, category, level and timestamp; and mapping keys.
+
    - Every non-empty secret is matched, however short; each setting with a value
      shorter than 8 characters is named by its path in one warning when the
      reporter starts.
@@ -82,6 +108,11 @@ Known limits:
 - Error text persisted in `ingestion_runs.error_summary` (and the scheduled work
   error message) and returned by the ops API is not covered here; it is handled
   separately.
+- asyncio's "Task exception was never retrieved" message embeds a pre-formatted
+  representation of the exception, so a database error ending an unawaited task
+  is not covered by the logging boundary.
+- Arbitrary objects in log arguments are not inspected: an object whose
+  representation renders a database error is printed as it renders itself.
 
 ## Consequences
 

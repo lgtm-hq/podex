@@ -42,6 +42,7 @@ What the SDK sends, and how credentials are kept out of it:
   its exception chain.
 """
 
+import contextlib
 import logging
 import re
 from typing import Any, cast
@@ -57,8 +58,12 @@ from podex.config import Settings
 from podex.database_errors import (
     WITHHELD,
     describe_database_error,
+    exception_class_names,
     exception_tree,
     is_database_error,
+    is_database_stand_in,
+    placeholder,
+    safe_str,
 )
 from podex.redaction import (
     SHORT_VALUE_LENGTH,
@@ -90,14 +95,29 @@ _REDACTOR = SecretRedactor()
 
 
 # Free-text and data-bearing parts of an event, redacted for URL userinfo and
-# configured secret values. Everything else is structural and never rewritten:
-# identifiers (event_id, trace and span ids), enums (level, platform, type),
-# timestamps, release/environment/dist, sdk and module metadata, tags,
-# fingerprints, exception types/modules/mechanisms, frame locations, the
-# SDK-generated contexts below, breadcrumb type/category/level/timestamp, and
-# every mapping key.
-_REDACTED_TEXT_FIELDS = ("message", "transaction")
-_REDACTED_DATA_FIELDS = ("logentry", "extra", "request", "user")
+# configured secret values. Everything else is never rewritten, because its
+# values are schema-constrained or come from code and the runtime rather than
+# from application data: identifiers (event_id, trace and span ids), enums
+# (level, platform), timestamps, release/environment/dist, sdk and module
+# metadata, exception types/modules/mechanisms, frame locations (filename,
+# function, module, line), the SDK-generated contexts below, breadcrumb
+# type/category/level/timestamp, and every mapping key.
+_REDACTED_TEXT_FIELDS = ("message", "transaction", "culprit", "server_name", "logger")
+_REDACTED_DATA_FIELDS = ("logentry", "extra", "request", "user", "tags", "fingerprint")
+# Modules of database errors whose reported value is replaced even when the
+# exception itself is not in the hint (for example a message-only event).
+_DATABASE_MODULES = ("psycopg", "sqlite3", "sqlalchemy.exc")
+# Event fields copied into the placeholder event sent when minimising fails.
+_PLACEHOLDER_EVENT_FIELDS = (
+    "event_id",
+    "timestamp",
+    "level",
+    "platform",
+    "release",
+    "environment",
+    "dist",
+    "sdk",
+)
 _REDACTED_FRAME_FIELDS = ("context_line", "pre_context", "post_context", "vars")
 _STRUCTURAL_CONTEXTS = frozenset(
     {"trace", "runtime", "os", "device", "app", "cloud_resource", "otel"},
@@ -317,37 +337,94 @@ def scrub_event(event: Event, hint: Hint) -> Event:
     return event
 
 
+def _database_errors(hint: Hint) -> dict[tuple[str, str], list[tuple[str, str]]]:
+    """Return the hint's database errors as (text, descriptor), keyed by class.
+
+    Each class's errors are listed in the order the tree is walked, so each
+    reported value can be matched to its own error. Stand-ins the log
+    boundary printed in place of database errors count too.
+    """
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
+        return {}
+    found: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for link in exception_tree(exc_info[1]):
+        key = (type(link).__module__, type(link).__qualname__)
+        if is_database_error(link):
+            found.setdefault(key, []).append(
+                (safe_str(link), describe_database_error(link)),
+            )
+        elif is_database_stand_in(link):
+            # Already sanitised by the log boundary before reaching the
+            # reporter (its process exception hook): keep its descriptor.
+            text = safe_str(link)
+            found.setdefault(key, []).append(
+                (text, text.removesuffix(f" {WITHHELD}")),
+            )
+    return found
+
+
+def _take_descriptor(candidates: list[tuple[str, str]], reported: object) -> str | None:
+    """Remove and return the descriptor of the error a reported value came from.
+
+    The value is the error's text, possibly truncated by the SDK: an exact or
+    prefix match wins; otherwise the next unmatched error of that class.
+    """
+    if isinstance(reported, str):
+        prefix = reported.removesuffix("...")
+        for index, (text, _descriptor) in enumerate(candidates):
+            if text == reported or (prefix and text.startswith(prefix)):
+                return candidates.pop(index)[1]
+    return candidates.pop(0)[1] if candidates else None
+
+
 def _withhold_database_errors(event: Event, hint: Hint) -> None:
     """Replace the message of each reported database error by its descriptor.
 
-    Exception values are matched to the hint's exception chain by module and
-    type name, as the SDK records them.
+    Exception values are matched to the hint's database errors by class and
+    then by their own text, so two errors of one class keep their own
+    SQLSTATE. A value from a database module with no matching error gets a
+    class-only descriptor; its original text is never kept.
 
     Args:
         event: The event, edited in place.
         hint: SDK context; ``exc_info`` holds the reported exception.
     """
-    exc_info = hint.get("exc_info")
-    if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
-        return
-    descriptors = {
-        (type(link).__module__, type(link).__qualname__): describe_database_error(link)
-        for link in exception_tree(exc_info[1])
-        if is_database_error(link)
-    }
+    candidates = _database_errors(hint)
     exception = event.get("exception")
     values = exception.get("values") if isinstance(exception, dict) else None
-    if not descriptors or not isinstance(values, list):
-        return
-    for value in values:
+    for value in values if isinstance(values, list) else ():
         if not isinstance(value, dict):
             continue
         module, kind = value.get("module"), value.get("type")
         if not isinstance(module, str) or not isinstance(kind, str):
             continue
-        descriptor = descriptors.get((module, kind))
-        if descriptor is not None:
-            value["value"] = f"{descriptor} {WITHHELD}"
+        pool = candidates.get((module, kind))
+        if pool is None and not module.startswith(_DATABASE_MODULES):
+            continue
+        descriptor = _take_descriptor(pool or [], value.get("value"))
+        value["value"] = f"{descriptor or kind} {WITHHELD}"
+
+
+def _placeholder_event(event: Event, hint: Hint) -> Event:
+    """Return the event sent when minimising failed: structure and a placeholder.
+
+    Only schema-constrained fields are kept; the message names the
+    exception classes, so the failure is still visible.
+    """
+    exc_info = hint.get("exc_info")
+    error = exc_info[1] if isinstance(exc_info, tuple) else None
+    classes = exception_class_names(error) if isinstance(error, BaseException) else []
+    original = cast(dict[str, Any], event)
+    kept: dict[str, Any] = {}
+    with contextlib.suppress(Exception):
+        kept = {
+            field: original[field]
+            for field in _PLACEHOLDER_EVENT_FIELDS
+            if field in original
+        }
+    kept["message"] = placeholder(event, classes=classes)
+    return cast(Event, kept)
 
 
 def before_send(event: Event, hint: Hint) -> Event | None:
@@ -362,8 +439,11 @@ def before_send(event: Event, hint: Hint) -> Event | None:
     """
     if _is_unreported(hint):
         return None
-    _withhold_database_errors(event, hint)
-    return scrub_event(event, hint)
+    sent: Event | None = None
+    with contextlib.suppress(Exception):
+        _withhold_database_errors(event, hint)
+        sent = scrub_event(event, hint)
+    return sent if sent is not None else _placeholder_event(event, hint)
 
 
 def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
@@ -382,14 +462,23 @@ def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
         The minimised breadcrumb.
     """
     del hint
-    data = crumb.get("data")
-    if isinstance(data, dict):
-        _allowlist_headers_recursively(data)
-        redact_in_place(data, _REDACTOR.redact)
-    message = crumb.get("message")
-    if isinstance(message, str):
-        crumb["message"] = _REDACTOR.redact(message)
-    return crumb
+    minimised = False
+    with contextlib.suppress(Exception):
+        data = crumb.get("data")
+        if isinstance(data, dict):
+            _allowlist_headers_recursively(data)
+            redact_in_place(data, _REDACTOR.redact)
+        message = crumb.get("message")
+        if isinstance(message, str):
+            crumb["message"] = _REDACTOR.redact(message)
+        minimised = True
+    if minimised:
+        return crumb
+    category = crumb.get("category")
+    return {
+        "category": category if isinstance(category, str) else "default",
+        "message": placeholder(crumb),
+    }
 
 
 def init_sentry(settings: Settings) -> bool:

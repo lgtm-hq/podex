@@ -29,6 +29,8 @@ from urllib.parse import parse_qsl, quote, quote_plus, unquote, urlsplit
 
 from pydantic import BaseModel, SecretStr
 
+from podex.database_errors import placeholder
+
 SHORT_VALUE_LENGTH = 8
 """Configured values shorter than this are still redacted, but flagged."""
 
@@ -51,6 +53,8 @@ _SCHEME_CHARS = frozenset(
     "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+.-",
 )
 _MAX_SCHEME_LENGTH = 32
+_LIST_SEPARATORS = frozenset(",;)]}")
+_MAX_DATA_DEPTH = 16
 _PERCENT_ESCAPE_RE = re.compile(r"%([0-9A-Fa-f]{2})")
 
 
@@ -68,11 +72,23 @@ def _opening_quote(text: str, scheme_end: int) -> str | None:
 def _is_userinfo(match: re.Match[str]) -> bool:
     """Return whether a userinfo candidate stays inside its URL.
 
-    A URL quoted with ``'`` ends at the next ``'``, so a candidate userinfo
-    containing it spans neighbouring text and is not userinfo.
+    A URL opened with a quote and followed by a list separator after that
+    same quote (``'https://h.test','a@b'``) ends there, so a candidate
+    spanning it covers neighbouring text and is not userinfo. A quote
+    followed by anything else is part of the userinfo: an apostrophe in a
+    password (``'https://reader:pa'ss@host/rss'``) is redacted.
     """
     quote_char = _opening_quote(match.string, match.start())
-    return quote_char is None or quote_char not in match.group("userinfo")
+    if quote_char is None:
+        return True
+    userinfo = match.group("userinfo")
+    position = userinfo.find(quote_char)
+    while position != -1:
+        following = userinfo[position + 1 : position + 2]
+        if following and following in _LIST_SEPARATORS:
+            return False
+        position = userinfo.find(quote_char, position + 1)
+    return True
 
 
 def _replace_userinfo(match: re.Match[str]) -> str:
@@ -283,21 +299,46 @@ class SecretRedactor:
         return f"://{self._pattern.sub(self._replace, userinfo)}@"
 
 
+def _redacted(value: object, redact: Callable[[str], str], depth: int) -> object:
+    """Return ``value`` redacted: strings rewritten, containers traversed.
+
+    Tuples and sets become lists (the reporter serialises them as lists
+    anyway); past :data:`_MAX_DATA_DEPTH` levels a container becomes a
+    placeholder.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if not isinstance(value, dict | list | tuple | set | frozenset):
+        return value
+    if depth >= _MAX_DATA_DEPTH:
+        return placeholder(value, reason="sanitiser limit reached")
+    if isinstance(value, dict | list):
+        redact_in_place(value, redact, depth)
+        return value
+    return [_redacted(item, redact, depth + 1) for item in value]
+
+
 def redact_in_place(
-    container: dict[Any, Any] | list[Any], redact: Callable[[str], str]
+    container: dict[Any, Any] | list[Any],
+    redact: Callable[[str], str],
+    depth: int = 0,
 ) -> None:
     """Apply ``redact`` to every string value nested in a JSON-like structure.
 
-    Mapping keys are kept; values are replaced in place. Each string is
-    visited once.
+    Mapping keys are kept; values are replaced in place, including inside
+    tuples and sets, which become lists. Each string is visited once.
 
     Args:
         container: A mapping or list, such as an event field or breadcrumb.
         redact: The text redaction to apply.
+        depth: Nesting level of ``container``; deeper levels are bounded.
     """
-    entries = container.items() if isinstance(container, dict) else enumerate(container)
+    entries = (
+        list(container.items())
+        if isinstance(container, dict)
+        else list(enumerate(container))
+    )
     for key, value in entries:
-        if isinstance(value, str):
-            container[key] = redact(value)
-        elif isinstance(value, dict | list):
-            redact_in_place(value, redact)
+        replaced = _redacted(value, redact, depth + 1)
+        if replaced is not value:
+            container[key] = replaced

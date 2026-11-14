@@ -44,7 +44,11 @@ Backend smoke starts from a writable, empty SQLite database in tmpfs, enables
 tests the supported default database, Alembic chain, entrypoint, routing and ORM
 read; it does not test PostgreSQL or external providers. A second container uses
 an inaccessible SQLite path and must exit nonzero with a migration failure
-before the server starts. Production auto-migration remains opt-in.
+before the server starts. Its log must name the failure by error class and
+SQLite error name
+(`OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]`)
+and must not contain the driver's own message, which the application withholds
+because it can carry row values. Production auto-migration remains opt-in.
 
 Frontend smoke starts a Node catalog stub on loopback port 8000 inside the same
 network-disabled container, preserving the image's build-time API origin. It

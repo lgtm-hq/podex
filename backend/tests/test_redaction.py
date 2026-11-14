@@ -57,6 +57,10 @@ def _redactor(*secrets: str) -> SecretRedactor:
             "fetch https://[redacted]@host.invalid/path failed",
         ),
         ("'https://h.test','a@b'", "'https://h.test','a@b'"),
+        (
+            "for url 'https://reader:pa'ss@host.invalid/rss'",
+            "for url 'https://[redacted]@host.invalid/rss'",
+        ),
         ('"https://u:p\'w@h.test"', '"https://[redacted]@h.test"'),
     ],
 )

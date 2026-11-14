@@ -200,8 +200,15 @@ def test_cached_traceback_text_is_replaced(
 
 def test_uncaught_errors_are_printed_without_database_text(
     capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Uncaught process and thread errors print the descriptor only."""
+    """Uncaught process and thread errors print the descriptor only.
+
+    The interpreter's own printers are the previous hooks here, so the
+    sanitised stand-in reaches them and they print it.
+    """
+    monkeypatch.setattr(sys, "excepthook", sys.__excepthook__)
+    monkeypatch.setattr(threading, "excepthook", threading.__excepthook__)
     configure_logging()
 
     error = unique_violation(_ROW_VALUE)

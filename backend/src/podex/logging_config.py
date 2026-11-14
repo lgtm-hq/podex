@@ -16,22 +16,25 @@ Text formatted into a string before it is logged is outside these
 boundaries.
 """
 
+import contextlib
 import logging
 import re
 import sys
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence, Set
 from functools import partial
 from types import TracebackType
-from typing import Any, cast
+from typing import Any
 
 import httpx
 
 from podex.database_errors import (
     chain_has_database_error,
-    describe_database_error,
+    exception_class_names,
     format_sanitised_exception,
-    is_database_error,
+    placeholder,
+    stand_in,
+    withheld_exception,
 )
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -55,6 +58,9 @@ _TOKEN_FIELD_RE = re.compile(
 )
 _REDACTED = "[redacted]"
 _MAX_ARGUMENT_DEPTH = 4
+_MAX_ARGUMENT_ITEMS = 1_000
+_SCALAR_TYPES = frozenset({str, int, float, bool, bytes, type(None)})
+_FAILED = object()
 
 RecordFactory = Callable[..., logging.LogRecord]
 """``logging``'s record factory."""
@@ -109,30 +115,76 @@ def _mask_spotify_authorization(record: logging.LogRecord) -> bool:
     return True
 
 
-def _without_database_errors(value: object, depth: int = 0) -> object:
-    """Return ``value`` with database errors replaced by their descriptor.
+def _limit(value: object) -> str:
+    """Return the placeholder for a value past an inspection limit."""
+    text: str = placeholder(value, reason="sanitiser limit reached")
+    return text
 
-    Tuples, lists, sets and mapping values are searched to a bounded depth,
-    because formatting a container renders its items with ``repr``. A
-    container is copied only when something in it changed.
-    """
-    if is_database_error(value) and isinstance(value, BaseException):
-        return describe_database_error(value)
-    if depth >= _MAX_ARGUMENT_DEPTH:
+
+def _clean_collection(
+    value: Collection[object], depth: int, budget: list[int]
+) -> object:
+    """Clean a sequence or set's items; rebuild only if one changed."""
+    items: list[object] = []
+    changed = False
+    for item in value:
+        budget[0] -= 1
+        if budget[0] < 0:
+            return _limit(value)
+        cleaned = _clean(item, depth + 1, budget)
+        changed = changed or cleaned is not item
+        items.append(cleaned)
+    if not changed:
         return value
-    if isinstance(value, Mapping):
-        items = {
-            key: _without_database_errors(item, depth + 1)
-            for key, item in value.items()
-        }
-        changed = any(items[key] is not item for key, item in value.items())
-        return items if changed else value
-    if isinstance(value, tuple | list | set | frozenset):
-        members = [_without_database_errors(item, depth + 1) for item in value]
-        if all(new is old for new, old in zip(members, value, strict=True)):
-            return value
-        return tuple(members) if isinstance(value, tuple) else members
-    return value
+    return tuple(items) if isinstance(value, tuple) else items
+
+
+def _clean_mapping(
+    value: Mapping[object, object], depth: int, budget: list[int]
+) -> object:
+    """Clean a mapping's keys and values; rebuild only if one changed."""
+    pairs: list[tuple[object, object]] = []
+    changed = False
+    for key, item in value.items():
+        budget[0] -= 1
+        if budget[0] < 0:
+            return _limit(value)
+        cleaned_key = _clean(key, depth + 1, budget)
+        cleaned_item = _clean(item, depth + 1, budget)
+        changed = changed or cleaned_key is not key or cleaned_item is not item
+        pairs.append((cleaned_key, cleaned_item))
+    return dict(pairs) if changed else value
+
+
+def _clean(value: object, depth: int, budget: list[int]) -> object:
+    """Return ``value`` with database errors withheld, or ``value`` itself.
+
+    Formatting renders containers' items with ``repr``, so sequences, sets
+    and mappings are searched; a container is rebuilt only when an item
+    changed. An exception whose printed tree holds a database error
+    (including an exception group) becomes a sanitised stand-in. Past
+    :data:`_MAX_ARGUMENT_DEPTH` levels or :data:`_MAX_ARGUMENT_ITEMS` items, a
+    container becomes a placeholder; if inspecting it fails, too.
+    """
+    if type(value) in _SCALAR_TYPES:
+        return value
+    if isinstance(value, BaseException):
+        return withheld_exception(value) if chain_has_database_error(value) else value
+    is_mapping = isinstance(value, Mapping)
+    is_collection = isinstance(value, Sequence | Set) and not isinstance(
+        value, str | bytes | bytearray
+    )
+    if not (is_mapping or is_collection):
+        return value
+    if depth >= _MAX_ARGUMENT_DEPTH:
+        return _limit(value)
+    cleaned: object = _FAILED
+    with contextlib.suppress(Exception):
+        if isinstance(value, Mapping):
+            cleaned = _clean_mapping(value, depth, budget)
+        elif isinstance(value, Sequence | Set):
+            cleaned = _clean_collection(value, depth, budget)
+    return placeholder(value) if cleaned is _FAILED else cleaned
 
 
 def sanitise_database_errors(record: logging.LogRecord) -> None:
@@ -142,9 +194,9 @@ def sanitise_database_errors(record: logging.LogRecord) -> None:
     a database error is formatted without that error's message, replacing
     any text cached earlier; formatters use the cached ``exc_text``, and
     ``exc_info`` is kept, so error reporting still sees the exception. A
-    database error used as the message, as a log argument, as a mapping
-    argument's value or nested in a container argument is replaced by its
-    descriptor.
+    database error (or an exception group holding one) used as the message,
+    as a log argument, as a mapping argument's key or value or nested in a
+    container argument is replaced by a sanitised stand-in.
 
     Args:
         record: The record, edited in place.
@@ -156,21 +208,75 @@ def sanitise_database_errors(record: logging.LogRecord) -> None:
         and chain_has_database_error(exc_info[1])
     ):
         record.exc_text = format_sanitised_exception(exc_info[1])
-    record.msg = _without_database_errors(record.msg)
-    if record.args:
-        record.args = cast(
-            "tuple[object, ...] | Mapping[str, object]",
-            _without_database_errors(record.args),
-        )
+    budget = [_MAX_ARGUMENT_ITEMS]
+    record.msg = _clean(record.msg, 0, budget)
+    arguments = record.args
+    if isinstance(arguments, tuple):
+        cleaned: list[object] = []
+        for argument in arguments:
+            budget[0] -= 1
+            cleaned.append(
+                _clean(argument, 1, budget) if budget[0] >= 0 else _limit(argument)
+            )
+        if any(new is not old for new, old in zip(cleaned, arguments, strict=True)):
+            record.args = tuple(cleaned)
+    elif isinstance(arguments, Mapping):
+        mapping = _clean(arguments, 0, budget)
+        if isinstance(mapping, Mapping):
+            record.args = mapping
+        else:
+            record.msg, record.args = mapping, ()
+
+
+def _replace_with_placeholder(record: logging.LogRecord) -> None:
+    """Replace a record's content after sanitising it failed.
+
+    The message, arguments and traceback text become placeholders naming the
+    message type and the exception classes; nothing original is printed.
+    """
+    error = record.exc_info[1] if isinstance(record.exc_info, tuple) else None
+    classes = exception_class_names(error) if isinstance(error, BaseException) else []
+    record.msg = placeholder(record.msg, classes=classes)
+    record.args = ()
+    if isinstance(error, BaseException):
+        record.exc_text = placeholder(error, classes=classes)
 
 
 def _sanitising_record(
     inner: RecordFactory, *args: Any, **kwargs: Any
 ) -> logging.LogRecord:
-    """Create a record with the inner factory, then withhold database text."""
+    """Create a record with the inner factory, then withhold database text.
+
+    Never raises from sanitising: on any failure the record's content is
+    replaced by placeholders instead.
+    """
     record: logging.LogRecord = inner(*args, **kwargs)
-    sanitise_database_errors(record)
+    sanitised = False
+    with contextlib.suppress(Exception):
+        sanitise_database_errors(record)
+        sanitised = True
+    if not sanitised:
+        _replace_with_placeholder(record)
     return record
+
+
+def _write_stderr(text: str) -> None:
+    """Write a line to standard error, if there is one; never raises."""
+    with contextlib.suppress(Exception):
+        if sys.stderr is not None:
+            sys.stderr.write(text + "\n")
+
+
+def _shown(error: BaseException) -> BaseException:
+    """Return the exception to pass on: ``error`` or its sanitised stand-in."""
+    shown: BaseException | None = None
+    with contextlib.suppress(Exception):
+        shown = withheld_exception(error) if chain_has_database_error(error) else error
+    if shown is None:
+        shown = stand_in(
+            error, placeholder(error, classes=exception_class_names(error))
+        )
+    return shown
 
 
 def _sanitising_excepthook(
@@ -179,28 +285,42 @@ def _sanitising_excepthook(
     error: BaseException,
     trace: TracebackType | None,
 ) -> None:
-    """Print an uncaught exception without database error text."""
-    if not chain_has_database_error(error):
-        previous(kind, error, trace)
-        return
-    if sys.stderr is not None:
-        sys.stderr.write(format_sanitised_exception(error) + "\n")
+    """Pass an uncaught exception on without database error text.
+
+    The previous hook (the interpreter's printer, or an error reporter's
+    hook) receives a sanitised stand-in tree when the exception holds a
+    database error, so it still prints and reports. Never raises: if the
+    previous hook fails, a placeholder naming the classes is printed.
+    """
+    shown = _shown(error) if isinstance(error, BaseException) else error
+    delivered = False
+    with contextlib.suppress(Exception):
+        if shown is error:
+            previous(kind, error, trace)
+        else:
+            previous(type(shown), shown, shown.__traceback__)
+        delivered = True
+    if not delivered:
+        _write_stderr(placeholder(error, classes=exception_class_names(shown)))
 
 
 def _sanitising_thread_excepthook(
     previous: Callable[[threading.ExceptHookArgs], object],
     args: threading.ExceptHookArgs,
 ) -> None:
-    """Print an uncaught thread exception without database error text."""
+    """Pass an uncaught thread exception on without database error text."""
     error = args.exc_value
-    if error is None or not chain_has_database_error(error):
+    shown = _shown(error) if isinstance(error, BaseException) else error
+    delivered = False
+    with contextlib.suppress(Exception):
+        if shown is not error and isinstance(shown, BaseException):
+            args = threading.ExceptHookArgs(
+                [type(shown), shown, shown.__traceback__, args.thread],
+            )
         previous(args)
-        return
-    if sys.stderr is not None:
-        name = args.thread.name if args.thread is not None else "unknown"
-        sys.stderr.write(
-            f"Exception in thread {name}:\n{format_sanitised_exception(error)}\n",
-        )
+        delivered = True
+    if not delivered:
+        _write_stderr(placeholder(shown))
 
 
 def _wraps(installed: object, wrapper: Callable[..., object]) -> bool:
