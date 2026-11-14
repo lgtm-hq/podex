@@ -16,7 +16,7 @@
   },
   "dependencies": {
     "@astrojs/check": "^0.9.9",
-    "@astrojs/node": "^11.0.0",
+    "@astrojs/node": "^11.1.13",
     "@astrojs/react": "^7.0.0",
     "@sentry/browser": "^11.0.0",
     "@tailwindcss/vite": "^4.0.0",
