@@ -90,14 +90,13 @@ jobs:
       sbom: >-
         ${{ github.event_name != 'pull_request'
         && github.event_name != 'merge_group' }}
-      # harden-runner reads the raw workflow inputs (not resolved presets)
-      # BEFORE the allowlist resolver applies the docker preset, and since
-      # lgtm-ci v0.50.0 a caller-provided allowed-endpoints REPLACES the
-      # preset baseline. Full expanded list = docker preset defaults + trivy
-      # (get.trivy.dev; DB pulled from ghcr with mirror.gcr.io / ecr fallbacks)
-      # + sigstore hosts (cosign keyless signing on tag publish) + pypi hosts
-      # (uv sync in the builder stage resolves from pypi.org via the runner
-      # egress proxy under harden-runner).
+      # In replace mode the reusable workflow passes a non-empty list to
+      # harden-runner on its own, without the docker preset. So this list
+      # carries every docker preset host (lgtm-ci presets.sh at the pinned
+      # release) plus the caller-specific extras: Trivy database registry
+      # fallbacks (gcr.io, public.ecr.aws), the legacy Trivy installer host
+      # (get.trivy.dev), deb.debian.org, and PyPI for `uv sync` in the
+      # builder stage.
       allowed-endpoints-mode: replace
       allowed-endpoints: >
         github.com:443
@@ -108,6 +107,7 @@ jobs:
         release-assets.githubusercontent.com:443
         github-releases.githubusercontent.com:443
         pipelines.actions.githubusercontent.com:443
+        token.actions.githubusercontent.com:443
         ghcr.io:443
         pkg-containers.githubusercontent.com:443
         docker.io:443
@@ -115,6 +115,7 @@ jobs:
         auth.docker.io:443
         production.cloudflare.docker.com:443
         production.cloudfront.docker.com:443
+        docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
         gcr.io:443
         mirror.gcr.io:443
         public.ecr.aws:443
@@ -123,6 +124,8 @@ jobs:
         rekor.sigstore.dev:443
         tuf-repo-cdn.sigstore.dev:443
         timestamp.sigstore.dev:443
+        fulcio.githubapp.com:443
+        timestamp.githubapp.com:443
         pypi.org:443
         files.pythonhosted.org:443
         deb.debian.org:80
@@ -190,6 +193,7 @@ jobs:
         release-assets.githubusercontent.com:443
         github-releases.githubusercontent.com:443
         pipelines.actions.githubusercontent.com:443
+        token.actions.githubusercontent.com:443
         ghcr.io:443
         pkg-containers.githubusercontent.com:443
         docker.io:443
@@ -197,6 +201,7 @@ jobs:
         auth.docker.io:443
         production.cloudflare.docker.com:443
         production.cloudfront.docker.com:443
+        docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
         gcr.io:443
         mirror.gcr.io:443
         public.ecr.aws:443
@@ -205,6 +210,8 @@ jobs:
         rekor.sigstore.dev:443
         tuf-repo-cdn.sigstore.dev:443
         timestamp.sigstore.dev:443
+        fulcio.githubapp.com:443
+        timestamp.githubapp.com:443
         registry.npmjs.org:443
         deb.debian.org:80
         deb.debian.org:443
