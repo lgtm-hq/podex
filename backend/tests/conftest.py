@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -40,6 +41,75 @@ from podex.observability import init_sentry
 from podex.services.account_alerts import create_alert_rule
 from podex.services.recurring_notifications import reconcile_notification_schedules
 from podex.services.scheduled_work import plan_due_scheduled_work
+
+REQUIRE_POSTGRES_OPTION = "--require-postgres"
+POSTGRES_URL_ENV = "PODEX_DATABASE__URL"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the option that turns a missing PostgreSQL into a failure."""
+    parser.addoption(
+        REQUIRE_POSTGRES_OPTION,
+        action="store_true",
+        default=False,
+        help=(
+            "Fail, instead of skip, tests marked 'postgres' when "
+            f"{POSTGRES_URL_ENV} is not a PostgreSQL URL (the PostgreSQL CI lane)."
+        ),
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip or fail PostgreSQL-marked tests when PostgreSQL is not configured.
+
+    This is the repository's single PostgreSQL-availability mechanism. Outside
+    the PostgreSQL lane, a marked test is skipped with the reason; with
+    ``--require-postgres`` it fails before any fixture runs.
+    """
+    if item.get_closest_marker("postgres") is None:
+        return
+    if os.environ.get(POSTGRES_URL_ENV, "").startswith("postgresql"):
+        return
+    reason = f"needs PostgreSQL: {POSTGRES_URL_ENV} is not a postgresql URL"
+    if item.config.getoption(REQUIRE_POSTGRES_OPTION):
+        pytest.fail(f"{reason} and {REQUIRE_POSTGRES_OPTION} is set", pytrace=False)
+    pytest.skip(reason)
+
+
+# Set for every pytest a test launches. A run that sees it refuses to launch
+# another, so test-launched runs can never nest.
+INNER_RUN_ENV = "PODEX_TESTS_INNER_RUN"
+_INNER_RUN = pytest.StashKey[bool]()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Record whether this session was launched by another test."""
+    session.config.stash[_INNER_RUN] = bool(os.environ.get(INNER_RUN_ENV))
+
+
+def is_inner_run(config: pytest.Config) -> bool:
+    """Return whether this session, or its environment, is an inner run."""
+    return config.stash.get(_INNER_RUN, False) or bool(os.environ.get(INNER_RUN_ENV))
+
+
+def check_nested_launch(item: pytest.Item, *, inner_run: bool) -> None:
+    """Refuse a test that launches pytest when this run is itself an inner run.
+
+    Raises:
+        pytest.UsageError: If ``item`` launches pytest inside an inner run.
+    """
+    if inner_run and item.get_closest_marker("launches_pytest") is not None:
+        msg = (
+            f"{item.nodeid} launches pytest, but this run was launched by a test "
+            f"({INNER_RUN_ENV} is set); nested inner runs are refused"
+        )
+        raise pytest.UsageError(msg)
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Fail collection of a pytest-launching test inside an inner run."""
+    check_nested_launch(item, inner_run=item.config.stash.get(_INNER_RUN, False))
 
 
 @dataclass

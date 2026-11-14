@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "podex"
-version = "0.41.24"
+version = "0.41.25"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
 requires-python = ">=3.11.5"
 license = "AGPL-3.0-only"
@@ -55,7 +55,7 @@ dev = [
   "assertpy>=1.1",
   "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.180.32",
+  "lintro==0.180.33",
   "mypy>=1.14",
   # Match CI and local framework inference to the same Pylint/Astroid release.
   "pylint==4.1.3",
@@ -74,7 +74,12 @@ packages = ["src/podex"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--strict-config"]
+# pytester runs inner sessions for the PostgreSQL suite guards.
+addopts = ["--strict-markers", "--strict-config", "-p", "pytester"]
+markers = [
+  "postgres: needs PostgreSQL via PODEX_DATABASE__URL; skipped without it, failed with --require-postgres",
+  "launches_pytest: starts an inner pytest run (tests/isolated_suite.py); refused inside an inner run",
+]
 
 [tool.coverage.run]
 source = ["src/podex"]

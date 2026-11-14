@@ -6,6 +6,10 @@ export default defineConfig({
     environment: "happy-dom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.{test,spec}.{ts,tsx}"],
+    typecheck: {
+      enabled: true,
+      include: ["src/lib/container-smoke.test.ts"],
+    },
     coverage: {
       provider: "v8",
       include: ["src/lib/**", "src/components/**/*.tsx"],
