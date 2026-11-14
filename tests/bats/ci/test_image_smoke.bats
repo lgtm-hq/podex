@@ -138,7 +138,7 @@ run_smoke() {
   [ -f "$SMOKE_STATE/removed" ]
 }
 
-@test "both images use digest smoke on tags and health hooks only off tags" {
+@test "both images smoke through health hooks off tags and pass no split smoke script" {
   local image port key value expected setting
   for image in backend frontend; do
     if [[ "$image" == backend ]]; then port=8000; else port=4321; fi
@@ -153,9 +153,11 @@ run_smoke() {
       expected="\${{ !startsWith(github.ref, 'refs/tags/v') && '${value}' || '' }}"
       [ "$output" = "$expected" ]
     done
-    run yq -r ".jobs.${image}.with.smoke-test-script" \
+    # The split verify job mixes up the two images' staging digests
+    # (lgtm-hq/lgtm-ci#1579), so the input must stay unset until #822 restores it.
+    run yq -r ".jobs.${image}.with | has(\"smoke-test-script\")" \
       "${PROJECT_ROOT}/.github/workflows/docker-ci.yml"
     [ "$status" -eq 0 ]
-    [ "$output" = ".github/scripts/smoke-${image}.sh" ]
+    [ "$output" = "false" ]
   done
 }

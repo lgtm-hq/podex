@@ -139,24 +139,28 @@ or readiness. These single-platform builds run on linux/amd64 and have the
 caller checkout. Smoke scripts resolve from that checkout; tooling resolves from
 the workflow SHA without a caller `tooling-ref`.
 
-`smoke-test-script` is forwarded only to the split path. Tag publishes request
-linux/amd64 and linux/arm64; `verify-per-platform` checks out this repository,
-pulls each staging image by immutable digest, then invokes the smoke script with
-`IMAGE`, `PLATFORM`, and `REGISTRY`. Each script waits for the image's Docker
-health and checks its real routes. Smoke failure blocks manifest merging.
+Tag publishes request linux/amd64 and linux/arm64 and take the split path. They
+run no smoke today, because neither of the pinned reusable's two hooks works for
+this repository there:
 
-All three health-hook inputs (command, port and timeout) are empty on `v*.*.*`
-tag refs, including manual runs on those tags. The split publish health job has
-no caller checkout, so it cannot run these repository scripts and stays skipped.
-The pinned classifier accepts empty health inputs: an empty port is valid and
-timeout parsing is conditional on a nonempty health command. The publish job
-requires a nonempty health command; merge accepts its skipped result while still
-requiring smoke success. Split validation also conditions its health step on a
-nonempty command, and its smoke step on `validate-on-pr`; current tag runs
-publish instead of validating. The standalone smoke reusable requires a
-published digest and cannot validate a PR-local image. The main failure notifier
-depends on both parent image jobs, including their smoke gates. It does not run
-for tag failures.
+- The split health job has no caller checkout, so it cannot run these repository
+  scripts (lgtm-hq/lgtm-ci#1572). All three health-hook inputs (command, port
+  and timeout) are therefore empty on `v*.*.*` tag refs, including manual runs
+  on those tags, and that job stays skipped. The pinned classifier accepts empty
+  health inputs: an empty port is valid and timeout parsing is conditional on a
+  nonempty health command.
+- `smoke-test-script` runs in `verify-per-platform`, which pulls each staging
+  image by a digest read from a run artifact named `staging-digest-<platform>`.
+  Both image jobs of one run write that same name, so depending on upload order
+  one image's job can pull the other image's digest, which fails
+  (lgtm-hq/lgtm-ci#1579). With the input set, v0.41.26 published the frontend
+  image and no backend image. The input is not passed until that is fixed
+  upstream and the pin is bumped (#822).
+
+A tag therefore publishes the same Dockerfiles that the PR and `main` builds of
+the same commit smoked on linux/amd64; linux/arm64 images are not smoked. The
+main failure notifier depends on both parent image jobs. It does not run for tag
+failures.
 
 Runner image pulls and builds remain under the existing block-mode allowlists.
 Both `replace` lists retain every host of the pinned Docker egress preset, plus
@@ -175,14 +179,6 @@ The PR/main check names before and after are identical:
 🎨 Frontend Image / Docker build / Vulnerability Scan
 🎨 Frontend Image / Docker multi-platform
 notify-failure
-```
-
-On tags the existing split verification job base names become active for each
-linux/amd64 and linux/arm64 matrix entry (GitHub appends matrix suffixes):
-
-```text
-🐳 Backend Image / Docker multi-platform / Publish / Docker verify per platform
-🎨 Frontend Image / Docker multi-platform / Publish / Docker verify per platform
 ```
 
 No check is added to a ruleset. The existing all-checks gate accepts completed
