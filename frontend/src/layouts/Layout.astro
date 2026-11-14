@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { serializeScriptJson } from "../lib/script-json";
 import {
   SITE_DESCRIPTION,
   SITE_NAME,
@@ -37,7 +38,9 @@ const {
 
 const pathname = canonicalPath ?? Astro.url.pathname;
 const canonical = absoluteUrl(pathname);
-const fullTitle = title ? `${title} · ${SITE_NAME}` : `${SITE_NAME} — ${SITE_TAGLINE}`;
+const fullTitle = title
+  ? `${title} · ${SITE_NAME}`
+  : `${SITE_NAME} — ${SITE_TAGLINE}`;
 const structuredEntries: unknown[] = Array.isArray(jsonLd)
   ? jsonLd
   : jsonLd !== undefined
@@ -68,7 +71,11 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
     <meta name="twitter:title" content={fullTitle} />
     <meta name="twitter:description" content={description} />
 
-    <link rel="sitemap" type="application/xml" href={`${SITE_URL}/sitemap.xml`} />
+    <link
+      rel="sitemap"
+      type="application/xml"
+      href={`${SITE_URL}/sitemap.xml`}
+    />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -85,15 +92,13 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
       void initSentry();
     </script>
 
-    {
-      structuredEntries.map((entry) => (
-        <script
-          is:inline
-          type="application/ld+json"
-          set:html={JSON.stringify(entry)}
-        />
-      ))
-    }
+    {structuredEntries.map((entry) => (
+      <script
+        is:inline
+        type="application/ld+json"
+        set:html={serializeScriptJson(entry)}
+      />
+    ))}
   </head>
   <body class="min-h-screen">
     <div class="mx-auto flex min-h-screen max-w-4xl flex-col px-6 py-10 sm:px-8">
@@ -104,11 +109,11 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
         >
           {SITE_NAME}
         </a>
-        <nav aria-label="Primary" class="text-sm text-[color:var(--color-muted)]">
-          <a
-            href="/"
-            class="hover:text-[color:var(--color-accent)]"
-          >
+        <nav
+          aria-label="Primary"
+          class="text-sm text-[color:var(--color-muted)]"
+        >
+          <a href="/" class="hover:text-[color:var(--color-accent)]">
             Discover
           </a>
         </nav>
@@ -118,9 +123,7 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
         <slot />
       </main>
 
-      <footer
-        class="mt-20 border-t border-[color:var(--color-hairline)] pt-6 text-sm text-[color:var(--color-muted)]"
-      >
+      <footer class="mt-20 border-t border-[color:var(--color-hairline)] pt-6 text-sm text-[color:var(--color-muted)]">
         <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <p class="font-display text-base tracking-tight text-[color:var(--color-ink)]">
             {SITE_NAME}
