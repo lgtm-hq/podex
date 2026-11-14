@@ -1,12 +1,13 @@
 ---
 import type { Podcast } from "../lib/types";
+import { sitePath } from "../lib/navigation";
 
 interface Props {
   podcast: Podcast;
 }
 
 const { podcast } = Astro.props;
-const href = `/podcasts/${podcast.id}`;
+const href = sitePath(`/podcasts/${podcast.id}`, Astro.url.origin);
 ---
 
 <li>

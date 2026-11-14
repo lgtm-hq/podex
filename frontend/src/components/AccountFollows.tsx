@@ -5,6 +5,7 @@ import {
   getFollowedPodcasts,
   unfollowPodcast,
 } from "../lib/account";
+import { sitePath } from "../lib/navigation";
 import AccountShell from "./AccountShell";
 
 /** Followed podcasts list with unfollow. */
@@ -52,7 +53,7 @@ function FollowsBody() {
           <div>
             <a
               className="font-medium underline"
-              href={`/podcasts/${item.podcast.id}`}
+              href={sitePath(`/podcasts/${item.podcast.id}`)}
             >
               {item.podcast.name}
             </a>

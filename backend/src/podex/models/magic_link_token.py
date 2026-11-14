@@ -7,6 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from podex.models.base import Base
 
+REDIRECT_PATH_MAX_LENGTH = 300
+
 
 class MagicLinkToken(Base):
     """One-time hashed token issued for passwordless authentication."""
@@ -20,7 +22,9 @@ class MagicLinkToken(Base):
     )
     email: "Mapped[str]" = mapped_column(String(320), index=True, default="")
     token_digest: "Mapped[str]" = mapped_column(String(64), unique=True, index=True)
-    redirect_path: "Mapped[str | None]" = mapped_column(String(300))
+    redirect_path: "Mapped[str | None]" = mapped_column(
+        String(REDIRECT_PATH_MAX_LENGTH)
+    )
     expires_at: "Mapped[datetime]" = mapped_column(DateTime(timezone=True), index=True)
     consumed_at: "Mapped[datetime | None]" = mapped_column(DateTime(timezone=True))
     created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
