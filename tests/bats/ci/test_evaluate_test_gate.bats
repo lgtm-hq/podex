@@ -7,6 +7,7 @@ setup() {
   export TEST_RESULT=success
   export COVERAGE_RESULT=success
   export MIGRATIONS_RESULT=success
+  export POSTGRES_RESULT=success
   export SHELL_RESULT=success
   export GITHUB_OUTPUT="${BATS_TEST_TMPDIR}/github_output"
   : >"${GITHUB_OUTPUT}"
@@ -28,7 +29,7 @@ assert_outputs() {
 
 @test "passes when every upstream job is skipped (draft PR)" {
   TEST_RESULT=skipped COVERAGE_RESULT=skipped MIGRATIONS_RESULT=skipped \
-    SHELL_RESULT=skipped run bash "${SCRIPT}"
+    POSTGRES_RESULT=skipped SHELL_RESULT=skipped run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
   assert_outputs success true
 }
@@ -41,7 +42,8 @@ assert_outputs() {
 
 @test "fails when any single upstream job fails" {
   local var
-  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT SHELL_RESULT; do
+  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT POSTGRES_RESULT \
+    SHELL_RESULT; do
     : >"${GITHUB_OUTPUT}"
     run env "${var}=failure" bash "${SCRIPT}"
     [ "${status}" -eq 1 ]
@@ -52,7 +54,8 @@ assert_outputs() {
 
 @test "fails when any single upstream job is cancelled" {
   local var
-  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT SHELL_RESULT; do
+  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT POSTGRES_RESULT \
+    SHELL_RESULT; do
     : >"${GITHUB_OUTPUT}"
     run env "${var}=cancelled" bash "${SCRIPT}"
     [ "${status}" -eq 1 ]
@@ -67,6 +70,21 @@ assert_outputs() {
   [[ "${output}" == *"test (failure)"* ]]
   [[ "${output}" == *"test-postgres-migrations (cancelled)"* ]]
   [[ "${output}" != *"test-coverage ("* ]]
+}
+
+@test "names a failing PostgreSQL application lane" {
+  POSTGRES_RESULT=failure run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"test-postgres-application (failure)"* ]]
+  assert_outputs failure false
+}
+
+@test "fails when the PostgreSQL application result is unset" {
+  unset POSTGRES_RESULT
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"POSTGRES_RESULT is not set"* ]]
+  assert_outputs failure false
 }
 
 @test "fails closed on an empty result" {
@@ -102,6 +120,7 @@ assert_outputs() {
   [ "${status}" -eq 0 ]
   [[ "${output}" == *"Usage:"* ]]
   [[ "${output}" == *"MIGRATIONS_RESULT"* ]]
+  [[ "${output}" == *"POSTGRES_RESULT"* ]]
 }
 
 @test "rejects unexpected arguments" {

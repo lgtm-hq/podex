@@ -75,6 +75,9 @@ packages = ["src/podex"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = ["--strict-markers", "--strict-config"]
+markers = [
+  "postgres: needs PostgreSQL via PODEX_DATABASE__URL; skipped without it, failed with --require-postgres",
+]
 
 [tool.coverage.run]
 source = ["src/podex"]

@@ -1,6 +1,7 @@
 """Shared pytest fixtures."""
 
 import json
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -37,6 +38,40 @@ from podex.models import (
 from podex.services.account_alerts import create_alert_rule
 from podex.services.recurring_notifications import reconcile_notification_schedules
 from podex.services.scheduled_work import plan_due_scheduled_work
+
+REQUIRE_POSTGRES_OPTION = "--require-postgres"
+POSTGRES_URL_ENV = "PODEX_DATABASE__URL"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Register the option that turns a missing PostgreSQL into a failure."""
+    parser.addoption(
+        REQUIRE_POSTGRES_OPTION,
+        action="store_true",
+        default=False,
+        help=(
+            "Fail, instead of skip, tests marked 'postgres' when "
+            f"{POSTGRES_URL_ENV} is not a PostgreSQL URL (the PostgreSQL CI lane)."
+        ),
+    )
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    """Skip or fail PostgreSQL-marked tests when PostgreSQL is not configured.
+
+    This is the repository's single PostgreSQL-availability mechanism. Outside
+    the PostgreSQL lane, a marked test is skipped with the reason; with
+    ``--require-postgres`` it fails before any fixture runs.
+    """
+    if item.get_closest_marker("postgres") is None:
+        return
+    if os.environ.get(POSTGRES_URL_ENV, "").startswith("postgresql"):
+        return
+    reason = f"needs PostgreSQL: {POSTGRES_URL_ENV} is not a postgresql URL"
+    if item.config.getoption(REQUIRE_POSTGRES_OPTION):
+        pytest.fail(f"{reason} and {REQUIRE_POSTGRES_OPTION} is set", pytrace=False)
+    pytest.skip(reason)
 
 
 @dataclass

@@ -1,33 +1,22 @@
 """PostgreSQL concurrency checks for canonical media merges.
 
 SQLite has a single writer, so lost updates between overlapping merges and alert
-evaluation only show up on PostgreSQL. These tests run when
-``PODEX_DATABASE__URL`` points at PostgreSQL and are skipped otherwise. Each test
-builds the schema in a throwaway PostgreSQL schema and drops it afterwards:
-
-    PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \\
-    uv run pytest tests/test_media_merge_postgres.py
+evaluation only show up on PostgreSQL. Each test runs in its own migrated
+database from the shared ``postgres`` fixture (``tests/postgres/conftest.py``)
+and runs in the PostgreSQL CI lane; elsewhere the ``postgres`` marker skips it.
 """
 
-import os
-import time
-import uuid
-from collections.abc import Callable, Iterator
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import partial
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import Engine, create_engine, text
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.schema import CreateSchema, DropSchema
+from sqlalchemy.orm import Session
 
 from podex.models import (
     AccountAlertRule,
     AccountSavedMedia,
     AccountUser,
-    Base,
     Episode,
     Media,
     MediaType,
@@ -37,24 +26,10 @@ from podex.models import (
 from podex.services.account_alerts import evaluate_alert_rules
 from podex.services.ops_media_commands import merge_ops_media
 from tests.conftest import create_media_alert_rule
+from tests.postgres.concurrency import run_overlapping
+from tests.postgres.conftest import PostgresDatabase
 
-_DATABASE_URL = os.environ.get("PODEX_DATABASE__URL", "")
-_LOCK_WAIT_TIMEOUT_SECONDS = 10.0
-
-pytestmark = pytest.mark.skipif(
-    not _DATABASE_URL.startswith("postgresql"),
-    reason="PODEX_DATABASE__URL does not point at PostgreSQL",
-)
-
-Step = Callable[[Session], list[tuple[int, int]]]
-
-
-@dataclass(frozen=True, slots=True)
-class _PostgresDatabase:
-    """Engine and session factory bound to a throwaway PostgreSQL schema."""
-
-    engine: Engine
-    sessions: sessionmaker[Session]
+pytestmark = pytest.mark.postgres
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,37 +40,6 @@ class _MergeFixture:
     episode_id: int
     target_id: int
     source_ids: tuple[int, ...]
-
-
-@pytest.fixture(name="postgres")
-def postgres_fixture() -> Iterator[_PostgresDatabase]:
-    """Create every model table in a fresh schema and drop it afterwards.
-
-    Yields:
-        Engine and session factory whose search path is the fresh schema.
-    """
-    schema = f"merge_concurrency_{uuid.uuid4().hex[:12]}"
-    admin = create_engine(_DATABASE_URL)
-    with admin.begin() as connection:
-        connection.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
-        connection.execute(CreateSchema(schema))
-    engine = create_engine(
-        _DATABASE_URL,
-        connect_args={"options": f"-csearch_path={schema},public"},
-    )
-    try:
-        # Create unconditionally: with the existence check, tables already
-        # present in ``public`` would be reused and the tests would write there.
-        Base.metadata.create_all(engine, checkfirst=False)
-        yield _PostgresDatabase(
-            engine=engine,
-            sessions=sessionmaker(bind=engine, expire_on_commit=False),
-        )
-    finally:
-        engine.dispose()
-        with admin.begin() as connection:
-            connection.execute(DropSchema(schema, cascade=True))
-        admin.dispose()
 
 
 def _seed(
@@ -171,64 +115,7 @@ def _evaluate(db: Session, *, user_id: int) -> list[tuple[int, int]]:
     ]
 
 
-def _run_then_commit(db: Session, step: Step) -> list[tuple[int, int]]:
-    """Run a step and commit it, as a request or scheduler transaction would.
-
-    Returns:
-        The step's result.
-    """
-    result = step(db)
-    db.commit()
-    return result
-
-
-def _wait_until_lock_wait(engine: Engine, backend_pid: int) -> None:
-    """Block until the backend with ``backend_pid`` waits on a lock.
-
-    Raises:
-        AssertionError: If the backend never waits on a lock.
-    """
-    deadline = time.monotonic() + _LOCK_WAIT_TIMEOUT_SECONDS
-    query = text("SELECT wait_event_type FROM pg_stat_activity WHERE pid = :pid")
-    while time.monotonic() < deadline:
-        # pg_stat_activity is a per-transaction snapshot, so poll in new ones.
-        with engine.connect() as connection:
-            wait_type = connection.execute(query, {"pid": backend_pid}).scalar()
-        if wait_type == "Lock":
-            return
-        time.sleep(0.02)
-    raise AssertionError("the second transaction never waited on a lock")
-
-
-def _run_overlapping(
-    postgres: _PostgresDatabase,
-    *,
-    first: Step,
-    second: Step,
-) -> tuple[list[tuple[int, int]], list[tuple[int, int]]]:
-    """Hold ``first`` open, start ``second`` until it blocks, then commit both.
-
-    Returns:
-        The first and second steps' results.
-    """
-    first_db = postgres.sessions()
-    second_db = postgres.sessions()
-    second_pid = int(second_db.execute(text("SELECT pg_backend_pid()")).scalar_one())
-    try:
-        first_result = first(first_db)
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_run_then_commit, second_db, second)
-            try:
-                _wait_until_lock_wait(postgres.engine, second_pid)
-            finally:
-                first_db.commit()
-            return first_result, future.result(timeout=_LOCK_WAIT_TIMEOUT_SECONDS)
-    finally:
-        first_db.close()
-        second_db.close()
-
-
-def _assert_settled(postgres: _PostgresDatabase, fixture: _MergeFixture) -> None:
+def _assert_settled(postgres: PostgresDatabase, fixture: _MergeFixture) -> None:
     """One survivor rule has seen every mention and evaluates to no event."""
     with postgres.sessions() as db:
         rules = db.query(AccountAlertRule).all()
@@ -241,14 +128,14 @@ def _assert_settled(postgres: _PostgresDatabase, fixture: _MergeFixture) -> None
 
 
 def test_concurrent_merges_into_one_target_keep_every_baseline(
-    postgres: _PostgresDatabase,
+    postgres: PostgresDatabase,
 ) -> None:
     """Two merges into one survivor serialize and count all seen mentions."""
     with postgres.sessions() as db:
         fixture = _seed(db, source_count=2, rule_media="all")
     first_source, second_source = fixture.source_ids
 
-    _run_overlapping(
+    run_overlapping(
         postgres,
         first=partial(_merge, source_id=first_source, target_id=fixture.target_id),
         second=partial(_merge, source_id=second_source, target_id=fixture.target_id),
@@ -265,7 +152,7 @@ def test_concurrent_merges_into_one_target_keep_every_baseline(
     ids=["merge-first", "evaluation-first"],
 )
 def test_merge_and_alert_evaluation_do_not_interleave(
-    postgres: _PostgresDatabase,
+    postgres: PostgresDatabase,
     merge_first: bool,
     expected_events: list[tuple[int, int]],
 ) -> None:
@@ -285,9 +172,9 @@ def test_merge_and_alert_evaluation_do_not_interleave(
     evaluate = partial(_evaluate, user_id=fixture.user_id)
 
     if merge_first:
-        _, generated = _run_overlapping(postgres, first=merge, second=evaluate)
+        _, generated = run_overlapping(postgres, first=merge, second=evaluate)
     else:
-        generated, _ = _run_overlapping(postgres, first=evaluate, second=merge)
+        generated, _ = run_overlapping(postgres, first=evaluate, second=merge)
 
     assert_that(generated).is_equal_to(expected_events)
     _assert_settled(postgres, fixture)

@@ -24,12 +24,14 @@ job is "failure" or "cancelled", or reports an unexpected value.
 
 Usage:
   TEST_RESULT=success COVERAGE_RESULT=success MIGRATIONS_RESULT=success \
-    SHELL_RESULT=success .github/scripts/evaluate-test-gate.sh
+    POSTGRES_RESULT=success SHELL_RESULT=success \
+    .github/scripts/evaluate-test-gate.sh
 
 Required environment variables:
   TEST_RESULT        needs.test.result (Python compatibility matrix)
   COVERAGE_RESULT    needs.test-coverage.result
   MIGRATIONS_RESULT  needs.test-postgres-migrations.result
+  POSTGRES_RESULT    needs.test-postgres-application.result
   SHELL_RESULT       needs.test-shell.result (BATS tests)
 
 Optional environment variables:
@@ -63,6 +65,7 @@ jobs=(
 	"test:TEST_RESULT"
 	"test-coverage:COVERAGE_RESULT"
 	"test-postgres-migrations:MIGRATIONS_RESULT"
+	"test-postgres-application:POSTGRES_RESULT"
 	"test-shell:SHELL_RESULT"
 )
 
@@ -76,7 +79,7 @@ for entry in "${jobs[@]}"; do
 		exit 1
 	fi
 	result="${!var}"
-	printf '%-26s %s\n' "${name}:" "${result:-<empty>}"
+	printf '%-27s %s\n' "${name}:" "${result:-<empty>}"
 	case "${result}" in
 	success | skipped) ;;
 	failure | cancelled) failed+=("${name} (${result})") ;;

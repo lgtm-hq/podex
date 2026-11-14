@@ -26,6 +26,22 @@ bun install
 bun run test
 ```
 
+Tests that need real PostgreSQL carry `@pytest.mark.postgres`, live under
+`backend/tests/postgres/` and use its `postgres` fixture (a private database
+migrated to head per test). A plain `uv run pytest` skips them with the
+reason. To run them, point `PODEX_DATABASE__URL` at a PostgreSQL with pgvector
+whose role can `CREATE DATABASE`; `--require-postgres` (what CI uses) fails
+instead of skipping when it is missing. The fixture never touches tables in
+that database:
+
+```bash
+docker run -d --rm --name podex-pg -p 5432:5432 -e POSTGRES_USER=podex \
+  -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=podex pgvector/pgvector:pg16
+cd backend
+PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \
+  uv run pytest tests -m postgres --require-postgres
+```
+
 CI shell scripts (`.github/scripts/`) have [BATS](https://github.com/bats-core/bats-core)
 tests under `tests/bats/`:
 
@@ -101,7 +117,7 @@ the underlying cause or establishing why the explicit boundary must remain.
 - PR titles must follow Conventional Commits (validated in CI).
 - All required checks must pass before merge. `test-suite / 🧪 Test Suite`
   is the combined test gate: it fails if the Python matrix, coverage,
-  Postgres migration replay or shell tests fail.
+  Postgres migration replay, Postgres application tests or shell tests fail.
 - Address review feedback (human and automated) before requesting merge.
 
 ## Architecture Decision Records
