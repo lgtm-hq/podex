@@ -334,7 +334,16 @@ def complete_workos_callback(
             detail="Hosted sign-in is not configured",
         )
     expected_state = request.cookies.get(WORKOS_STATE_COOKIE)
-    if not state or not expected_state or not compare_digest(expected_state, state):
+    try:
+        valid_state = bool(
+            state
+            and expected_state
+            and compare_digest(expected_state.encode("utf-8"), state.encode("utf-8"))
+        )
+    except UnicodeEncodeError:
+        valid_state = False
+    # Keep encoding errors, which hold the state, out of the response context.
+    if not valid_state:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sign-in state is invalid or expired",
