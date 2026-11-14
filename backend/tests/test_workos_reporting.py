@@ -222,18 +222,85 @@ def _callback_response(
     return response
 
 
+def _comparable_headers(
+    headers: list[tuple[str, str]],
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Return ``headers`` in a form two requests can be compared by.
+
+    Two things legitimately differ between otherwise identical responses and
+    are left out: the shared rate-limit budget's counters, and the ``expires``
+    timestamp of a cleared cookie, which is the wall-clock second of the
+    request. A cleared cookie must still carry ``Max-Age=0``, so dropping the
+    timestamp cannot hide a cookie that is not expired.
+
+    Args:
+        headers: The response's header pairs in order.
+
+    Returns:
+        The header pairs with the request-dependent parts removed.
+    """
+    budget = {"x-ratelimit-remaining", "x-ratelimit-reset"}
+    comparable: list[tuple[str, tuple[str, ...]]] = []
+    for name, value in headers:
+        if name in budget:
+            continue
+        if name != "set-cookie":
+            comparable.append((name, (value,)))
+            continue
+        attributes = tuple(part.strip() for part in value.split(";"))
+        timestamps = [part for part in attributes if part.startswith("expires=")]
+        if timestamps:
+            assert_that(attributes).contains("Max-Age=0")
+        comparable.append(
+            (name, tuple(part for part in attributes if part not in timestamps)),
+        )
+    return comparable
+
+
 def test_rejected_code_response_matches_the_generic_502(client: TestClient) -> None:
-    """The bad-code 502 is byte-identical to the generic failed-exchange 502."""
+    """The bad-code 502 matches the generic failed-exchange 502."""
     rejected = _callback_response(client, invalid_code, "same-request-id")
     generic = _callback_response(client, invalid_client, "same-request-id")
 
     assert_that(rejected.status_code).is_equal_to(502)
     assert_that(generic.status_code).is_equal_to(502)
     assert_that(rejected.content).is_equal_to(generic.content)
-    # The two requests share one rate-limit budget, so only its counters differ.
-    budget = {"x-ratelimit-remaining", "x-ratelimit-reset"}
-    assert_that(
-        [item for item in rejected.headers.multi_items() if item[0] not in budget],
-    ).is_equal_to(
-        [item for item in generic.headers.multi_items() if item[0] not in budget],
+    assert_that(_comparable_headers(rejected.headers.multi_items())).is_equal_to(
+        _comparable_headers(generic.headers.multi_items()),
     )
+
+
+_CLEARED_AT_38 = (
+    'podex_oauth_state=""; expires=Sat, 14 Nov 2026 14:40:38 GMT; HttpOnly; '
+    "Max-Age=0; Path=/; SameSite=lax"
+)
+_CLEARED_AT_39 = _CLEARED_AT_38.replace("14:40:38", "14:40:39")
+
+
+def test_header_comparison_ignores_the_second_a_cookie_was_cleared() -> None:
+    """Two responses a second apart compare equal; any other change does not."""
+    earlier = [("content-type", "application/json"), ("set-cookie", _CLEARED_AT_38)]
+    later = [("content-type", "application/json"), ("set-cookie", _CLEARED_AT_39)]
+
+    assert_that(_comparable_headers(earlier)).is_equal_to(_comparable_headers(later))
+
+    for changed in (
+        [("content-type", "text/plain"), ("set-cookie", _CLEARED_AT_39)],
+        [
+            ("content-type", "application/json"),
+            ("set-cookie", _CLEARED_AT_39.replace("Path=/", "Path=/api")),
+        ],
+        [("content-type", "application/json")],
+        [*later, ("x-extra", "1")],
+    ):
+        assert_that(_comparable_headers(changed)).is_not_equal_to(
+            _comparable_headers(earlier),
+        )
+
+
+def test_header_comparison_rejects_a_dated_cookie_that_is_not_expired() -> None:
+    """A cookie with an ``expires`` date must also carry ``Max-Age=0``."""
+    live = _CLEARED_AT_38.replace("Max-Age=0", "Max-Age=600")
+
+    with pytest.raises(AssertionError):
+        _comparable_headers([("set-cookie", live)])
