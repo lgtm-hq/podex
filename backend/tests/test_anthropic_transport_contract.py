@@ -408,7 +408,7 @@ def test_server_errors_are_retried_then_reported(
 
     errors = run_service(_client(provider))
 
-    assert_that(errors).is_equal_to([errors[0]])
+    assert_that(errors).is_length(1)
     assert_that(errors[0]).ends_with(f": {status}")
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(sleeps).is_length(_SDK_MAX_RETRIES)
