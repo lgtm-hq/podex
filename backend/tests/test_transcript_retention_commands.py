@@ -444,13 +444,13 @@ def _tamper_empty_text(
 
 
 @pytest.mark.parametrize(
-    "tamper",
+    ("tamper", "code"),
     [
-        _tamper_missing,
-        _tamper_undecryptable,
-        _tamper_different_text,
-        _tamper_malformed,
-        _tamper_empty_text,
+        (_tamper_missing, "unreadable"),
+        (_tamper_undecryptable, "unreadable"),
+        (_tamper_different_text, "mismatch"),
+        (_tamper_malformed, "malformed"),
+        (_tamper_empty_text, "empty"),
     ],
     ids=["missing", "undecryptable", "different-text", "malformed", "empty-text"],
 )
@@ -460,6 +460,7 @@ def test_unverifiable_artifact_refuses_purge_without_changes(
     tamper: Callable[
         [EncryptedFilesystemTranscriptArtifactStore, TranscriptArtifact], None
     ],
+    code: str,
 ) -> None:
     """Failed verification leaves rows, ciphertext and proofs exactly as before."""
     now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
@@ -470,15 +471,159 @@ def test_unverifiable_artifact_refuses_purge_without_changes(
     before = proof_state(db_session)
     ciphertext = _object_bytes(tmp_path, artifact)
 
-    with pytest.raises(ValueError, match=ARTIFACT_VERIFICATION_FAILED) as error:
+    with pytest.raises(ValueError) as error:
         _purge(db_session, transcript, store, now)
 
+    assert_that(str(error.value)).is_equal_to(f"{ARTIFACT_VERIFICATION_FAILED}: {code}")
     assert_that(error.value.__cause__).is_none()
-    assert_that(str(error.value)).does_not_contain(_ACQUIRED_TEXT)
+    assert_that(error.value.__context__).is_none()
     assert_that(proof_state(db_session)).is_equal_to(before)
     assert_that(_object_bytes(tmp_path, artifact)).is_equal_to(ciphertext)
     assert_that(store.events).is_equal_to(["read"])
     assert_that(db_session.query(TranscriptDigest).count()).is_zero()
+
+
+_LEAK_MARKER = "LEAK-MARKER-private-transcript-body"
+
+
+def _rendered_error_state(error: BaseException) -> tuple[list[str], set[str]]:
+    """Render every chained exception's attributes and every frame's locals.
+
+    Frames from this test module are skipped because the test itself holds
+    the marker; the returned function names prove library frames were seen.
+    """
+    rendered: list[str] = []
+    functions: set[str] = set()
+    pending: list[BaseException] = [error]
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        rendered.extend(
+            repr(getattr(current, name, None))
+            for name in dir(current)
+            if not name.startswith("__")
+        )
+        frame_link = current.__traceback__
+        while frame_link is not None:
+            frame = frame_link.tb_frame
+            if frame.f_code.co_filename != __file__:
+                functions.add(frame.f_code.co_name)
+                rendered.extend(repr(value) for value in frame.f_locals.values())
+            frame_link = frame_link.tb_next
+        pending.extend(
+            linked
+            for linked in (current.__cause__, current.__context__)
+            if linked is not None
+        )
+    return rendered, functions
+
+
+def _plant_malformed_json(
+    store: EncryptedFilesystemTranscriptArtifactStore, storage_key: str
+) -> None:
+    """Encrypt truncated JSON that embeds the marker."""
+    (store.root_path / storage_key).write_bytes(
+        store.fernet.encrypt(f'{{"raw_text": "{_LEAK_MARKER}'.encode()),
+    )
+
+
+def _plant_wrong_shape(
+    store: EncryptedFilesystemTranscriptArtifactStore, storage_key: str
+) -> None:
+    """Encrypt valid JSON whose segments have the wrong type."""
+    store.put_json(
+        storage_key=storage_key,
+        payload={"raw_text": _LEAK_MARKER, "segments": _LEAK_MARKER},
+    )
+
+
+def _plant_mismatch(
+    store: EncryptedFilesystemTranscriptArtifactStore, storage_key: str
+) -> None:
+    """Encrypt well-formed text that differs from the acquired text."""
+    store.put_json(
+        storage_key=storage_key,
+        payload={"raw_text": _LEAK_MARKER, "segments": []},
+    )
+
+
+def _plant_unpaired_surrogate(
+    store: EncryptedFilesystemTranscriptArtifactStore, storage_key: str
+) -> None:
+    """Encrypt text that decodes but cannot be encoded as UTF-8."""
+    store.put_json(
+        storage_key=storage_key,
+        payload={"raw_text": f"{_LEAK_MARKER}\ud800", "segments": []},
+    )
+
+
+@pytest.mark.parametrize(
+    ("plant", "code"),
+    [
+        (_plant_malformed_json, "malformed"),
+        (_plant_wrong_shape, "malformed"),
+        (_plant_mismatch, "mismatch"),
+        (_plant_unpaired_surrogate, "malformed"),
+    ],
+    ids=["malformed-json", "wrong-shape", "mismatch", "unpaired-surrogate"],
+)
+def test_verification_errors_retain_no_transcript_text(
+    db_session: Session,
+    tmp_path: Path,
+    plant: Callable[[EncryptedFilesystemTranscriptArtifactStore, str], None],
+    code: str,
+) -> None:
+    """No chained error, attribute or frame local keeps decrypted text."""
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    store = _encrypted_store(tmp_path)
+    transcript, artifact = _acquire_encrypted_only(db_session, store, now)
+    plant(store, artifact.storage_key)
+
+    with pytest.raises(ValueError) as error:
+        _purge(db_session, transcript, store, now)
+
+    rendered, functions = _rendered_error_state(error.value)
+    assert_that(functions).contains("purge_transcript_with_proof")
+    for text in rendered:
+        assert_that(text).does_not_contain(_LEAK_MARKER)
+        assert_that(text).does_not_contain(_ACQUIRED_TEXT)
+    assert_that(error.value.__cause__).is_none()
+    assert_that(error.value.__context__).is_none()
+    assert_that(functions).contains("verify_artifact_source_hash")
+    assert_that(str(error.value)).is_equal_to(f"{ARTIFACT_VERIFICATION_FAILED}: {code}")
+
+
+@pytest.mark.parametrize("empty_text", ["", " \n\t"], ids=["empty", "whitespace"])
+def test_artifact_with_empty_text_is_refused_even_when_hash_matches(
+    db_session: Session,
+    tmp_path: Path,
+    empty_text: str,
+) -> None:
+    """Empty acquired text cannot be proven, so it is never purged."""
+    now = datetime(2026, 5, 10, 12, 0, tzinfo=UTC)
+    inner = _encrypted_store(tmp_path)
+    store = _OrderingStore(inner=inner, db=db_session)
+    transcript, artifact = _acquire_encrypted_only(db_session, store, now)
+    inner.put_json(
+        storage_key=artifact.storage_key,
+        payload={"raw_text": empty_text, "segments": []},
+    )
+    artifact.source_text_hash = sha256(empty_text.encode("utf-8")).hexdigest()
+    before = proof_state(db_session)
+    ciphertext = _object_bytes(tmp_path, artifact)
+
+    with pytest.raises(ValueError) as error:
+        _purge(db_session, transcript, store, now)
+
+    assert_that(str(error.value)).is_equal_to(f"{ARTIFACT_VERIFICATION_FAILED}: empty")
+    assert_that(proof_state(db_session)).is_equal_to(before)
+    assert_that(_object_bytes(tmp_path, artifact)).is_equal_to(ciphertext)
+    assert_that(store.events).is_equal_to(["read"])
+    assert_that(db_session.query(TranscriptDigest).count()).is_zero()
+    assert_that(artifact.purged_at).is_none()
 
 
 def test_missing_store_refuses_purge_without_changes(

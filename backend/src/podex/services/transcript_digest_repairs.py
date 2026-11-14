@@ -2,22 +2,20 @@
 
 Digests written before purge verified its source can carry the SHA-256 of
 empty text even though nonempty text was acquired into an encrypted artifact.
-These commands identify such rows and, only where the artifact is still
-retained and verifiable, add a separate repair digest. The original row is
-never rewritten, and deleted input is never reconstructed or certified.
+These commands identify such rows and, only where the one artifact that
+existed when the proof was written is still retained and verifiable, add a
+separate repair digest. The original row is never rewritten, and deleted or
+later input is never reconstructed, attributed or certified.
 """
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum, auto
 
 from sqlalchemy.orm import Session
 
 from podex.models import TranscriptArtifact, TranscriptDigest
-from podex.services.transcript_artifacts import (
-    TranscriptArtifactStore,
-    list_retained_artifacts,
-)
+from podex.services.transcript_artifacts import TranscriptArtifactStore
 from podex.services.transcript_retention_commands import (
     EMPTY_SOURCE_TEXT_HASH,
     resolve_verified_purge_source,
@@ -31,6 +29,7 @@ class EmptySourceDigestStatus(StrEnum):
 
     REPAIRED = auto()
     RETAINED_ARTIFACT = auto()
+    UNATTRIBUTABLE_ARTIFACT = auto()
     SOURCE_DELETED = auto()
     NO_RECORDED_SOURCE = auto()
 
@@ -43,8 +42,9 @@ class EmptySourceDigestData:
         digest_id: The empty-source digest.
         transcript_id: Transcript the digest belongs to.
         status: Repair state or what source evidence remains.
-        recorded_artifact_hash: Newest acquisition-time artifact hash, if any.
-            It is metadata only; it is not a verification of deleted input.
+        recorded_artifact_hash: Hash recorded at acquisition by the newest
+            artifact that predates the proof. It is metadata only; it is not a
+            verification of deleted input.
         repair_digest_id: Repair record for this digest, when one exists.
     """
 
@@ -82,8 +82,14 @@ def repair_empty_source_digest(
 ) -> TranscriptDigest:
     """Record verified proof for an empty-source digest whose input is retained.
 
-    Reads and verifies the retained artifacts, then adds a new digest that
-    references the original. No content, artifact or existing digest changes.
+    Only an artifact attributable to the original proof qualifies: it must be
+    the transcript's single retained artifact, the only artifact stored and
+    recorded before the proof was written, and not a re-acquisition. Its
+    content is verified against the hash recorded at acquisition, then a new
+    digest referencing the original is added. ``generated_at`` and
+    ``verified_at`` are the repair's verification time; ``purged_at`` and
+    ``repairs_purged_at`` keep the original proof's purge time. No content,
+    artifact or existing digest changes.
 
     Args:
         db: Database session.
@@ -96,19 +102,24 @@ def repair_empty_source_digest(
 
     Raises:
         ValueError: If the digest is unknown, not empty-source, already
-            repaired, has no retained artifact, or verification fails.
+            repaired, has no attributable retained artifact, or verification
+            fails.
     """
     digest = db.query(TranscriptDigest).filter(TranscriptDigest.id == digest_id).first()
     if digest is None or digest.source_text_hash != EMPTY_SOURCE_TEXT_HASH:
         raise ValueError("Digest is not an empty-source purge proof")
     classification = _classify(db=db, digest=digest)
-    if classification.status is not EmptySourceDigestStatus.RETAINED_ARTIFACT:
+    artifact = _attributable_artifact(db=db, digest=digest)
+    if (
+        classification.status is not EmptySourceDigestStatus.RETAINED_ARTIFACT
+        or artifact is None
+    ):
         raise ValueError(
             f"Digest cannot be repaired: {classification.status.value}",
         )
     source = resolve_verified_purge_source(
         transcript=digest.transcript,
-        artifacts=list_retained_artifacts(db=db, transcript_id=digest.transcript_id),
+        artifacts=[artifact],
         artifact_store=artifact_store,
     )
     digest_key = f"transcript:{digest.transcript_id}:purge:{source.source_hash}"
@@ -134,7 +145,8 @@ def repair_empty_source_digest(
             "source_representation": source.representation.value,
             "source_artifact_id": source.artifact_id,
             REPAIRS_DIGEST_KEY: digest.id,
-            "repaired_at": now.isoformat(),
+            "repairs_purged_at": _as_utc(digest.purged_at).isoformat(),
+            "verified_at": now.isoformat(),
         },
         generated_at=now,
         purged_at=digest.purged_at,
@@ -160,16 +172,14 @@ def _classify(*, db: Session, digest: TranscriptDigest) -> EmptySourceDigestData
         ),
         None,
     )
-    artifacts = (
-        db.query(TranscriptArtifact)
-        .filter(TranscriptArtifact.transcript_id == digest.transcript_id)
-        .order_by(TranscriptArtifact.id.desc())
-        .all()
-    )
+    artifacts = _artifacts_newest_first(db=db, transcript_id=digest.transcript_id)
+    predating = [item for item in artifacts if _predates(artifact=item, digest=digest)]
     if repair_id is not None:
         status = EmptySourceDigestStatus.REPAIRED
-    elif any(artifact.purged_at is None for artifact in artifacts):
+    elif _attributable_artifact(db=db, digest=digest) is not None:
         status = EmptySourceDigestStatus.RETAINED_ARTIFACT
+    elif any(artifact.purged_at is None for artifact in artifacts):
+        status = EmptySourceDigestStatus.UNATTRIBUTABLE_ARTIFACT
     elif artifacts:
         status = EmptySourceDigestStatus.SOURCE_DELETED
     else:
@@ -178,6 +188,52 @@ def _classify(*, db: Session, digest: TranscriptDigest) -> EmptySourceDigestData
         digest_id=digest.id,
         transcript_id=digest.transcript_id,
         status=status,
-        recorded_artifact_hash=artifacts[0].source_text_hash if artifacts else None,
+        recorded_artifact_hash=predating[0].source_text_hash if predating else None,
         repair_digest_id=repair_id,
     )
+
+
+def _attributable_artifact(
+    *,
+    db: Session,
+    digest: TranscriptDigest,
+) -> TranscriptArtifact | None:
+    """Return the retained artifact the original proof must have covered.
+
+    Exactly one artifact may predate the proof, it must still be retained,
+    and no other artifact may be retained; anything else is ambiguous.
+    """
+    artifacts = _artifacts_newest_first(db=db, transcript_id=digest.transcript_id)
+    predating = [item for item in artifacts if _predates(artifact=item, digest=digest)]
+    retained = [item for item in artifacts if item.purged_at is None]
+    if len(predating) == 1 and retained == predating:
+        return predating[0]
+    return None
+
+
+def _artifacts_newest_first(
+    *,
+    db: Session,
+    transcript_id: int,
+) -> list[TranscriptArtifact]:
+    """List every artifact ever stored for one transcript, newest first."""
+    return list(
+        db.query(TranscriptArtifact)
+        .filter(TranscriptArtifact.transcript_id == transcript_id)
+        .order_by(TranscriptArtifact.id.desc())
+        .all()
+    )
+
+
+def _predates(*, artifact: TranscriptArtifact, digest: TranscriptDigest) -> bool:
+    """Whether the artifact and its acquisition hash existed before the proof."""
+    return (
+        artifact.reacquired_from_digest_id is None
+        and _as_utc(artifact.stored_at) < _as_utc(digest.generated_at)
+        and _as_utc(artifact.created_at) <= _as_utc(digest.created_at)
+    )
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Treat naive database timestamps as UTC so comparisons are portable."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)

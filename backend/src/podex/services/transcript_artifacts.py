@@ -400,6 +400,15 @@ def load_transcript_processing_payload(
     )
 
 
+class ArtifactVerificationFailure(StrEnum):
+    """Fixed, content-free reasons a retained artifact fails verification."""
+
+    UNREADABLE = auto()
+    MALFORMED = auto()
+    EMPTY = auto()
+    MISMATCH = auto()
+
+
 def verify_artifact_source_hash(
     *,
     artifact: TranscriptArtifact,
@@ -407,7 +416,9 @@ def verify_artifact_source_hash(
 ) -> str:
     """Read one retained artifact and prove it still holds the acquired text.
 
-    The decrypted payload stays local to this call; only its hash is returned.
+    Decryption, validation and hashing happen in a helper that returns only a
+    hash or a failure code, so the error raised here carries no cause, no
+    context and no frame holding decrypted text.
 
     Args:
         artifact: Unpurged artifact metadata recorded at acquisition.
@@ -418,19 +429,50 @@ def verify_artifact_source_hash(
 
     Raises:
         ValueError: If the object is missing, unreadable, cannot be decrypted,
-            is malformed, or hashes differently from its recorded metadata.
+            is malformed, holds empty text, or hashes differently from its
+            recorded metadata.
     """
+    outcome = _hash_artifact_text(
+        artifact_store=artifact_store,
+        storage_key=artifact.storage_key,
+    )
+    if outcome != artifact.source_text_hash and not isinstance(
+        outcome, ArtifactVerificationFailure
+    ):
+        outcome = ArtifactVerificationFailure.MISMATCH
+    if isinstance(outcome, ArtifactVerificationFailure):
+        raise ValueError(f"{ARTIFACT_VERIFICATION_FAILED}: {outcome.value}")
+    return outcome
+
+
+def _hash_artifact_text(
+    *,
+    artifact_store: TranscriptArtifactStore,
+    storage_key: str,
+) -> str | ArtifactVerificationFailure:
+    """Decrypt, validate and hash one artifact without letting plaintext escape.
+
+    Every failure is recorded inside its handler and returned after the
+    handler exits, and the payload reference is cleared before returning, so
+    no exception, chained context or frame retains the decrypted text.
+    """
+    payload: TranscriptProcessingPayloadData | None = None
+    result: str | ArtifactVerificationFailure
     try:
         payload = _processing_payload_from_json(
-            artifact_store.get_json(storage_key=artifact.storage_key),
+            artifact_store.get_json(storage_key=storage_key),
         )
-    except (InvalidToken, LookupError, OSError, ValueError):
-        # Drop the cause: decoder errors can carry decrypted payload fragments.
-        raise ValueError(ARTIFACT_VERIFICATION_FAILED) from None
-    source_hash = sha256(payload.raw_text.encode("utf-8")).hexdigest()
-    if source_hash != artifact.source_text_hash:
-        raise ValueError(ARTIFACT_VERIFICATION_FAILED)
-    return source_hash
+        if payload.raw_text.strip():
+            result = sha256(payload.raw_text.encode("utf-8")).hexdigest()
+        else:
+            result = ArtifactVerificationFailure.EMPTY
+    except (InvalidToken, LookupError, OSError):
+        result = ArtifactVerificationFailure.UNREADABLE
+    except (RuntimeError, TypeError, ValueError):
+        result = ArtifactVerificationFailure.MALFORMED
+    finally:
+        payload = None
+    return result
 
 
 def reacquire_purged_transcript(

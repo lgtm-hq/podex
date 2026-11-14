@@ -135,7 +135,11 @@ def test_repair_adds_verified_record_and_keeps_original(db_session: Session) -> 
         {"repairs_digest_id": original.id},
         {"source_representation": "encrypted_artifact_raw_text"},
         {"source_artifact_id": artifact.id},
+        {"verified_at": _NOW.isoformat()},
+        {"repairs_purged_at": (_NOW - timedelta(days=1)).isoformat()},
     )
+    assert_that(repair.metadata_json).does_not_contain_key("repaired_at")
+    assert_that(repair.generated_at.replace(tzinfo=UTC)).is_equal_to(_NOW)
     assert_that(proof_state(db_session)["transcript_digests"][0]).is_equal_to(
         original_row
     )
@@ -216,3 +220,77 @@ def test_repair_refuses_when_verified_proof_already_exists(
         )
 
     assert_that(proof_state(db_session)).is_equal_to(before)
+
+
+def _later_artifact(
+    db: Session,
+    store: RecordingArtifactStore,
+    digest: TranscriptDigest,
+    storage_key: str,
+) -> TranscriptArtifact:
+    """Attach a retained artifact stored after the empty proof was written."""
+    store.put_json(
+        storage_key=storage_key,
+        payload={"raw_text": "attached later", "segments": []},
+    )
+    artifact = TranscriptArtifact(
+        transcript_id=digest.transcript_id,
+        episode_id=digest.episode_id,
+        storage_key=storage_key,
+        storage_backend="recording",
+        encryption_key_id="key-v1",
+        provider=digest.provider,
+        source_text_hash=sha256(b"attached later").hexdigest(),
+        content_type="application/json",
+        byte_size=1,
+        stored_at=_NOW,
+    )
+    db.add(artifact)
+    db.flush()
+    return artifact
+
+
+@pytest.mark.parametrize(
+    "case", ["stored-later", "recorded-later", "reacquired", "second-retained"]
+)
+def test_repair_rejects_artifact_not_attributable_to_original_proof(
+    db_session: Session,
+    case: str,
+) -> None:
+    """Later, re-acquired or competing artifacts cannot be backdated as proof."""
+    store = RecordingArtifactStore()
+    with_original = case in {"recorded-later", "reacquired", "second-retained"}
+    digest, artifact = _empty_proof(
+        db_session, store, slug=case, with_artifact=with_original
+    )
+    if case == "stored-later":
+        _later_artifact(db_session, store, digest, "transcripts/later/raw.json.enc")
+    elif artifact is None:
+        raise AssertionError
+    elif case == "recorded-later":
+        artifact.created_at = digest.created_at + timedelta(seconds=1)
+    elif case == "reacquired":
+        artifact.reacquired_from_digest_id = digest.id
+    else:
+        _later_artifact(db_session, store, digest, "transcripts/second/raw.json.enc")
+    before = proof_state(db_session)
+    objects = dict(store.objects)
+
+    with pytest.raises(ValueError, match="unattributable_artifact"):
+        repair_empty_source_digest(
+            db=db_session, digest_id=digest.id, artifact_store=store, now=_NOW
+        )
+
+    assert_that(proof_state(db_session)).is_equal_to(before)
+    assert_that(store.objects).is_equal_to(objects)
+    assert_that(store.deleted).is_empty()
+    inventory = inventory_empty_source_digests(db=db_session)
+    assert_that(inventory[0].status).is_equal_to(
+        EmptySourceDigestStatus.UNATTRIBUTABLE_ARTIFACT
+    )
+    expected_hash = (
+        sha256(_SOURCE.encode("utf-8")).hexdigest()
+        if case == "second-retained"
+        else None
+    )
+    assert_that(inventory[0].recorded_artifact_hash).is_equal_to(expected_hash)

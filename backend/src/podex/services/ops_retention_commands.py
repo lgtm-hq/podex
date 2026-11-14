@@ -29,6 +29,11 @@ from podex.services.transcript_retention_commands import (
     evaluate_transcript_retention,
     purge_transcript_with_proof,
     require_transcript_purge_enabled,
+    resolve_column_proof_source,
+)
+
+AMBIGUOUS_PROOF_REASON = (
+    "Transcript already has purge proofs that do not identify one source"
 )
 
 
@@ -185,6 +190,7 @@ def purge_ops_transcript(
     coverage = evaluate_episode_derivative_coverage(db=db, episode=transcript.episode)
     if not coverage.purge_safe:
         raise ValueError("Derivative coverage is incomplete for transcript purge")
+    _require_unambiguous_existing_proof(db=db, transcript=transcript)
     digest = purge_transcript_with_proof(
         db=db,
         transcript=transcript,
@@ -222,6 +228,33 @@ def reacquire_ops_transcript(
         artifact=result.artifact,
         prior_digest=result.prior_digest,
     )
+
+
+def _require_unambiguous_existing_proof(*, db: Session, transcript: Transcript) -> None:
+    """Refuse proof sets that leave the transcript's purge evidence ambiguous.
+
+    Operator purge historically resolved its proof as the transcript's only
+    digest after replaying the column-hash key. That fails, after deletion
+    began, whenever a transcript already had more than one digest or a single
+    digest under any other key. Those states are refused here before any
+    read, write or delete, so verification never widens what may be purged.
+
+    Raises:
+        ValueError: If existing digests are not empty or a single
+            column-hash proof.
+    """
+    keys = [
+        key
+        for (key,) in db.query(TranscriptDigest.digest_key)
+        .filter(TranscriptDigest.transcript_id == transcript.id)
+        .all()
+    ]
+    column_key = (
+        f"transcript:{transcript.id}:purge:"
+        f"{resolve_column_proof_source(transcript).source_hash}"
+    )
+    if len(keys) > 1 or (keys and keys[0] != column_key):
+        raise ValueError(AMBIGUOUS_PROOF_REASON)
 
 
 def _latest_confidence(*, db: Session, transcript: Transcript) -> float | None:
