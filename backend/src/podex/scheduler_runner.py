@@ -10,6 +10,7 @@ all background cadence.
 import signal
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from types import FrameType
 
 from sqlalchemy.orm import Session
@@ -49,6 +50,7 @@ def run_tick(
     db: Session,
     settings: Settings,
     digest_sender: DigestSender | None,
+    now: datetime | None = None,
 ) -> TickSummaryData:
     """Run one scheduler tick: reconcile, plan, and execute due work.
 
@@ -56,20 +58,23 @@ def run_tick(
         db: Database session.
         settings: Runtime settings controlling cadences.
         digest_sender: Configured digest delivery boundary, if any.
+        now: Timestamp shared by reconciliation, planning, and timed work.
 
     Returns:
         Summary of the work performed this tick.
     """
-    reconcile_recurring_discovery_schedules(db=db)
+    effective_now = now or datetime.now(UTC)
+    reconcile_recurring_discovery_schedules(db=db, now=effective_now)
     reconcile_notification_schedules(
         db=db,
         digest_interval_minutes=settings.scheduler_digest_interval_minutes,
         retention_interval_minutes=settings.scheduler_retention_interval_minutes,
+        now=effective_now,
     )
-    planned = plan_due_scheduled_work(db=db)
+    planned = plan_due_scheduled_work(db=db, now=effective_now)
     discovery = run_due_episode_discovery_work(db=db)
-    digests = run_due_digest_work(db=db, sender=digest_sender)
-    retention = run_due_retention_work(db=db)
+    digests = run_due_digest_work(db=db, sender=digest_sender, now=effective_now)
+    retention = run_due_retention_work(db=db, now=effective_now)
     db.commit()
     return TickSummaryData(
         planned=len(planned),
