@@ -52,17 +52,18 @@ function collectSinks(directory: string, prefix = ""): Sink[] {
         return collectSinks(path, `${file}/`);
       }
       if (
-        !/\.(?:astro|tsx|ts|js|mjs)$/.test(entry.name) ||
+        !/\.(?:astro|tsx|jsx|ts|mts|cts|js|mjs|cjs)$/.test(entry.name) ||
         /\.(?:test|spec)\.[^.]+$/.test(entry.name)
       ) {
         return [];
       }
       const source = readFileSync(path, "utf8");
       const rawHtml =
-        /\bset\s*:\s*html\s*=\s*(?:\{[^}]*\}|"[^"]*"|'[^']*')|\b(?:dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|src[Dd]oc)\b|\bdocument\s*\.\s*write\b/g;
+        /\bset\s*:\s*html\s*=\s*(?:\{[^}]*\}|"[^"]*"|'[^']*')|\b(?:dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|setHTMLUnsafe|createContextualFragment|[Ss][Rr][Cc][Dd][Oo][Cc])\b|\bdocument\s*\.\s*write(?:ln)?\b/g;
       // Frontmatter may document <script> in comments. Script elements live
-      // below it; raw-HTML operations are checked in both sections.
-      const template = entry.name.endsWith(".astro") ? source.replace(/^---[\s\S]*?^---/m, "") : "";
+      // below it; raw-HTML operations are checked in both sections. Only a
+      // block that opens on the first line of the file is frontmatter.
+      const template = entry.name.endsWith(".astro") ? source.replace(/^---\r?\n[\s\S]*?\r?\n---/, "") : "";
       const scripts = /<script\b[^>]*(?:\/>|>[\s\S]*?<\/script\b[^>]*>)/gi;
       return [
         ...Array.from(source.matchAll(rawHtml)),
@@ -100,6 +101,12 @@ describe("Astro template sinks", () => {
     ["astro", "---\ndocument.write(catalogText);\n---\n<div />"],
     ["tsx", "<iframe srcdoc={catalogText} />"],
     ["tsx", "<iframe srcDoc={catalogText} />"],
+    ["astro", "<iframe SRCDOC={catalogText} />"],
+    ["ts", "document.writeln(catalogText);"],
+    ["ts", "element.setHTMLUnsafe(catalogText);"],
+    ["ts", "range.createContextualFragment(catalogText);"],
+    ["jsx", "<div dangerouslySetInnerHTML={{ __html: catalogText }} />"],
+    ["astro", "<p>intro</p>\n---\n<script is:inline>{catalogText}</script>\n---\n"],
   ])("rejects an unreviewed temporary source (%#)", (extension, source) => {
     const fixture = mkdtempSync(join(tmpdir(), "podex-unreviewed-"));
     try {
