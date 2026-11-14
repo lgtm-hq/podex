@@ -253,8 +253,7 @@ def test_tick_runs_successive_cadences(
         items = (
             db_session.query(ScheduledWorkItemModel)
             .filter(
-                ScheduledWorkItemModel.due_at
-                == _NOW + timedelta(minutes=due_minute),
+                ScheduledWorkItemModel.due_at == _NOW + timedelta(minutes=due_minute),
             )
             .all()
         )
