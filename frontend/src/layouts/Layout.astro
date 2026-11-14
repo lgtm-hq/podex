@@ -1,5 +1,6 @@
 ---
 import "../styles/global.css";
+import { serializeScriptJson } from "../lib/script-json";
 import {
   SITE_DESCRIPTION,
   SITE_NAME,
@@ -86,13 +87,16 @@ const structuredEntries: unknown[] = Array.isArray(jsonLd)
     </script>
 
     {
-      structuredEntries.map((entry) => (
-        <script
-          is:inline
-          type="application/ld+json"
-          set:html={JSON.stringify(entry)}
-        />
-      ))
+      structuredEntries.map((entry) => {
+        const serialized = serializeScriptJson(entry);
+        return serialized === "null" ? null : (
+          <script
+            is:inline
+            type="application/ld+json"
+            set:html={serialized}
+          />
+        );
+      })
     }
   </head>
   <body class="min-h-screen">
