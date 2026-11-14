@@ -501,3 +501,52 @@ def test_reported_errors_record_loadable_failed_run(db_session: Session) -> None
     assert_that(_load_run_statuses(db_session)).is_equal_to(
         [IngestionRunStatus.FAILED],
     )
+
+
+def test_resume_discards_work_committed_after_the_schedule_was_disabled(
+    db_session: Session,
+) -> None:
+    """Work a planner committed after the disable is not replayed on resume."""
+    podcast = _plan_discovery_for_active_podcast(db_session)
+    original = db_session.query(ScheduledWorkItemModel).one()
+    podcast.status = PodcastStatus.PAUSED
+    db_session.commit()
+    reconcile_recurring_discovery_schedules(
+        db=db_session,
+        interval_minutes=60,
+        now=datetime(2026, 5, 10, 12, 15, tzinfo=UTC),
+    )
+    db_session.commit()
+    # A planner that read the schedule before the disable commits its item late.
+    late = ScheduledWorkItemModel(
+        schedule_id=original.schedule_id,
+        schedule_key=original.schedule_key,
+        work_key=f"{original.work_key}:late",
+        task_kind=original.task_kind,
+        status="pending",
+        due_at=datetime(2026, 5, 10, 13, tzinfo=UTC),
+        interval_minutes=original.interval_minutes,
+        metadata_json=original.metadata_json,
+    )
+    db_session.add(late)
+    podcast.status = PodcastStatus.ACTIVE
+    db_session.commit()
+
+    plan_recurring_discovery_work(
+        db=db_session,
+        interval_minutes=60,
+        now=datetime(2026, 5, 10, 15, tzinfo=UTC),
+    )
+    db_session.commit()
+    calls: list[int] = []
+
+    def runner(_db: Session, run_podcast: Podcast) -> DiscoveryResult:
+        """Record executions; none is expected for the stale item."""
+        calls.append(run_podcast.id)
+        return DiscoveryResult()
+
+    run_due_episode_discovery_work(db=db_session, runner=runner)
+
+    assert_that(calls).is_empty()
+    assert_that(late.status).is_equal_to("skipped")
+    assert_that(db_session.query(PipelineSchedule).one().enabled).is_true()

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -281,8 +282,13 @@ def _disable_inactive_discovery_schedules(
     active_podcast_ids: set[int],
     now: datetime,
 ) -> None:
-    """Disable orphaned/inactive discovery schedules and discard pending work."""
-    disabled_ids: list[int] = []
+    """Disable orphaned/inactive discovery schedules and discard pending work.
+
+    Pending discovery is discarded for every disabled schedule, not only the
+    ones disabled by this call. That covers work committed by a planner after
+    an earlier disable, and it runs before a schedule is re-enabled, so resume
+    never replays stale work.
+    """
     for schedule in db.query(PipelineSchedule).filter(
         PipelineSchedule.enabled.is_(True),
     ):
@@ -293,12 +299,15 @@ def _disable_inactive_discovery_schedules(
         if isinstance(podcast_id, int) and podcast_id in active_podcast_ids:
             continue
         schedule.enabled = False
-        disabled_ids.append(schedule.id)
+    db.flush()
 
+    disabled_schedule_ids = select(PipelineSchedule.id).where(
+        PipelineSchedule.enabled.is_(False),
+    )
     pending = (
         db.query(ScheduledWorkItemModel)
         .filter(
-            ScheduledWorkItemModel.schedule_id.in_(disabled_ids),
+            ScheduledWorkItemModel.schedule_id.in_(disabled_schedule_ids),
             ScheduledWorkItemModel.task_kind == ScheduledTaskKind.INGESTION.value,
             ScheduledWorkItemModel.status == ScheduledWorkStatus.PENDING.value,
         )
