@@ -93,6 +93,14 @@ def test_process_startup_rejects_unencodable_secret(
     monkeypatch.setattr(api_main, "get_settings", Settings)
     monkeypatch.setattr(scheduler_runner, "get_settings", Settings)
 
+    def reject_scheduler_loop(_runner: scheduler_runner.SchedulerRunner) -> None:
+        """Fail immediately if settings validation ever lets startup continue."""
+        raise AssertionError("Invalid settings reached the scheduler loop")
+
+    monkeypatch.setattr(
+        scheduler_runner.SchedulerRunner, "run_forever", reject_scheduler_loop
+    )
+
     with pytest.raises(RuntimeError) as caught:
         if process == "api":
             api_main.create_app()

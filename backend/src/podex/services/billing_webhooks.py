@@ -82,6 +82,9 @@ def verify_paddle_signature(
                 or not value.isdecimal()
             ):
                 raise PaddleSignatureFormatError
+            # Paddle emits canonical Unix seconds, never zero-padded aliases.
+            if len(value) > 1 and value.startswith("0"):
+                raise PaddleSignatureFormatError
             timestamp = int(value)
             if timestamp > _MAX_SIGNATURE_TIMESTAMP:
                 raise PaddleSignatureFormatError
