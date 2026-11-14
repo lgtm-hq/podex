@@ -266,6 +266,9 @@ def _retention_checkpoint(*, db: Session, now: datetime) -> SweepCheckpoint:
     checkpoint = _locked_retention_checkpoint(db=db)
     if checkpoint is not None:
         return checkpoint
+    # Flush first, so the handler below only ever sees the checkpoint insert
+    # and cannot hide an integrity error from another pending row.
+    db.flush()
     try:
         # A savepoint keeps a lost creation race from discarding the caller's
         # transaction; the winner's row is then loaded and locked instead.

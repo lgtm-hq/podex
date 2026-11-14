@@ -15,6 +15,7 @@ from podex.models import (
     Podcast,
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
+    SweepCheckpoint,
     Transcript,
 )
 from podex.scheduler_runner import TickSummaryData, run_tick
@@ -434,26 +435,24 @@ def test_retention_sweep_resumes_in_a_new_session(db_session: Session) -> None:
     assert_that(second).is_equal_to(ids[2:4])
 
 
-def test_retention_sweep_ignores_a_stale_cached_position(db_session: Session) -> None:
-    """A session holding an old checkpoint object continues from the stored one."""
-    ids = _seed_transcripts(db_session, count=8)
-    db_session.close()
-    bind = db_session.get_bind()
-    # Without expiry on commit the first session keeps its checkpoint object.
-    caching = Session(bind=bind, expire_on_commit=False)
-    other = Session(bind=bind)
+def test_retention_sweep_refreshes_a_checkpoint_the_session_holds(
+    db_session: Session,
+) -> None:
+    """A checkpoint object still held by the session is re-read when locked."""
+    ids = _seed_transcripts(db_session, count=6)
+    first = _run_retention_job(db_session, job=0, batch_size=2)
+    held = db_session.query(SweepCheckpoint).one()
+    other = Session(bind=db_session.get_bind())
     try:
-        first = _run_retention_job(caching, job=0, batch_size=2)
         second = _run_retention_job(other, job=1, batch_size=2)
-        third = _run_retention_job(other, job=2, batch_size=2)
-        fourth = _run_retention_job(caching, job=3, batch_size=2)
     finally:
-        caching.close()
         other.close()
+    third = _run_retention_job(db_session, job=2, batch_size=2)
 
-    assert_that([first, second, third, fourth]).is_equal_to(
-        [ids[0:2], ids[2:4], ids[4:6], ids[6:8]],
+    assert_that([first, second, third]).is_equal_to(
+        [ids[0:2], ids[2:4], ids[4:6]],
     )
+    assert_that(held.last_id).is_none()
 
 
 def test_retention_sweep_retries_rolled_back_batch(db_session: Session) -> None:
