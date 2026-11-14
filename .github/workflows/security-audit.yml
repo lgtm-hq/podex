@@ -25,10 +25,9 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-security-audit.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       job-name: '🔐 Security Audit'
       # yamllint disable-line rule:line-length
-      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.30@sha256:6d6a3dc5cd2d83c4b997a1d21607fcb3499677994cad66aba858e0de5439df02
+      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.32@sha256:b495de02bf5bf5b2dd284b58101d01d8827f078a46005e2d0b238f0eed7e9756
       upload-comment-artifact: ${{ github.event_name == 'pull_request' }}
       egress-policy: block
       egress-preset: quality
@@ -51,7 +50,6 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-publish-security-audit-comment.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: github-tooling
     permissions:
@@ -75,4 +73,3 @@ jobs:
     with:
       egress-policy: block
       workflow-key: security-audit
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3

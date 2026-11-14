@@ -47,7 +47,6 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       context: backend
       file: backend/Dockerfile
@@ -116,10 +115,7 @@ jobs:
         production.cloudflare.docker.com:443
         production.cloudfront.docker.com:443
         docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
-        gcr.io:443
         mirror.gcr.io:443
-        public.ecr.aws:443
-        get.trivy.dev:443
         fulcio.sigstore.dev:443
         rekor.sigstore.dev:443
         tuf-repo-cdn.sigstore.dev:443
@@ -146,7 +142,6 @@ jobs:
       attestations: write
       security-events: write
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       context: frontend
       file: frontend/Dockerfile
@@ -202,10 +197,7 @@ jobs:
         production.cloudflare.docker.com:443
         production.cloudfront.docker.com:443
         docker-images-prod.s3.dualstack.us-east-1.amazonaws.com:443
-        gcr.io:443
         mirror.gcr.io:443
-        public.ecr.aws:443
-        get.trivy.dev:443
         fulcio.sigstore.dev:443
         rekor.sigstore.dev:443
         tuf-repo-cdn.sigstore.dev:443
@@ -233,4 +225,3 @@ jobs:
     with:
       egress-policy: block
       workflow-key: docker-ci
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "podex"
-version = "0.41.20"
+version = "0.41.22"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
 requires-python = ">=3.11.5"
 license = "AGPL-3.0-only"
@@ -34,7 +34,10 @@ dependencies = [
   "beautifulsoup4>=4.12",
   "rapidfuzz>=3.9",
   "spotipy>=2.24",
-  "anthropic>=0.40",
+  # Supported SDK line: 2.x (httpx2 transport), verified from 2.6.0 by
+  # tests/test_anthropic_transport_contract.py. Review a new major before
+  # raising the cap.
+  "anthropic>=2.6.0,<3",
   "cryptography>=50.0.0",
   "boto3>=1.43.14",
   "email-validator>=2.0.0",
@@ -52,7 +55,7 @@ dev = [
   "assertpy>=1.1",
   "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.180.30",
+  "lintro==0.180.32",
   "mypy>=1.14",
   # Match CI and local framework inference to the same Pylint/Astroid release.
   "pylint==4.1.3",

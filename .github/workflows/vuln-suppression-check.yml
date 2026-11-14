@@ -22,7 +22,6 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-vuln-suppression-check.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
       job-name: '🔍 Check Vulnerability Suppressions'
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       workflow-file: vuln-suppression-check.yml
       egress-policy: block
       egress-preset: osv-scanner

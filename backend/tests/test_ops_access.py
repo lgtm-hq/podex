@@ -4,10 +4,14 @@ import logging
 import secrets
 from unittest.mock import patch
 
+import httpx
 import pytest
 from assertpy import assert_that
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from podex.api.deps import get_app_settings
+from podex.config import Settings
 from tests.conftest import enable_ops
 
 _OPS_KEY = "shared-ops-test-key"
@@ -107,6 +111,8 @@ def test_invalid_ops_access_is_opaque(
 
 
 @pytest.mark.parametrize("path", _PATHS)
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.parametrize(
     ("configured_key", "credential"),
     [
@@ -119,16 +125,28 @@ def test_invalid_ops_access_is_opaque(
     ],
     ids=["escaped-byte", "high-surrogate", "low-surrogate", "byte-collision"],
 )
-def test_unencodable_configured_key_never_authenticates(
+async def test_unencodable_configured_key_never_authenticates(
     client: TestClient,
     path: str,
     configured_key: str,
     credential: str,
 ) -> None:
     """A configured key without a valid UTF-8 encoding yields 401, never 200 or 500."""
-    enable_ops(client, api_key=configured_key)
-
-    response = client.get(path, headers=[(b"X-Ops-Key", credential.encode())])
+    # Settings now reject this at load. Deliberately bypass validation to retain
+    # coverage of the verifier's defensive handling of an injected invalid key.
+    settings = Settings().model_copy(update={"ops_api_key": configured_key})
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise AssertionError("Expected the FastAPI test fixture")
+    app.dependency_overrides[get_app_settings] = lambda: settings
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app),
+        base_url="http://testserver",
+    ) as ops_client:
+        response = await ops_client.get(
+            path,
+            headers=[(b"X-Ops-Key", credential.encode())],
+        )
 
     assert_that(response.status_code).is_equal_to(401)
     assert_that(response.json()["detail"]).is_equal_to("Ops authentication required")

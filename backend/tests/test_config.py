@@ -8,6 +8,8 @@ from assertpy import assert_that
 from pydantic import ValidationError
 from pytest import MonkeyPatch
 
+from podex import main as api_main
+from podex import scheduler_runner
 from podex.config import (
     AuthSettings,
     BillingSettings,
@@ -21,6 +23,109 @@ from podex.config import (
     TranscriptStorageSettings,
     get_settings,
 )
+
+
+@pytest.mark.parametrize(
+    "setting",
+    ["PODEX_BILLING__PADDLE_WEBHOOK_SECRET", "PODEX_OPS_API_KEY"],
+)
+def test_unencodable_secret_environment_fails_without_disclosure(
+    monkeypatch: MonkeyPatch,
+    setting: str,
+) -> None:
+    """Settings load names the invalid credential without exposing its input."""
+    marker = "private-credential-marker"
+    monkeypatch.setenv(setting, marker + "\udcff")
+    with pytest.raises(RuntimeError) as caught:
+        Settings()
+
+    assert_that(str(caught.value)).contains(setting, "UTF-8").does_not_contain(marker)
+    assert_that(repr(caught.value)).does_not_contain(marker, "\\udcff")
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
+
+
+@pytest.mark.parametrize("secret", ["", "clé", "valid-ascii"])
+def test_encodable_secret_settings_remain_valid(
+    monkeypatch: MonkeyPatch,
+    secret: str,
+) -> None:
+    """Disabled and valid non-ASCII credentials preserve their exact values."""
+    monkeypatch.setenv("PODEX_BILLING__PADDLE_WEBHOOK_SECRET", secret)
+    monkeypatch.setenv("PODEX_OPS_API_KEY", secret)
+    settings = Settings()
+
+    assert_that(settings.billing.paddle_webhook_secret).is_equal_to(secret)
+    assert_that(settings.ops_api_key).is_equal_to(secret)
+
+
+@pytest.mark.parametrize(
+    "secret", ["prefix\ud800", "prefix\udc00", "prefix\udcc3\udca9"]
+)
+@pytest.mark.parametrize("domain", ["billing", "ops"])
+def test_direct_secret_settings_reject_surrogates(secret: str, domain: str) -> None:
+    """Direct nested and top-level construction also rejects unencodable keys."""
+    with pytest.raises(RuntimeError) as caught:
+        if domain == "billing":
+            BillingSettings(paddle_webhook_secret=secret)
+        else:
+            Settings(ops_api_key=secret)
+
+    assert_that(str(caught.value)).does_not_contain("prefix")
+    assert_that(repr(caught.value)).does_not_contain("prefix")
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
+
+
+@pytest.mark.parametrize("process", ["api", "scheduler"])
+@pytest.mark.parametrize(
+    "setting",
+    ["PODEX_BILLING__PADDLE_WEBHOOK_SECRET", "PODEX_OPS_API_KEY"],
+)
+def test_process_startup_rejects_unencodable_secret(
+    monkeypatch: MonkeyPatch,
+    process: str,
+    setting: str,
+) -> None:
+    """Both deployables fail clearly when loading an invalid credential."""
+    monkeypatch.setenv(setting, "startup-private-marker\udcff")
+    # Avoid the process-wide cache so each test loads its isolated environment.
+    monkeypatch.setattr(api_main, "get_settings", Settings)
+    monkeypatch.setattr(scheduler_runner, "get_settings", Settings)
+
+    def reject_scheduler_loop(_runner: scheduler_runner.SchedulerRunner) -> None:
+        """Fail immediately if settings validation ever lets startup continue."""
+        raise AssertionError("Invalid settings reached the scheduler loop")
+
+    monkeypatch.setattr(
+        scheduler_runner.SchedulerRunner, "run_forever", reject_scheduler_loop
+    )
+
+    with pytest.raises(RuntimeError) as caught:
+        if process == "api":
+            api_main.create_app()
+        else:
+            scheduler_runner.main()
+
+    assert_that(str(caught.value)).contains(setting, "UTF-8")
+    assert_that(repr(caught.value)).does_not_contain("startup-private-marker")
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
+
+
+@pytest.mark.parametrize("configuration", ["defaults", "example"])
+def test_default_and_example_configuration_start(configuration: str) -> None:
+    """Default and example credentials permit API and scheduler construction."""
+    settings = (
+        Settings(_env_file=Path(__file__).resolve().parents[2] / ".env.example")
+        if configuration == "example"
+        else Settings()
+    )
+    app = api_main.create_app(settings=settings)
+    runner = scheduler_runner.SchedulerRunner(settings=settings)
+
+    assert_that(app.state.settings).is_same_as(settings)
+    assert_that(runner.settings).is_same_as(settings)
 
 
 def test_default_settings() -> None:

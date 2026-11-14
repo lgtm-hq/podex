@@ -44,7 +44,6 @@ jobs:
       checks: read
       contents: read # repository context for the tooling checkout
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       # run id/attempt are numbers in the event payload; format() passes them
       # as the strings the reusable workflow inputs expect.
       run-id: ${{ format('{0}', github.event.workflow_run.id) }}

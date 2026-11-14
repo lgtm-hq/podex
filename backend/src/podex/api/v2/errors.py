@@ -20,6 +20,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from podex.api.v2.auth_state import clear_failed_callback_state
 from podex.api.v2.schemas import ErrorDetail, ProblemDetails
 
 PROBLEM_JSON_MEDIA_TYPE: Final = "application/problem+json"
@@ -144,12 +145,14 @@ def build_error_response(
         request_id=_request_id(request),
         errors=errors,
     )
-    return JSONResponse(
+    response = JSONResponse(
         status_code=status_code,
         content=payload.model_dump(exclude_none=True),
         headers=headers,
         media_type=PROBLEM_JSON_MEDIA_TYPE,
     )
+    clear_failed_callback_state(request=request, response=response)
+    return response
 
 
 async def http_exception_handler(

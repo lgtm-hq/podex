@@ -23,6 +23,7 @@ from podex.config import (
     Settings,
 )
 from podex.models import AccountUser, UserSession
+from podex.services.limiter import RateLimitDecision, SlidingWindowRateLimiter
 from podex.services.workos_auth import (
     WORKOS_AUTHENTICATE_URL,
     WorkOSAuthClient,
@@ -87,13 +88,18 @@ class StubWorkOSClient:
         return self.profile
 
 
-def _override(client: TestClient, workos: object) -> None:
+def _override(
+    client: TestClient,
+    workos: object,
+    *,
+    secure_cookies: bool = False,
+) -> None:
     """Install WorkOS-enabled settings and a client override on the app."""
     app = client.app
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
     app.dependency_overrides[get_app_settings] = lambda: _workos_settings(
-        secure_cookies=False,
+        secure_cookies=secure_cookies,
     )
     app.dependency_overrides[v2_auth_api.get_workos_auth_client] = lambda: workos
 
@@ -104,6 +110,165 @@ def _state_cookie(response: httpx2.Response) -> str:
     for header in response.headers.get_list("set-cookie"):
         cookie.load(header)
     return cookie[v2_auth_api.WORKOS_STATE_COOKIE].value
+
+
+def _assert_state_expired(
+    login: httpx2.Response,
+    callback: httpx2.Response,
+) -> None:
+    """Require expiration of the same state cookie with all original attributes."""
+    original = SimpleCookie(login.headers["set-cookie"])[
+        v2_auth_api.WORKOS_STATE_COOKIE
+    ]
+    expired = SimpleCookie()
+    for header in callback.headers.get_list("set-cookie"):
+        expired.load(header)
+    assert_that(expired).contains_key(v2_auth_api.WORKOS_STATE_COOKIE)
+    state = expired[v2_auth_api.WORKOS_STATE_COOKIE]
+    assert_that(state.value).is_empty()
+    assert_that(state["max-age"]).is_equal_to("0")
+    for attribute in ("path", "domain", "samesite", "secure", "httponly"):
+        assert_that(state[attribute]).is_equal_to(original[attribute])
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        ("mismatch", 400),
+        ("disabled", 404),
+        ("missing-code", 422),
+        ("missing-state", 422),
+        ("empty-code", 400),
+        ("empty-state", 400),
+        ("method", 405),
+        ("rate-limit", 429),
+    ],
+)
+def test_unconsumed_callback_preserves_state_cookie(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    expected_status: int,
+) -> None:
+    """Rejected callbacks cannot consume another sign-in attempt's state."""
+    workos = StubWorkOSClient()
+    _override(client, workos)
+    with TestClient(client.app, raise_server_exceptions=False) as callback_client:
+        login = callback_client.get("/api/v2/auth/login", follow_redirects=False)
+        params = {"code": "auth-code", "state": _state_cookie(login)}
+        if failure == "mismatch":
+            params["state"] = "wrong-state"
+        elif failure == "disabled":
+            _override(client, None)
+        elif failure.startswith("missing-"):
+            del params[failure.removeprefix("missing-")]
+        elif failure.startswith("empty-"):
+            params[failure.removeprefix("empty-")] = ""
+        elif failure == "rate-limit":
+            monkeypatch.setattr(
+                SlidingWindowRateLimiter,
+                "check",
+                lambda _self, _key: RateLimitDecision.rejected(limit=1, retry_after=60),
+            )
+        response = callback_client.request(
+            "POST" if failure == "method" else "GET",
+            "/api/v2/auth/callback",
+            params=params,
+            follow_redirects=False,
+        )
+
+        assert_that(response.status_code).is_equal_to(expected_status)
+        assert_that(response.headers.get_list("set-cookie")).is_empty()
+        assert_that(
+            callback_client.cookies.get(v2_auth_api.WORKOS_STATE_COOKIE)
+        ).is_equal_to(
+            _state_cookie(login),
+        )
+        assert_that(workos.codes).is_empty()
+
+
+def test_stale_tab_callback_preserves_newer_sign_in(client: TestClient) -> None:
+    """A stale tab's callback cannot delete the state belonging to a newer tab."""
+    workos = StubWorkOSClient()
+    _override(client, workos)
+    first_login = client.get("/api/v2/auth/login", follow_redirects=False)
+    second_login = client.get("/api/v2/auth/login", follow_redirects=False)
+    assert_that(_state_cookie(first_login)).is_not_equal_to(_state_cookie(second_login))
+
+    stale = client.get(
+        "/api/v2/auth/callback",
+        params={"code": "first-tab-code", "state": _state_cookie(first_login)},
+        follow_redirects=False,
+    )
+
+    assert_that(stale.status_code).is_equal_to(400)
+    assert_that(stale.headers.get_list("set-cookie")).is_empty()
+    assert_that(client.cookies.get(v2_auth_api.WORKOS_STATE_COOKIE)).is_equal_to(
+        _state_cookie(second_login),
+    )
+    valid = client.get(
+        "/api/v2/auth/callback",
+        params={"code": "second-tab-code", "state": _state_cookie(second_login)},
+        follow_redirects=False,
+    )
+    assert_that(valid.status_code).is_equal_to(307)
+    assert_that(workos.codes).is_equal_to(["second-tab-code"])
+
+
+@pytest.mark.parametrize("secure_cookies", [False, True])
+@pytest.mark.parametrize("expected_status", [409, 500])
+def test_consumed_callback_error_expires_state_cookie(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    secure_cookies: bool,
+    expected_status: int,
+) -> None:
+    """Account and unexpected errors after state validation expire that cookie."""
+    _override(client, StubWorkOSClient(), secure_cookies=secure_cookies)
+
+    def fail_upsert(**_kwargs: object) -> None:
+        """Simulate an account error after the callback consumes its state."""
+        if expected_status == 409:
+            raise HTTPException(status_code=409, detail="Account conflict")
+        raise RuntimeError("persistence failed")
+
+    monkeypatch.setattr(v2_auth_api, "upsert_workos_account_user", fail_upsert)
+    with TestClient(
+        client.app,
+        base_url="https://testserver",
+        raise_server_exceptions=False,
+    ) as callback_client:
+        login = callback_client.get("/api/v2/auth/login", follow_redirects=False)
+        response = callback_client.get(
+            "/api/v2/auth/callback",
+            params={"code": "auth-code", "state": _state_cookie(login)},
+            follow_redirects=False,
+        )
+
+        assert_that(response.status_code).is_equal_to(expected_status)
+        _assert_state_expired(login, response)
+        assert_that(callback_client.cookies).does_not_contain(
+            v2_auth_api.WORKOS_STATE_COOKIE,
+        )
+
+
+@pytest.mark.parametrize("secure_cookies", [False, True])
+def test_successful_callback_expires_matching_state_cookie(
+    client: TestClient,
+    secure_cookies: bool,
+) -> None:
+    """Successful callbacks expire state with the attributes used at login."""
+    _override(client, StubWorkOSClient(), secure_cookies=secure_cookies)
+    with TestClient(client.app, base_url="https://testserver") as callback_client:
+        login = callback_client.get("/api/v2/auth/login", follow_redirects=False)
+        response = callback_client.get(
+            "/api/v2/auth/callback",
+            params={"code": "auth-code", "state": _state_cookie(login)},
+            follow_redirects=False,
+        )
+
+        assert_that(response.status_code).is_equal_to(307)
+        _assert_state_expired(login, response)
 
 
 def test_workos_enabled_requires_all_three_settings() -> None:
@@ -902,17 +1067,24 @@ def test_callback_reuses_account_for_returning_user(
     assert_that(sessions).is_length(2)
 
 
+@pytest.mark.parametrize("secure_cookies", [False, True])
 def test_callback_maps_exchange_failure_to_bad_gateway(
     client: TestClient,
+    secure_cookies: bool,
 ) -> None:
     """A rejected code exchange surfaces as an upstream failure."""
-    _override(client, StubWorkOSClient(fail=True))
-    login = client.get("/api/v2/auth/login", follow_redirects=False)
+    _override(client, StubWorkOSClient(fail=True), secure_cookies=secure_cookies)
+    with TestClient(client.app, base_url="https://testserver") as callback_client:
+        login = callback_client.get("/api/v2/auth/login", follow_redirects=False)
+        response = callback_client.get(
+            "/api/v2/auth/callback",
+            params={"code": "auth-code", "state": _state_cookie(login)},
+            follow_redirects=False,
+        )
 
-    response = client.get(
-        "/api/v2/auth/callback",
-        params={"code": "auth-code", "state": _state_cookie(login)},
-        follow_redirects=False,
-    )
-
-    assert_that(response.status_code).is_equal_to(502)
+        assert_that(response.status_code).is_equal_to(502)
+        # Default policy: a transient exchange failure requires a fresh sign-in too.
+        _assert_state_expired(login, response)
+        assert_that(callback_client.cookies).does_not_contain(
+            v2_auth_api.WORKOS_STATE_COOKIE
+        )

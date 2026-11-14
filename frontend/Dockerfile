@@ -34,6 +34,7 @@ RUN --mount=type=cache,target=/root/.bun/install/cache,sharing=locked \
 # for smoke tests.
 ARG PUBLIC_API_URL="http://localhost:8000/api/v2"
 ENV PUBLIC_API_URL=${PUBLIC_API_URL} \
+    ASTRO_TELEMETRY_DISABLED=1 \
     NODE_ENV=production
 
 COPY . .

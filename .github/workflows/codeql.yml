@@ -23,11 +23,14 @@ jobs:
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-codeql.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
       job-name: '🔬 CodeQL Analysis'
-      languages: python
+      # The reusable reports this exact job-name for every language leg, so
+      # three checks share the required name. A failing leg fails this whole
+      # workflow run, and the all-checks gate fails on any failed run; that
+      # gate, not the shared name, is what enforces every language.
+      languages: python,javascript-typescript,actions
       build-mode: none
       config-file: .github/codeql/codeql-config.yml
-      category: '/language:all'
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
+      # Leave category unset: the reusable assigns /language:<language>.
       egress-policy: block
       egress-preset: github-tooling
       # CodeQL bundle downloads redirect to
@@ -68,4 +71,3 @@ jobs:
     with:
       egress-policy: block
       workflow-key: codeql
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
