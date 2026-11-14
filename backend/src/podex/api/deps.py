@@ -92,13 +92,17 @@ def require_ops_access(
     )
     # Header values are decoded as Latin-1, so this encode cannot raise.
     supplied_key = request.headers.get("X-Ops-Key", "").encode("utf-8")
+    expected_key: bytes | None
     try:
         expected_key = settings.ops_api_key.encode("utf-8")
     except UnicodeEncodeError:
         # A key holding lone surrogates (invalid bytes in the environment)
-        # has no valid encoding, so no header can match it. The cause is
-        # dropped because its message quotes part of the key.
-        raise unauthorized from None
+        # has no valid encoding, so no header can match it.
+        expected_key = None
+    # Raised outside the handler so the encoding error, which carries the
+    # key, is not attached to the response exception.
+    if expected_key is None:
+        raise unauthorized
     if not secrets.compare_digest(supplied_key, expected_key):
         raise unauthorized
 

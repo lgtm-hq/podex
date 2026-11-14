@@ -79,7 +79,7 @@ def test_unconfigured_ops_access(
 @pytest.mark.parametrize(
     "credential",
     [None, b"", b"bad-short", b"x" * 128, "clé".encode(), b"\xff"],
-    ids=["missing", "empty", "shorter", "longer", "unicode", "non-utf8"],
+    ids=["missing", "empty", "shorter", "longer", "unicode", "latin1-char"],
 )
 def test_invalid_ops_access_is_opaque(
     client: TestClient,
@@ -113,8 +113,9 @@ def test_invalid_ops_access_is_opaque(
         ("k\udcff", "wrong"),
         ("k\ud800", "wrong"),
         ("k\udc00", "wrong"),
-        # Must not match the header whose UTF-8 bytes equal the escaped key.
-        ("k\udcc3\udcbf", "k\u00ff"),
+        # The test client sends b"k\xc3\xbf", which the app reads as Latin-1.
+        # Re-encoded as UTF-8 it equals this key's surrogate-escaped bytes.
+        ("k\udcc3\udc83\udcc2\udcbf", "k\u00ff"),
     ],
     ids=["escaped-byte", "high-surrogate", "low-surrogate", "byte-collision"],
 )
