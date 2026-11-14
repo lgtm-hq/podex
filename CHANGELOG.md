@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.23] - 2026-11-14
+
+### Changed
+
+- **ci**: extend CodeQL to JS and Actions (#781) (19c1d1b)
+- **deps**: update lintro to 0.180.32 (patch) (#785) (fe1be68)
+
+### Fixed
+
+- **retention**: hash verified encrypted transcript input before purge (#783) (162445b)
+- **frontend**: escape script JSON (#787) (b69a769)
+- **backend**: bound anthropic support and test the real client (#782) (91cae2c)
+
 ## [0.41.22] - 2026-11-14
 
 ### Changed
