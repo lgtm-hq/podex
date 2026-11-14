@@ -15,7 +15,10 @@ from typing import Any
 
 import anthropic
 
-from podex.services.llm_response import first_response_text
+from podex.services.llm_response import (
+    MALFORMED_RESPONSE_ERRORS,
+    first_response_text,
+)
 from podex.services.prompts_default import DEFAULT_CLEANUP_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -160,24 +163,11 @@ class TranscriptCleaner:
             "Return as JSON."
         )
 
-        # Keep this task-specific Anthropic request contract explicit.
-        # pylint: disable=duplicate-code
-        try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=_MAX_OUTPUT_TOKENS,
-                system=self.system_prompt,
-                messages=[{"role": "user", "content": user_message}],
-            )
-        # pylint: enable=duplicate-code
-        except anthropic.APIStatusError as exc:
-            result.errors.append(f"API error: {exc.status_code}")
-            return result
-        except anthropic.APIConnectionError as exc:
-            result.errors.append(f"Network error: {exc}")
+        response_text, request_error = self._request_text(user_message)
+        if request_error is not None:
+            result.errors.append(request_error)
             return result
 
-        response_text = first_response_text(response)
         if not response_text:
             return result
 
@@ -199,6 +189,33 @@ class TranscriptCleaner:
 
         logger.info("Made %d corrections", len(result.corrections_made))
         return result
+
+    def _request_text(self, user_message: str) -> tuple[str, str | None]:
+        """Send one cleanup request and decode the first text block.
+
+        Args:
+            user_message: Fully formatted user turn for the request.
+
+        Returns:
+            Tuple of (response text, error message); exactly one is meaningful.
+        """
+        # Keep this task-specific Anthropic request contract explicit.
+        # pylint: disable=duplicate-code
+        try:
+            response = self.client.messages.create(
+                model=self.model,
+                max_tokens=_MAX_OUTPUT_TOKENS,
+                system=self.system_prompt,
+                messages=[{"role": "user", "content": user_message}],
+            )
+            return first_response_text(response), None
+        # pylint: enable=duplicate-code
+        except anthropic.APIStatusError as exc:
+            return "", f"API error: {exc.status_code}"
+        except anthropic.APIConnectionError as exc:
+            return "", f"Network error: {exc}"
+        except MALFORMED_RESPONSE_ERRORS as exc:
+            return "", f"Malformed API response: {exc}"
 
     def _parse_json_response(self, response_text: str) -> dict[str, Any] | None:
         """Parse a JSON object from model output, tolerating surrounding prose.
