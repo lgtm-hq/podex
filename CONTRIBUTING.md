@@ -14,17 +14,37 @@ current patch releases; the Docker image uses Python 3.15.
 
 ```bash
 cd backend
-uv sync --extra dev
+uv sync                       # installs the dev dependency group by default
+uv run alembic upgrade head   # creates or migrates the database
 uv run pytest
 ```
+
+`uv run alembic upgrade head` migrates the database named by
+`PODEX_DATABASE__URL`, by default `podex.db` in the working directory. Run the
+API and the scheduler from `backend/` as two processes:
+
+```bash
+uv run uvicorn podex.main:app --reload --port 8000 --no-access-log
+uv run python -m podex.scheduler_runner
+```
+
+The scheduler runs episode discovery, digest delivery and retention sweeps.
+Neither process needs an external service to start; see
+[docs/configuration.md](docs/configuration.md) for the settings that enable each
+provider and what happens without them.
 
 Frontend (Astro/React, managed with [`bun`](https://bun.sh/)):
 
 ```bash
 cd frontend
 bun install
-bun run test
+bun run test:run   # one-shot Vitest run; `bun run test` starts watch mode
+bun run check      # astro check, then generated API type drift
+bun run dev        # serves http://localhost:4321
 ```
+
+The frontend calls `http://localhost:8000/api/v2` unless `PUBLIC_API_URL` is
+set.
 
 Tests that need real PostgreSQL carry `@pytest.mark.postgres` and live under
 `backend/tests/postgres/`, where collection rejects any test without the marker
@@ -97,7 +117,9 @@ bats --recursive tests/bats
 
 The frontend API types (`src/lib/types.gen.ts`) are generated from the backend
 OpenAPI schema (`frontend/openapi.json`). After changing an API route or schema,
-regenerate both and commit the result (`bun run check` fails on drift):
+regenerate both and commit the result. `backend/tests/test_openapi_schema.py`
+fails when `openapi.json` differs from the backend's schema, and `bun run check`
+fails when `types.gen.ts` differs from `openapi.json`:
 
 ```bash
 cd backend && uv run python -m podex.openapi ../frontend/openapi.json

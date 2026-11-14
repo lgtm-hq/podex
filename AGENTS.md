@@ -26,10 +26,6 @@ check `bun run check`.
 
 Non-obvious caveats:
 
-- **Backend deps: run `uv sync` (not `uv sync --extra dev`).** `CONTRIBUTING.md`
-  says `--extra dev`, but `dev` is a `[dependency-groups]` entry, not an
-  optional extra, so `--extra dev` fails. `uv sync` installs the dev group by
-  default.
 - **Run migrations before starting/using the API:**
   `cd backend && uv run alembic upgrade head`. `alembic.ini` has an empty
   `sqlalchemy.url`; `alembic/env.py` falls back to `PODEX_DATABASE__URL`
@@ -46,11 +42,45 @@ Non-obvious caveats:
   `http://localhost:8000/api/v2` by default (override with `PUBLIC_API_URL`);
   backend CORS already allows `http://localhost:4321`. Start the backend before
   the frontend for data to load.
-- **The `/api/v2` surface is read-only (GET only).** There are no write
-  endpoints yet; the LLM ingestion pipeline described in the README is not
-  implemented. To get data into the catalog for local testing, seed rows
-  directly via the ORM (e.g. `uv run python -c "..."` using
-  `podex.database.SessionLocal` and `podex.models.Podcast`). An empty catalog
-  renders "No podcasts yet." in the UI.
+- **The `/api/v2` surface has four kinds of route.** Settings for each are in
+  [`docs/configuration.md`](docs/configuration.md).
+  - Public, no credentials: `GET` on `/status`, `/podcasts`, `/episodes`,
+    `/media` and `/stats`; `POST /takedowns`; and the sign-in routes under
+    `/auth` (magic link, WorkOS login and callback, logout).
+  - Account, authenticated by the session cookie that sign-in sets: `/me` and
+    everything under it (saves, follows, alerts, digests, preferences,
+    subscription checkout, export, account deletion).
+  - Ops, authenticated by an `X-Ops-Key` header equal to `PODEX_OPS_API_KEY`
+    (503 while the key is unset): `/ops/*`, including podcast create, update and
+    archive, retention apply and purge, and takedown decisions. The root
+    Prometheus `/metrics` uses the same key.
+  - Webhook: `POST /billing/webhooks/paddle`, verified with
+    `PODEX_BILLING__PADDLE_WEBHOOK_SECRET`.
+- **Getting data in locally:** start the backend with `PODEX_OPS_API_KEY` set
+  and create podcasts through the ops API:
+
+  ```bash
+  curl -X POST http://localhost:8000/api/v2/ops/podcasts \
+    -H "X-Ops-Key: $PODEX_OPS_API_KEY" -H 'Content-Type: application/json' \
+    -d '{"name": "Example", "slug": "example", "status": "active",
+         "sources": {"rss_url": "https://example.com/feed.xml"}}'
+  ```
+
+  New podcasts default to `watchlist`; only `active` ones get scheduled
+  discovery. Seeding rows directly through the ORM
+  (`podex.database.SessionLocal` and the models in `podex.models`) also works.
+  An empty catalog renders "No podcasts yet." in the UI.
+
+- **Scheduler:** `cd backend && uv run python -m podex.scheduler_runner` runs a
+  separate loop with no HTTP listener. Each tick it schedules and runs episode
+  discovery for active podcasts (podscripts.co, RSS, and Spotify when
+  `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are set), digest delivery
+  (needs SMTP) and retention sweeps. In containers it is the same image with the
+  command overridden to `python -m podex.scheduler_runner`.
+- **Ingestion pipeline is partial.** Discovery runs as above. Enrichment, LLM
+  transcript cleanup, LLM mention extraction and extraction review exist as
+  services but nothing in the API or scheduler calls them, and no transcript
+  acquisition provider exists, so episodes do not get transcripts or mentions
+  automatically. See [#59](https://github.com/lgtm-hq/podex/issues/59).
 - `uv` is installed at `~/.local/bin/uv` and `bun` at `~/.bun/bin/bun` (added to
   `~/.bashrc` at setup time).
