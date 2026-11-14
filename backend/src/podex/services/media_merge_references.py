@@ -18,6 +18,11 @@ the rule was last evaluated never cancel unseen activity on the other side; a
 side without a rule counts as fully seen. Merging identities therefore never
 reports historical mentions as new and never hides unseen ones.
 
+Overlapping merges and alert evaluation are serialized with row locks: the merge
+locks both media rows in ascending id order, then the alert rules it reconciles
+in ``(user_id, id)`` order, the same order alert evaluation locks a user's rules.
+State is read only after the locks are held. SQLite has a single writer and
+ignores ``FOR UPDATE``.
 """
 
 from dataclasses import dataclass
@@ -52,6 +57,36 @@ class _AlertRulePlan:
 
     pairs: list[_AlertRulePair]
     target_rules: list[AccountAlertRule]
+
+
+def lock_merge_pair(
+    *,
+    db: Session,
+    source_media_id: int,
+    target_media_id: int,
+) -> tuple[Media | None, Media | None]:
+    """Lock and reload the merge source and target in ascending id order.
+
+    Concurrent merges that share a record wait here, then read the state the
+    earlier merge committed, including a source it already deleted.
+
+    Args:
+        db: Database session.
+        source_media_id: Media record being merged away.
+        target_media_id: Surviving canonical media record.
+
+    Returns:
+        The locked source and target, each ``None`` when it no longer exists.
+    """
+    locked = {
+        media_id: db.query(Media)
+        .filter(Media.id == media_id)
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+        for media_id in sorted({source_media_id, target_media_id})
+    }
+    return locked[source_media_id], locked[target_media_id]
 
 
 def move_media_references(
@@ -147,36 +182,38 @@ def _move_saved_media(
             save.media_id = target_media_id
 
 
-def _media_alert_rules(*, db: Session, media_id: int) -> list[AccountAlertRule]:
-    """Load alert rules targeting one media record."""
-    return list(
-        db.query(AccountAlertRule)
-        .filter(
-            AccountAlertRule.target_type == MEDIA_ALERT_TARGET_TYPE,
-            AccountAlertRule.target_id == media_id,
-        )
-        .order_by(AccountAlertRule.id.asc())
-        .all(),
-    )
-
-
 def _plan_media_alert_rules(
     *,
     db: Session,
     source_media_id: int,
     target_media_id: int,
 ) -> _AlertRulePlan:
-    """Pair each source rule with the survivor rule sharing its account and event.
+    """Lock both records' media alert rules and pair each source rule.
+
+    Rules are locked in ``(user_id, id)`` order and reloaded, so a concurrent
+    alert evaluation finishes before the merge reads baselines, or waits for the
+    merge to commit before it reads them.
 
     Raises:
         ValueError: If a colliding pair disagrees on enabled state.
     """
-    target_rules = _media_alert_rules(db=db, media_id=target_media_id)
+    rules = (
+        db.query(AccountAlertRule)
+        .filter(
+            AccountAlertRule.target_type == MEDIA_ALERT_TARGET_TYPE,
+            AccountAlertRule.target_id.in_((source_media_id, target_media_id)),
+        )
+        .order_by(AccountAlertRule.user_id.asc(), AccountAlertRule.id.asc())
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    target_rules = [rule for rule in rules if rule.target_id == target_media_id]
     target_rules_by_key = {
         (rule.user_id, rule.event_type): rule for rule in target_rules
     }
     pairs: list[_AlertRulePair] = []
-    for source_rule in _media_alert_rules(db=db, media_id=source_media_id):
+    for source_rule in (rule for rule in rules if rule.target_id == source_media_id):
         target_rule = target_rules_by_key.get(
             (source_rule.user_id, source_rule.event_type),
         )
