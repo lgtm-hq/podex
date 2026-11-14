@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "podex"
 version = "0.41.12"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
-requires-python = ">=3.11"
+requires-python = ">=3.11.5"
 license = "AGPL-3.0-only"
 authors = [{ name = "lgtm-hq", email = "turbocoder13@gmail.com" }]
 classifiers = [
