@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.15] - 2026-11-14
+
+### Fixed
+
+- **db**: freeze vector type compilation in migration 0010 (#746) (e15f422)
+
 ## [0.41.14] - 2026-11-14
 
 ### Changed
