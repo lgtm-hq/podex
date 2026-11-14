@@ -1,6 +1,18 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["local>lgtm-hq/.github:renovate-config"],
+  "customManagers": [
+    {
+      "description": "Track the py-lintro image passed as the lintro-image reusable-workflow input; the org preset's lintro group moves it together with the backend lintro dev pin",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "lintro-image:\\s*ghcr\\.io/lgtm-hq/py-lintro:(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})"
+      ],
+      "depNameTemplate": "ghcr.io/lgtm-hq/py-lintro",
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
       "description": "Hold TypeScript 7 until Astro/@astrojs/check support it",
