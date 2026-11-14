@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
 from podex.api.deps import AppSettings, DbSession, require_ops_access
+from podex.config import RetentionSettings
 from podex.models import (
     AuditAction,
     PodcastStatus,
@@ -68,7 +69,10 @@ from podex.services.takedown_requests import (
     list_takedown_requests,
 )
 from podex.services.transcript_artifacts import build_transcript_artifact_store
-from podex.services.transcript_retention import TranscriptRetentionPolicy
+from podex.services.transcript_retention import (
+    TranscriptRetentionBlocker,
+    TranscriptRetentionPolicy,
+)
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -85,16 +89,19 @@ def _require_ops_access(*, request: Request, settings: AppSettings) -> None:
 def _to_retention_preview_read(
     *,
     preview: OpsTranscriptRetentionPreviewData,
+    retention: RetentionSettings,
 ) -> OpsRetentionPreviewRead:
     """Convert a retention preview service payload to its API schema."""
+    blockers = [blocker.value for blocker in preview.decision.purge_blockers]
+    if not retention.purge_enabled:
+        blockers.append(TranscriptRetentionBlocker.PURGE_DISABLED.value)
     return OpsRetentionPreviewRead(
         transcript=OpsTranscriptRetentionRead.model_validate(preview.transcript),
         decision={
             "tier": preview.decision.tier.value,
-            "purge_eligible": preview.decision.purge_eligible,
-            "purge_blockers": [
-                blocker.value for blocker in preview.decision.purge_blockers
-            ],
+            "purge_eligible": preview.decision.purge_eligible
+            and retention.purge_enabled,
+            "purge_blockers": blockers,
             "retention_suppressed": preview.decision.retention_suppressed,
             "age_days": preview.decision.age.days,
         },
@@ -353,7 +360,7 @@ def preview_ops_retention(
     if preview is None:
         raise HTTPException(status_code=404, detail="Transcript not found")
     db.commit()
-    return _to_retention_preview_read(preview=preview)
+    return _to_retention_preview_read(preview=preview, retention=settings.retention)
 
 
 def apply_ops_retention(
@@ -380,7 +387,7 @@ def apply_ops_retention(
         metadata_json={"tier": applied.transcript.tier},
     )
     db.commit()
-    return _to_retention_preview_read(preview=applied)
+    return _to_retention_preview_read(preview=applied, retention=settings.retention)
 
 
 def purge_ops_transcript_endpoint(
@@ -395,7 +402,12 @@ def purge_ops_transcript_endpoint(
         purged = purge_ops_transcript(
             db=db,
             transcript_id=transcript_id,
-            artifact_store=build_transcript_artifact_store(settings=settings),
+            artifact_store=(
+                build_transcript_artifact_store(settings=settings)
+                if settings.retention.purge_enabled
+                else None
+            ),
+            retention=settings.retention,
         )
     except ValueError as error:
         db.rollback()

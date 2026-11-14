@@ -2,9 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TypedDict, Unpack
 
 from sqlalchemy.orm import Session
 
+from podex.config import RetentionSettings, get_settings
 from podex.models import (
     AccountPreference,
     AccountUser,
@@ -22,11 +24,18 @@ from podex.services.scheduled_work import (
 from podex.services.scheduler import ScheduledTaskKind
 from podex.services.transcript_retention import TranscriptRetentionPolicy
 from podex.services.transcript_retention_commands import (
+    PURGE_DISABLED_REASON,
     evaluate_transcript_retention,
 )
 
 DIGEST_SCHEDULE_KEY = "notifications:digest-delivery"
 RETENTION_SCHEDULE_KEY = "retention:policy-sweep"
+
+
+class RetentionWorkOptions(TypedDict, total=False):
+    """Optional environment authorization for the existing sweep inputs."""
+
+    retention: RetentionSettings | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +53,7 @@ class RetentionWorkRunData:
 
     work_key: str
     transcripts_evaluated: int
+    purge_blocker: str | None
 
 
 def reconcile_notification_schedules(
@@ -150,6 +160,7 @@ def run_due_retention_work(
     limit: int = 5,
     batch_size: int = 200,
     now: datetime | None = None,
+    **options: Unpack[RetentionWorkOptions],
 ) -> list[RetentionWorkRunData]:
     """Run pending retention work: evaluate lifecycle policy over transcripts.
 
@@ -159,11 +170,18 @@ def run_due_retention_work(
         limit: Maximum pending work items to run.
         batch_size: Maximum transcripts evaluated per work item.
         now: Deterministic evaluation timestamp.
+        **options: Optional retention settings; omitted or None uses runtime settings.
 
     Returns:
         Execution summaries for the work items that ran.
     """
     effective_policy = policy or TranscriptRetentionPolicy()
+    if options.keys() - {"retention"}:
+        raise TypeError("Only retention is a supported retention work option")
+    retention = options.get("retention")
+    purge_enabled = (
+        retention if retention is not None else get_settings().retention
+    ).purge_enabled
     effective_now = now or datetime.now(UTC)
     pending = _pending_items(
         db=db,
@@ -191,6 +209,11 @@ def run_due_retention_work(
                 policy=effective_policy,
                 now=effective_now,
             )
+        if not purge_enabled:
+            item.metadata_json = {
+                **(item.metadata_json or {}),
+                "purge_blocker": PURGE_DISABLED_REASON,
+            }
         item.status = ScheduledWorkStatus.COMPLETED.value
         item.completed_at = effective_now
         db.flush()
@@ -198,6 +221,7 @@ def run_due_retention_work(
             RetentionWorkRunData(
                 work_key=item.work_key,
                 transcripts_evaluated=len(transcripts),
+                purge_blocker=None if purge_enabled else PURGE_DISABLED_REASON,
             ),
         )
     return results

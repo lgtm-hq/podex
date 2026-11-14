@@ -6,7 +6,7 @@ import pytest
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
-from podex.config import Settings
+from podex.config import RetentionSettings, Settings, get_settings
 from podex.models import (
     AccountPreference,
     AccountUser,
@@ -29,12 +29,15 @@ from podex.services.ops_metrics import get_operational_metrics
 from podex.services.recurring_notifications import (
     DIGEST_SCHEDULE_KEY,
     RETENTION_SCHEDULE_KEY,
-    reconcile_notification_schedules,
     run_due_digest_work,
     run_due_retention_work,
 )
-from podex.services.scheduled_work import plan_due_scheduled_work
-from tests.conftest import create_podcast_alert_rule, seed_catalog_graph
+from podex.services.transcript_retention_commands import PURGE_DISABLED_REASON
+from tests.conftest import (
+    create_podcast_alert_rule,
+    plan_notification_work,
+    seed_catalog_graph,
+)
 
 _NOW = datetime(2026, 7, 19, 12, 0, tzinfo=UTC)
 
@@ -53,22 +56,12 @@ class RecordingDigestSender:
         self.sent.append(email)
 
 
-def _plan_notification_work(db_session: Session) -> None:
-    reconcile_notification_schedules(
-        db=db_session,
-        digest_interval_minutes=60,
-        retention_interval_minutes=60,
-        now=_NOW,
-    )
-    plan_due_scheduled_work(db=db_session, now=_NOW)
-
-
 def test_reconcile_notification_schedules_is_idempotent(
     db_session: Session,
 ) -> None:
     """Reconciling twice keeps exactly one schedule per kind."""
-    _plan_notification_work(db_session)
-    _plan_notification_work(db_session)
+    plan_notification_work(db=db_session, now=_NOW)
+    plan_notification_work(db=db_session, now=_NOW)
     db_session.commit()
 
     keys = [
@@ -92,7 +85,7 @@ def test_run_due_digest_work_delivers_and_completes(db_session: Session) -> None
     db_session.add(
         Episode(podcast_id=graph.podcast_id, title="Pilot II", episode_number=2),
     )
-    _plan_notification_work(db_session)
+    plan_notification_work(db=db_session, now=_NOW)
     db_session.commit()
     sender = RecordingDigestSender()
 
@@ -126,7 +119,7 @@ def test_run_due_retention_work_evaluates_transcripts(
             raw_text="raw",
         ),
     )
-    _plan_notification_work(db_session)
+    plan_notification_work(db=db_session, now=_NOW)
     db_session.commit()
 
     results = run_due_retention_work(db=db_session, now=_NOW)
@@ -154,6 +147,32 @@ def test_run_tick_plans_and_executes(db_session: Session) -> None:
     assert_that(summary.planned).is_greater_than_or_equal_to(2)
     assert_that(summary.digest_runs).is_equal_to(1)
     assert_that(summary.retention_runs).is_equal_to(1)
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_run_tick_records_supplied_retention_authorization(
+    db_session: Session, monkeypatch: pytest.MonkeyPatch, enabled: bool
+) -> None:
+    """Runner settings determine the recorded reason even when globals disagree."""
+    monkeypatch.setattr(get_settings().retention, "purge_enabled", not enabled)
+
+    summary = run_tick(
+        db=db_session,
+        settings=Settings(retention=RetentionSettings(purge_enabled=enabled)),
+        digest_sender=None,
+        now=_NOW,
+    )
+
+    assert_that(summary.retention_runs).is_equal_to(1)
+    work = (
+        db_session.query(ScheduledWorkItemModel)
+        .filter(ScheduledWorkItemModel.schedule_key == RETENTION_SCHEDULE_KEY)
+        .one()
+    )
+    assert_that(work.status).is_equal_to(ScheduledWorkStatus.COMPLETED.value)
+    assert_that((work.metadata_json or {}).get("purge_blocker")).is_equal_to(
+        None if enabled else PURGE_DISABLED_REASON
+    )
 
 
 def test_operational_alerts_fire_on_thresholds(db_session: Session) -> None:

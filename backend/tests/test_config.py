@@ -15,6 +15,7 @@ from podex.config import (
     EnrichmentSettings,
     ObservabilitySettings,
     RateLimitSettings,
+    RetentionSettings,
     Settings,
     StatsCacheSettings,
     TranscriptStorageSettings,
@@ -30,6 +31,20 @@ def test_default_settings() -> None:
     assert_that(settings.api_v2_prefix).is_equal_to("/api/v2")
     assert_that(settings.debug).is_false()
     assert_that(settings.database.url).is_equal_to("sqlite:///./podex.db")
+    assert_that(settings.retention.purge_enabled).is_false()
+    assert_that(RetentionSettings().purge_enabled).is_false()
+
+
+def test_retention_purge_requires_nested_environment_opt_in(
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Only the nested retention environment key enables transcript deletion."""
+    monkeypatch.setenv("PODEX_RETENTION_PURGE_ENABLED", "true")
+    assert_that(Settings().retention.purge_enabled).is_false()
+    monkeypatch.setenv("PODEX_RETENTION__PURGE_ENABLED", "true")
+    assert_that(Settings().retention.purge_enabled).is_true()
+    monkeypatch.setenv("PODEX_RETENTION__PURGE_ENABLED", "false")
+    assert_that(Settings().retention.purge_enabled).is_false()
 
 
 def test_complete_nested_settings_load_from_env_mapping(

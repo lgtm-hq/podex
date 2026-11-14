@@ -329,6 +329,12 @@ class EnrichmentSettings(BaseModel):
     )
 
 
+class RetentionSettings(BaseModel):
+    """Environment opt-in for irreversible transcript deletion."""
+
+    purge_enabled: bool = False
+
+
 class Settings(BaseSettings):
     """Runtime settings, overridable via ``PODEX_`` environment variables."""
 
@@ -358,6 +364,7 @@ class Settings(BaseSettings):
         default_factory=ObservabilitySettings,
     )
     enrichment: EnrichmentSettings = Field(default_factory=EnrichmentSettings)
+    retention: RetentionSettings = Field(default_factory=RetentionSettings)
 
     # Ops console API. The ops surface stays disabled until a key is
     # configured by the deployment environment; requests must present it in
