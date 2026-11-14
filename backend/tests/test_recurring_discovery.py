@@ -153,9 +153,10 @@ def test_failed_tick_leaves_loadable_run(db_session: Session) -> None:
     # A later tick step fails, so the scheduler rolls back the final commit.
     db_session.rollback()
 
-    statuses = _load_run_statuses(db_session)
-    assert_that(statuses).is_length(1)
-    assert_that(list(IngestionRunStatus)).contains(statuses[0])
+    # The rolled-back tick never records an outcome, so the run stays running.
+    assert_that(_load_run_statuses(db_session)).is_equal_to(
+        [IngestionRunStatus.RUNNING],
+    )
 
 
 def test_runner_exception_records_loadable_failed_run(db_session: Session) -> None:
