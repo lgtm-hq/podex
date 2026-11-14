@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.25] - 2026-11-14
+
+### Changed
+
+- **deps**: update lintro to 0.180.33 (patch) (#809) (6bd822f)
+
+### Fixed
+
+- **security**: keep OAuth credentials out of logs and error reports (#778) (99dfd7f)
+
 ## [0.41.24] - 2026-11-14
 
 ### Fixed
