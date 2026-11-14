@@ -76,12 +76,23 @@ def verify_paddle_signature(
     received_at = (now or datetime.now(UTC)).timestamp()
     if abs(received_at - timestamp) > SIGNATURE_TOLERANCE_SECONDS:
         raise PaddleSignatureVerificationError
-    expected = hmac.new(
-        key=secret.encode("utf-8"),
-        msg=f"{timestamp}:".encode() + raw_body,
-        digestmod=hashlib.sha256,
-    ).hexdigest()
-    if not any(hmac.compare_digest(expected, digest) for digest in digests):
+    try:
+        expected = (
+            hmac.new(
+                key=secret.encode("utf-8"),
+                msg=f"{timestamp}:".encode() + raw_body,
+                digestmod=hashlib.sha256,
+            )
+            .hexdigest()
+            .encode("utf-8")
+        )
+        valid_signature = any(
+            hmac.compare_digest(expected, digest.encode("utf-8")) for digest in digests
+        )
+    except UnicodeEncodeError:
+        valid_signature = False
+    # Encoding errors retain credentials, so raise only after leaving the handler.
+    if not valid_signature:
         raise PaddleSignatureVerificationError
 
 

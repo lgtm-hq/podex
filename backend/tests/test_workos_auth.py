@@ -8,7 +8,7 @@ import httpx
 import httpx2
 import pytest
 from assertpy import assert_that
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -360,6 +360,82 @@ def test_callback_rejects_state_mismatch(client: TestClient) -> None:
     )
 
     assert_that(response.status_code).is_equal_to(400)
+    assert_that(workos.codes).is_empty()
+
+
+@pytest.mark.parametrize(
+    ("state", "cookie"),
+    [("é", "valid-state"), ("valid-state", "é"), ("%ED%A0%80", "valid-state")],
+    ids=["query", "cookie", "invalid-utf8-query"],
+)
+def test_callback_rejects_non_ascii_state(
+    client: TestClient,
+    state: str,
+    cookie: str,
+) -> None:
+    """Non-ASCII query or cookie state returns the ordinary mismatch response."""
+    workos = StubWorkOSClient()
+    _override(client, workos)
+    with TestClient(client.app, raise_server_exceptions=False) as callback_client:
+        headers = [
+            (b"Cookie", f"{v2_auth_api.WORKOS_STATE_COOKIE}={cookie}".encode()),
+            (b"X-Request-ID", b"non-ascii-state-regression"),
+        ]
+        mismatch = callback_client.get(
+            "/api/v2/auth/callback?code=auth-code&state=wrong-state",
+            headers=headers,
+        )
+        response = callback_client.get(
+            f"/api/v2/auth/callback?code=auth-code&state={state}",
+            headers=headers,
+        )
+
+    assert_that(response.status_code).is_equal_to(400)
+    assert_that(response.json()).is_equal_to(mismatch.json())
+    assert_that(workos.codes).is_empty()
+
+
+@pytest.mark.parametrize(
+    ("state", "cookie"),
+    [
+        ("\udcff", "valid-state"),
+        ("\ud800", "valid-state"),
+        ("\udc00", "valid-state"),
+        # The cookie is read as Latin-1 and re-encoded as UTF-8: b"\xc3\x83\xc2\xbf".
+        ("\udcc3\udc83\udcc2\udcbf", "ÿ"),
+    ],
+    ids=["escaped-byte", "high-surrogate", "low-surrogate", "byte-collision"],
+)
+def test_callback_rejects_unencodable_state_without_exception_context(
+    db_session: Session,
+    state: str,
+    cookie: str,
+) -> None:
+    """Direct callers cannot leak an unencodable state through exception context."""
+    workos = StubWorkOSClient()
+    # HTTP query decoding replaces invalid UTF-8; exercise lone surrogates directly.
+    request = Request(
+        {
+            "type": "http",
+            "headers": [
+                (b"cookie", f"{v2_auth_api.WORKOS_STATE_COOKIE}={cookie}".encode()),
+            ],
+        },
+    )
+    with pytest.raises(HTTPException) as caught:
+        v2_auth_api.complete_workos_callback(
+            code="auth-code",
+            state=state,
+            request=request,
+            db=db_session,
+            settings=_workos_settings(),
+            workos=workos,
+        )
+
+    assert_that(caught.value.status_code).is_equal_to(400)
+    assert_that(caught.value.detail).is_equal_to("Sign-in state is invalid or expired")
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
     assert_that(workos.codes).is_empty()
 
 

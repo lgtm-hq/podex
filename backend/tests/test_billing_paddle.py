@@ -6,6 +6,7 @@ import json
 import time
 from typing import Any
 
+import httpx
 import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
@@ -189,6 +190,84 @@ def test_verify_signature_rejects_bad_digest_and_stale_ts() -> None:
             raw_body=body,
             secret=_SECRET,
         )
+
+
+@pytest.mark.parametrize(
+    ("secret", "digest"),
+    [(_SECRET, "\udcff"), (_SECRET, "\ud800"), (_SECRET + "\udcff", "bad")],
+    ids=["low-surrogate-digest", "high-surrogate-digest", "surrogate-secret"],
+)
+def test_verify_signature_rejects_unencodable_values_without_exception_context(
+    secret: str,
+    digest: str,
+) -> None:
+    """Strict encoding failures reject credentials without retaining their values."""
+    with pytest.raises(PaddleSignatureVerificationError) as caught:
+        verify_paddle_signature(
+            signature_header=f"ts={int(time.time())};h1={digest}",
+            raw_body=b"{}",
+            secret=secret,
+        )
+
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
+
+
+def test_verify_signature_accepts_valid_digest_after_non_ascii_digest() -> None:
+    """A mismatched non-ASCII candidate does not hide a later valid digest."""
+    body = b"{}"
+    verify_paddle_signature(
+        signature_header=_sign(body).replace(";h1=", ";h1=é;h1="),
+        raw_body=body,
+        secret=_SECRET,
+    )
+
+
+def test_verify_signature_rejects_surrogate_secret_byte_collision() -> None:
+    """Surrogate escapes cannot alias a different UTF-8 signing secret."""
+    body = b"{}"
+    with pytest.raises(PaddleSignatureVerificationError) as caught:
+        verify_paddle_signature(
+            signature_header=_sign(body, secret=_SECRET + "é"),
+            raw_body=body,
+            secret=_SECRET + "\udcc3\udca9",
+        )
+
+    assert_that(caught.value.__context__).is_none()
+    assert_that(caught.value.__cause__).is_none()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("digest", [b"\xe9", b"\xc3\xa9", b"\xff"])
+async def test_webhook_route_rejects_non_ascii_signature(
+    client: TestClient,
+    db_session: Session,
+    digest: bytes,
+) -> None:
+    """Raw non-ASCII header bytes get the same 401 as an ordinary bad digest."""
+    _configure_paddle(client)
+    transport = httpx.ASGITransport(app=client.app, raise_app_exceptions=False)
+    timestamp = str(int(time.time())).encode()
+    async with httpx.AsyncClient(
+        transport=transport,
+        base_url="http://testserver",
+        headers={"X-Request-ID": "non-ascii-signature-regression"},
+    ) as webhook_client:
+        mismatch = await webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers=[(b"Paddle-Signature", b"ts=" + timestamp + b";h1=bad")],
+        )
+        response = await webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers=[(b"Paddle-Signature", b"ts=" + timestamp + b";h1=" + digest)],
+        )
+
+    assert_that(response.status_code).is_equal_to(401)
+    assert_that(response.json()).is_equal_to(mismatch.json())
+    assert_that(db_session.query(BillingWebhookEvent).count()).is_zero()
 
 
 def test_webhook_route_unconfigured_returns_503(client: TestClient) -> None:
