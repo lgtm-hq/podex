@@ -496,7 +496,7 @@ def _create_saving_user(db: Session, *media: Media) -> AccountUser:
 
 def _require_rule(rule: AccountAlertRule | None) -> AccountAlertRule:
     """Narrow an alert rule created for an eligible target."""
-    if rule is None:  # pragma: no cover - fixtures always save the target first
+    if rule is None:
         raise AssertionError("expected an alert rule")
     return rule
 
@@ -631,7 +631,7 @@ def test_merge_preserves_media_alert_events(
             enabled=rules_enabled,
         )
     db_session.commit()
-    if delivered_digest is None:  # pragma: no cover - one event was pending
+    if delivered_digest is None:
         raise AssertionError("expected a delivered digest")
     events_before = {
         event.id: event.digest_id for event in db_session.query(AccountAlertEvent)
@@ -660,7 +660,7 @@ def test_merge_preserves_media_alert_events(
     )
 
     pending_digest = send_pending_digest(db=db_session, user=user, sender=Mock())
-    if pending_digest is None:  # pragma: no cover - asserted through body below
+    if pending_digest is None:
         raise AssertionError("expected the pending event to render")
     assert_that(pending_digest.event_count).is_equal_to(1)
     assert_that(pending_digest.body_text).contains("- 1 new mention of Dune\n")
