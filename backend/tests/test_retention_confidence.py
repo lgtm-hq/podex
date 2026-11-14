@@ -94,7 +94,7 @@ def _preview(
         policy=_POLICY,
         now=_NOW,
     )
-    if preview is None:  # pragma: no cover - transcripts exist in these tests
+    if preview is None:
         raise AssertionError
     return preview
 
@@ -162,7 +162,7 @@ def test_ops_apply_treats_candidates_without_generation_as_unknown(
     )
 
     assert_that(applied).is_not_none()
-    if applied is None:  # pragma: no cover - narrowed above
+    if applied is None:
         raise AssertionError
     assert_that(applied.extraction_confidence).is_none()
     assert_that(_persisted_gate(transcript)).is_equal_to(
