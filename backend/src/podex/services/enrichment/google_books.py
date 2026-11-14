@@ -45,14 +45,13 @@ class GoogleBooksProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
     ) -> None:
         super().__init__(requests_per_second)
         self.api_key = api_key
-        params = {}
+        # Google APIs accept the key in this header as well as the ``key``
+        # query parameter; the header keeps it out of URLs, so out of HTTP
+        # client errors, logs and report breadcrumbs.
+        headers = {}
         if api_key:
-            params["key"] = api_key
-        self.client = httpx.Client(
-            base_url=base_url or self.BASE_URL,
-            params=params,
-            timeout=30.0,
-        )
+            headers["x-goog-api-key"] = api_key
+        self._configure_http_client(base_url, headers=headers)
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
         """Search Google Books and enrich media item.

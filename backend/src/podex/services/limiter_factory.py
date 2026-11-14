@@ -53,7 +53,8 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     Returns:
         RateLimiter: A ready-to-use limiter matching the configured backend.
     """
-    if not settings.rate_limit.redis_url:
+    redis_url = settings.rate_limit.redis_url.get_secret_value()
+    if not redis_url:
         return SlidingWindowRateLimiter(
             max_requests=settings.rate_limit.max_requests,
             window_seconds=settings.rate_limit.window_seconds,
@@ -64,7 +65,7 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
     client = redis.Redis.from_url(
-        settings.rate_limit.redis_url,
+        redis_url,
         socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
         socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
     )

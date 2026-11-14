@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from pydantic import SecretStr
+
 from podex.config import EnrichmentSettings, get_settings
 from podex.models.media import MediaType
 from podex.services.academic_enrichment import AcademicEnricher
@@ -146,6 +148,12 @@ _PROVIDER_SPECS: tuple[ProviderSpec, ...] = (
 )
 
 
+def _configured_api_key(provider_settings: Any) -> str:
+    """Return the provider's configured API key, or ``""`` for keyless ones."""
+    api_key = getattr(provider_settings, "api_key", None)
+    return api_key.get_secret_value() if isinstance(api_key, SecretStr) else ""
+
+
 def _instantiate_provider(
     spec: ProviderSpec,
     provider_settings: Any,
@@ -155,8 +163,8 @@ def _instantiate_provider(
     if hasattr(provider_settings, "mailto"):
         if provider_settings.mailto:
             kwargs["mailto"] = provider_settings.mailto
-    elif hasattr(provider_settings, "api_key") and provider_settings.api_key:
-        kwargs["api_key"] = provider_settings.api_key
+    elif api_key := _configured_api_key(provider_settings):
+        kwargs["api_key"] = api_key
     return spec.provider_class(**kwargs)
 
 
@@ -170,7 +178,7 @@ def _build_providers(
         if not provider_settings.enabled:
             logger.debug("Provider %s disabled in settings, skipping", spec.source)
             continue
-        if spec.requires_key and not getattr(provider_settings, "api_key", ""):
+        if spec.requires_key and not _configured_api_key(provider_settings):
             logger.debug(
                 "Provider %s requires an API key and none is configured, skipping",
                 spec.source,

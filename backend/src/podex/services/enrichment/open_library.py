@@ -16,6 +16,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -128,7 +129,7 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             result: list[dict[str, Any]] = data.get("docs", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning("OpenLibrary search error: %s", e)
+            logger.warning("OpenLibrary search error: %s", describe_http_error(e))
             return []
 
     def _get_work(self, work_id: str) -> dict[str, Any] | None:
@@ -147,7 +148,9 @@ class OpenLibraryProvider(EnrichmentProvider):  # type: ignore[misc, unused-igno
             result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
-            logger.warning("OpenLibrary work error for %s: %s", work_id, e)
+            logger.warning(
+                "OpenLibrary work error for %s: %s", work_id, describe_http_error(e)
+            )
             return None
 
     def _find_best_match(

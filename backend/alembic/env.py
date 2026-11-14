@@ -6,6 +6,7 @@ from alembic import context  # type: ignore[attr-defined]
 from sqlalchemy import engine_from_config, pool, text
 
 from podex.config import get_settings
+from podex.logging_config import install_log_boundaries
 from podex.models import Base
 
 config = context.config
@@ -15,8 +16,17 @@ if config.config_file_name is not None:
     # migrations run in-process) enabled; the CLI output is unchanged.
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
+# Migration failures are logged and printed without database error text
+# (row values in a driver's DETAIL); the CLI's log format is unchanged.
+install_log_boundaries()
+
 if not config.get_main_option("sqlalchemy.url"):
-    config.set_main_option("sqlalchemy.url", get_settings().database.url)
+    # The option goes through ConfigParser interpolation, which would reject a
+    # percent-encoded password (and print the whole URL); "%%" reads back "%".
+    config.set_main_option(
+        "sqlalchemy.url",
+        get_settings().database.url.get_secret_value().replace("%", "%%"),
+    )
 
 target_metadata = Base.metadata
 
@@ -40,6 +50,8 @@ def run_migrations_online() -> None:
         section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # As for the application engine: keep bound values out of errors.
+        hide_parameters=True,
     )
     with connectable.connect() as connection:
         if connection.dialect.name == "postgresql":

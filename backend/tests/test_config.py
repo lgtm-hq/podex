@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from assertpy import assert_that
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from pytest import MonkeyPatch
 
 from podex import main as api_main
@@ -55,8 +55,10 @@ def test_encodable_secret_settings_remain_valid(
     monkeypatch.setenv("PODEX_OPS_API_KEY", secret)
     settings = Settings()
 
-    assert_that(settings.billing.paddle_webhook_secret).is_equal_to(secret)
-    assert_that(settings.ops_api_key).is_equal_to(secret)
+    assert_that(settings.billing.paddle_webhook_secret.get_secret_value()).is_equal_to(
+        secret
+    )
+    assert_that(settings.ops_api_key.get_secret_value()).is_equal_to(secret)
 
 
 @pytest.mark.parametrize(
@@ -135,7 +137,9 @@ def test_default_settings() -> None:
     assert_that(settings.app_name).is_equal_to("podex")
     assert_that(settings.api_v2_prefix).is_equal_to("/api/v2")
     assert_that(settings.debug).is_false()
-    assert_that(settings.database.url).is_equal_to("sqlite:///./podex.db")
+    assert_that(settings.database.url.get_secret_value()).is_equal_to(
+        "sqlite:///./podex.db"
+    )
     assert_that(settings.retention.purge_enabled).is_false()
     assert_that(RetentionSettings().purge_enabled).is_false()
 
@@ -321,6 +325,8 @@ def test_complete_nested_settings_load_from_env_mapping(
         (settings.scheduler_retention_interval_minutes, 240),
     ]
     for actual, expected in expectations:
+        if isinstance(actual, SecretStr):
+            actual = actual.get_secret_value()
         if isinstance(expected, bool):
             assert_that(actual).is_same_as(expected)
         else:
@@ -341,7 +347,7 @@ def test_database_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> Non
 
     settings = Settings()
 
-    assert_that(settings.database.url).is_equal_to(
+    assert_that(settings.database.url.get_secret_value()).is_equal_to(
         "postgresql+psycopg://podex:podex@db.example.internal/podex",
     )
     assert_that(settings.database.pool_size).is_equal_to(11)
@@ -356,7 +362,9 @@ def test_flat_database_env_name_is_ignored(monkeypatch: MonkeyPatch) -> None:
 
     settings = Settings()
 
-    assert_that(settings.database.url).is_equal_to("sqlite:///./podex.db")
+    assert_that(settings.database.url.get_secret_value()).is_equal_to(
+        "sqlite:///./podex.db"
+    )
     assert_that(settings.database).is_instance_of(DatabaseSettings)
 
 
@@ -387,7 +395,9 @@ def test_rate_limit_settings_load_from_nested_env(
     assert_that(settings.rate_limit.max_requests).is_equal_to(7)
     assert_that(settings.rate_limit.window_seconds).is_equal_to(2.5)
     assert_that(settings.rate_limit.exempt_paths).is_equal_to(["/health", "/ready"])
-    assert_that(settings.rate_limit.redis_url).is_equal_to("redis://redis:6379/1")
+    assert_that(settings.rate_limit.redis_url.get_secret_value()).is_equal_to(
+        "redis://redis:6379/1"
+    )
     assert_that(settings.rate_limit.redis_prefix).is_equal_to("podex-test")
 
 
@@ -401,7 +411,7 @@ def test_flat_rate_limit_env_name_is_ignored(monkeypatch: MonkeyPatch) -> None:
     settings = Settings()
 
     assert_that(settings.rate_limit.enabled).is_true()
-    assert_that(settings.rate_limit.redis_url).is_equal_to("")
+    assert_that(settings.rate_limit.redis_url.get_secret_value()).is_equal_to("")
     assert_that(settings.rate_limit).is_instance_of(RateLimitSettings)
 
 
@@ -456,7 +466,7 @@ def test_rate_limit_redis_url_defaults_to_disabled() -> None:
     """Default deployment stays on the in-memory backend (empty Redis URL)."""
     settings = Settings()
 
-    assert_that(settings.rate_limit.redis_url).is_equal_to("")
+    assert_that(settings.rate_limit.redis_url.get_secret_value()).is_equal_to("")
     assert_that(settings.rate_limit.redis_prefix).is_not_empty()
 
 
@@ -480,14 +490,20 @@ def test_transcripts_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> 
     assert_that(settings.transcripts.storage_path).is_equal_to(
         Path("./data/podex-transcripts-test"),
     )
-    assert_that(settings.transcripts.encryption_key).is_equal_to("fernet-key")
+    assert_that(settings.transcripts.encryption_key.get_secret_value()).is_equal_to(
+        "fernet-key"
+    )
     assert_that(settings.transcripts.s3_bucket).is_equal_to("private-transcripts")
     assert_that(settings.transcripts.s3_endpoint_url).is_equal_to(
         "https://r2.example",
     )
     assert_that(settings.transcripts.s3_region_name).is_equal_to("auto")
-    assert_that(settings.transcripts.s3_access_key_id).is_equal_to("key-id")
-    assert_that(settings.transcripts.s3_secret_access_key).is_equal_to("secret")
+    assert_that(settings.transcripts.s3_access_key_id.get_secret_value()).is_equal_to(
+        "key-id"
+    )
+    assert_that(
+        settings.transcripts.s3_secret_access_key.get_secret_value()
+    ).is_equal_to("secret")
     assert_that(settings.transcripts).is_instance_of(TranscriptStorageSettings)
 
 
@@ -500,7 +516,7 @@ def test_flat_transcripts_env_name_is_ignored(monkeypatch: MonkeyPatch) -> None:
 
     settings = Settings()
 
-    assert_that(settings.transcripts.encryption_key).is_equal_to("")
+    assert_that(settings.transcripts.encryption_key.get_secret_value()).is_equal_to("")
     assert_that(settings.transcripts.s3_bucket).is_equal_to("")
 
 
@@ -529,11 +545,13 @@ def test_auth_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None:
     assert_that(settings.auth.smtp_host).is_equal_to("smtp.example.com")
     assert_that(settings.auth.smtp_port).is_equal_to(2525)
     assert_that(settings.auth.smtp_username).is_equal_to("smtp-user")
-    assert_that(settings.auth.smtp_password).is_equal_to("smtp-password")
+    assert_that(settings.auth.smtp_password.get_secret_value()).is_equal_to(
+        "smtp-password"
+    )
     assert_that(settings.auth.smtp_from_email).is_equal_to("signin@example.com")
     assert_that(settings.auth.smtp_starttls).is_false()
     assert_that(settings.auth.workos_client_id).is_equal_to("client_123")
-    assert_that(settings.auth.workos_api_key).is_equal_to("sk_test")
+    assert_that(settings.auth.workos_api_key.get_secret_value()).is_equal_to("sk_test")
     assert_that(settings.auth.workos_redirect_uri).is_equal_to("https://app/callback")
     assert_that(settings.auth.workos_enabled).is_true()
     assert_that(settings.auth).is_instance_of(AuthSettings)
@@ -576,8 +594,12 @@ def test_billing_settings_load_from_nested_env(monkeypatch: MonkeyPatch) -> None
     assert_that(settings.billing.paid_llm_requests_per_month).is_equal_to(50)
     assert_that(settings.billing.provider_name).is_equal_to("hosted-test")
     assert_that(settings.billing.checkout_url).is_equal_to("https://billing.example")
-    assert_that(settings.billing.paddle_api_key).is_equal_to("pdl_api")
-    assert_that(settings.billing.paddle_webhook_secret).is_equal_to("whsec")
+    assert_that(settings.billing.paddle_api_key.get_secret_value()).is_equal_to(
+        "pdl_api"
+    )
+    assert_that(settings.billing.paddle_webhook_secret.get_secret_value()).is_equal_to(
+        "whsec"
+    )
     assert_that(settings.billing.paddle_price_id).is_equal_to("pri_123")
     assert_that(settings.billing.paddle_checkout_url).is_equal_to("https://buy.example")
     assert_that(settings.billing.paddle_checkout_enabled).is_true()

@@ -34,7 +34,14 @@ wait)
   ;;
 logs)
   echo 'AUTO_MIGRATE enabled: running alembic upgrade head'
-  echo 'unable to open database file'
+  case "$SCENARIO" in
+  migration-driver-text)
+    echo 'sqlalchemy.exc.OperationalError: OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]'
+    echo 'sqlite3.OperationalError: unable to open database file'
+    ;;
+  migration-no-descriptor) echo 'Traceback (most recent call last):' ;;
+  *) echo 'sqlalchemy.exc.OperationalError: OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]' ;;
+  esac
   ;;
 rm) touch "$SMOKE_STATE/removed" ;;
 cp) ;;
@@ -96,6 +103,22 @@ run_smoke() {
   run_smoke
   [ "$status" -ne 0 ]
   [[ "$output" == *'health timeout'* ]]
+  [ -f "$SMOKE_STATE/removed" ]
+}
+
+@test "migration log with raw driver text fails smoke and cleans up" {
+  export SCENARIO=migration-driver-text
+  run_smoke
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'raw database driver text'* ]]
+  [ -f "$SMOKE_STATE/removed" ]
+}
+
+@test "migration log without the error descriptor fails smoke and cleans up" {
+  export SCENARIO=migration-no-descriptor
+  run_smoke
+  [ "$status" -ne 0 ]
+  [[ "$output" == *'missing the database error descriptor'* ]]
   [ -f "$SMOKE_STATE/removed" ]
 }
 

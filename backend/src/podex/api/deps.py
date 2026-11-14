@@ -81,7 +81,7 @@ def require_ops_access(
     Raises:
         HTTPException: 503 when unconfigured, 401 on a missing or invalid key.
     """
-    if not settings.ops_api_key:
+    if not settings.ops_api_key.get_secret_value():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=unconfigured_detail,
@@ -94,7 +94,7 @@ def require_ops_access(
     supplied_key = request.headers.get("X-Ops-Key", "").encode("utf-8")
     expected_key: bytes | None
     try:
-        expected_key = settings.ops_api_key.encode("utf-8")
+        expected_key = settings.ops_api_key.get_secret_value().encode("utf-8")
     except UnicodeEncodeError:
         # A key holding lone surrogates (invalid bytes in the environment)
         # has no valid encoding, so no header can match it.

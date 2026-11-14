@@ -205,7 +205,7 @@ def build_workos_auth_client(*, settings: Settings) -> WorkOSAuthClient | None:
         return None
     return WorkOSAuthClient(
         client_id=settings.auth.workos_client_id,
-        api_key=settings.auth.workos_api_key,
+        api_key=settings.auth.workos_api_key.get_secret_value(),
         redirect_uri=settings.auth.workos_redirect_uri,
     )
 

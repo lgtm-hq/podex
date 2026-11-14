@@ -15,6 +15,7 @@ from podex.services.enrichment.base import (
     EnrichmentResult,
     EnrichmentSource,
     canonicalize_doi,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -116,7 +117,9 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: dict[str, Any] | None = data.get("message")
             return result
         except httpx.HTTPError as e:
-            logger.warning("CrossRef lookup error for %s: %s", doi, e)
+            logger.warning(
+                "CrossRef lookup error for %s: %s", doi, describe_http_error(e)
+            )
             return None
 
     def _search(self, title: str, author: str | None) -> list[dict[str, Any]]:
@@ -150,7 +153,7 @@ class CrossRefProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: list[dict[str, Any]] = data.get("message", {}).get("items", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning("CrossRef search error: %s", e)
+            logger.warning("CrossRef search error: %s", describe_http_error(e))
             return []
 
     def _find_best_match(

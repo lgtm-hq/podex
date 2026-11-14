@@ -16,7 +16,12 @@ from podex import __version__
 from podex.config import ObservabilitySettings, RateLimitSettings, Settings
 from podex.logging_config import configure_logging
 from podex.main import create_app
-from podex.observability import before_send, init_sentry, scrub_event
+from podex.observability import (
+    before_breadcrumb,
+    before_send,
+    init_sentry,
+    scrub_event,
+)
 from podex.scheduler_runner import main as scheduler_main
 from tests.conftest import SentryEnvelopeRecorder
 from tests.workos_support import handled_rejection, invalid_code_rejection
@@ -53,6 +58,7 @@ def test_init_sentry_initializes_with_dsn() -> None:
             "environment": "staging",
             "release": f"podex@{__version__}",
             "before_send": before_send,
+            "before_breadcrumb": before_breadcrumb,
             "send_default_pii": False,
             "include_local_variables": False,
             "max_request_body_size": "never",

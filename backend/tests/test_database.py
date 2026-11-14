@@ -7,13 +7,13 @@ from podex.database import build_engine_kwargs
 
 
 def test_sqlite_engine_kwargs_keep_thread_connect_args() -> None:
-    """SQLite URLs keep ``check_same_thread=False`` and no pool tuning."""
+    """SQLite URLs keep ``check_same_thread=False``, no pool tuning, no params."""
     settings = Settings(database=DatabaseSettings(url="sqlite:///./podex.db"))
 
     kwargs = build_engine_kwargs(settings)
 
     assert_that(kwargs).is_equal_to(
-        {"connect_args": {"check_same_thread": False}},
+        {"connect_args": {"check_same_thread": False}, "hide_parameters": True},
     )
 
 
@@ -32,6 +32,7 @@ def test_postgres_engine_kwargs_enable_pooling() -> None:
 
     assert_that(kwargs).is_equal_to(
         {
+            "hide_parameters": True,
             "pool_pre_ping": True,
             "pool_size": 7,
             "max_overflow": 3,

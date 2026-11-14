@@ -80,10 +80,25 @@ print("backend: health and migrated catalog return HTTP 200 with expected bodies
 	docker run -d --name "$bad_migration" "${platform_args[@]}" --network none \
 		-e AUTO_MIGRATE=1 -e PODEX_DATABASE__URL=sqlite:////proc/podex-smoke.db "$IMAGE"
 	exit_code=$(docker wait "$bad_migration")
-	[[ "$exit_code" != 0 ]]
+	if [[ "$exit_code" == 0 ]]; then
+		echo 'backend: migration against an inaccessible database succeeded' >&2
+		exit 1
+	fi
 	migration_logs=$(docker logs "$bad_migration" 2>&1)
-	[[ "$migration_logs" == *'AUTO_MIGRATE enabled: running alembic upgrade head'* ]]
-	[[ "$migration_logs" == *'unable to open database file'* ]]
+	if [[ "$migration_logs" != *'AUTO_MIGRATE enabled: running alembic upgrade head'* ]]; then
+		echo 'backend: migration failure log is missing the AUTO_MIGRATE line' >&2
+		exit 1
+	fi
+	# Database errors are logged by class and SQLite error name only; the
+	# driver's own message (which can carry row values) must not appear.
+	if [[ "$migration_logs" != *'OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]'* ]]; then
+		echo 'backend: migration failure log is missing the database error descriptor' >&2
+		exit 1
+	fi
+	if [[ "$migration_logs" == *'unable to open database file'* ]]; then
+		echo 'backend: migration failure log contains raw database driver text' >&2
+		exit 1
+	fi
 	echo 'backend: failed migration prevents application startup'
 else
 	# Keep the baked-in localhost API origin. The stub shares this container's
