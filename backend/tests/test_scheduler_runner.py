@@ -328,3 +328,193 @@ def test_tick_respects_changed_intervals(db_session: Session) -> None:
     ).is_equal_to(
         (2, 1, 1),
     )
+
+
+def _seed_transcripts(db_session: Session, *, count: int) -> list[int]:
+    """Persist ``count`` unpurged transcripts and return their IDs in order."""
+    graph = seed_catalog_graph(db_session)
+    return _add_transcripts(db_session, episode_id=graph.episode_id, count=count)
+
+
+def _add_transcripts(db_session: Session, *, episode_id: int, count: int) -> list[int]:
+    """Persist and commit ``count`` unpurged transcripts for one episode."""
+    transcripts = [
+        Transcript(episode_id=episode_id, provider="podscripts", raw_text="raw")
+        for _ in range(count)
+    ]
+    db_session.add_all(transcripts)
+    db_session.commit()
+    return [transcript.id for transcript in transcripts]
+
+
+def _as_utc(value: datetime | None) -> datetime | None:
+    """Normalize a stored timestamp; some dialects return naive UTC values."""
+    if value is None or value.tzinfo is not None:
+        return value
+    return value.replace(tzinfo=UTC)
+
+
+def _run_retention_job(
+    db_session: Session,
+    *,
+    job: int,
+    batch_size: int,
+    commit: bool = True,
+) -> list[int]:
+    """Plan and run one retention work item at its own boundary.
+
+    Returns:
+        IDs of the transcripts that job evaluated, in ascending order.
+    """
+    at = _NOW + timedelta(minutes=60 * job)
+    reconcile_notification_schedules(
+        db=db_session,
+        digest_interval_minutes=60,
+        retention_interval_minutes=60,
+        now=at,
+    )
+    plan_due_scheduled_work(db=db_session, now=at)
+    results = run_due_retention_work(db=db_session, batch_size=batch_size, now=at)
+    evaluated = [
+        transcript.id
+        for transcript in db_session.query(Transcript)
+        .order_by(Transcript.id.asc())
+        .all()
+        if _as_utc(transcript.retention_evaluated_at) == at
+    ]
+    if commit:
+        db_session.commit()
+    else:
+        db_session.rollback()
+    assert_that(results).is_length(1)
+    assert_that(results[0].transcripts_evaluated).is_equal_to(len(evaluated))
+    assert_that(len(evaluated)).is_less_than_or_equal_to(batch_size)
+    return evaluated
+
+
+def test_retention_sweep_reaches_later_batches(db_session: Session) -> None:
+    """Two jobs over 201 transcripts evaluate every transcript, 200 at most each."""
+    ids = _seed_transcripts(db_session, count=201)
+
+    first = _run_retention_job(db_session, job=0, batch_size=200)
+    second = _run_retention_job(db_session, job=1, batch_size=200)
+
+    assert_that(first).is_equal_to(ids[:200])
+    assert_that(second).is_equal_to(ids[200:])
+    last = db_session.query(Transcript).filter(Transcript.id == ids[-1]).one()
+    assert_that(last.retention_evaluated_at).is_not_none()
+
+
+def test_retention_sweep_cycles_restart_from_lowest_id(db_session: Session) -> None:
+    """A finished cycle starts over, revisiting earlier transcripts in batches."""
+    ids = _seed_transcripts(db_session, count=5)
+
+    batches = [
+        _run_retention_job(db_session, job=job, batch_size=2) for job in range(6)
+    ]
+
+    assert_that(batches).is_equal_to(
+        [ids[0:2], ids[2:4], ids[4:5], ids[0:2], ids[2:4], ids[4:5]],
+    )
+
+
+def test_retention_sweep_resumes_in_a_new_session(db_session: Session) -> None:
+    """Committed progress survives a process restart."""
+    ids = _seed_transcripts(db_session, count=5)
+    first = _run_retention_job(db_session, job=0, batch_size=2)
+    db_session.close()
+
+    restarted = Session(bind=db_session.get_bind())
+    try:
+        second = _run_retention_job(restarted, job=1, batch_size=2)
+    finally:
+        restarted.close()
+
+    assert_that(first).is_equal_to(ids[0:2])
+    assert_that(second).is_equal_to(ids[2:4])
+
+
+def test_retention_sweep_retries_rolled_back_batch(db_session: Session) -> None:
+    """A batch rolled back with its tick is evaluated again, nothing skipped."""
+    ids = _seed_transcripts(db_session, count=5)
+    first = _run_retention_job(db_session, job=0, batch_size=2)
+
+    failed = _run_retention_job(db_session, job=1, batch_size=2, commit=False)
+    unevaluated = [
+        transcript.id
+        for transcript in db_session.query(Transcript).order_by(Transcript.id).all()
+        if transcript.retention_evaluated_at is None
+    ]
+    retried = _run_retention_job(db_session, job=1, batch_size=2)
+    after = _run_retention_job(db_session, job=2, batch_size=2)
+
+    assert_that(first).is_equal_to(ids[0:2])
+    assert_that(failed).is_equal_to(ids[2:4])
+    assert_that(unevaluated).is_equal_to(ids[2:5])
+    assert_that(retried).is_equal_to(ids[2:4])
+    assert_that(after).is_equal_to(ids[4:5])
+
+
+def test_retention_sweep_defers_mid_cycle_inserts(db_session: Session) -> None:
+    """Rows added mid-cycle wait for the next cycle instead of extending it."""
+    ids = _seed_transcripts(db_session, count=5)
+    episode_id = db_session.query(Transcript).first().episode_id
+    batches = [_run_retention_job(db_session, job=0, batch_size=2)]
+    ids += _add_transcripts(db_session, episode_id=episode_id, count=1)
+
+    batches += [
+        _run_retention_job(db_session, job=job, batch_size=2) for job in range(1, 6)
+    ]
+
+    assert_that(batches).is_equal_to(
+        [ids[0:2], ids[2:4], ids[4:5], ids[0:2], ids[2:4], ids[4:6]],
+    )
+
+
+def test_retention_sweep_survives_deleted_and_purged_rows(
+    db_session: Session,
+) -> None:
+    """Deleting the checkpoint and bound rows or purging rows strands nothing."""
+    ids = _seed_transcripts(db_session, count=6)
+    first = _run_retention_job(db_session, job=0, batch_size=2)
+    rows = {
+        transcript.id: transcript for transcript in db_session.query(Transcript).all()
+    }
+    db_session.delete(rows[ids[1]])
+    db_session.delete(rows[ids[5]])
+    rows[ids[2]].purged_at = _NOW
+    db_session.commit()
+
+    batches = [
+        _run_retention_job(db_session, job=job, batch_size=2) for job in range(1, 5)
+    ]
+
+    assert_that(first).is_equal_to(ids[0:2])
+    assert_that(batches).is_equal_to(
+        [[ids[3], ids[4]], [], [ids[0], ids[3]], [ids[4]]],
+    )
+
+
+def test_retention_sweep_reaches_rows_under_continuous_arrivals(
+    db_session: Session,
+) -> None:
+    """With a new row after every job, cycles still finish and include arrivals."""
+    ids = _seed_transcripts(db_session, count=3)
+    episode_id = db_session.query(Transcript).first().episode_id
+    batches: list[list[int]] = []
+    for job in range(6):
+        batches.append(_run_retention_job(db_session, job=job, batch_size=2))
+        ids += _add_transcripts(db_session, episode_id=episode_id, count=1)
+
+    assert_that(batches).is_equal_to(
+        [ids[0:2], ids[2:3], ids[0:2], ids[2:4], ids[4:5], ids[0:2]],
+    )
+
+
+def test_retention_sweep_rejects_empty_batches(db_session: Session) -> None:
+    """A non-positive batch size cannot make progress and is refused."""
+    _seed_transcripts(db_session, count=1)
+    _plan_notification_work(db_session)
+
+    with pytest.raises(ValueError, match="batch_size"):
+        run_due_retention_work(db=db_session, batch_size=0, now=_NOW)
