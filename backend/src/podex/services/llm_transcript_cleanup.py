@@ -15,6 +15,7 @@ from typing import Any
 
 import anthropic
 
+from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.llm_response import (
     MALFORMED_RESPONSE_ERRORS,
     first_response_text,
@@ -173,7 +174,7 @@ class TranscriptCleaner:
 
         parsed = self._parse_json_response(response_text)
         if parsed is None:
-            result.errors.append("Failed to parse JSON from response")
+            result.errors.append(describe_failure("cleanup", reason="invalid_json"))
             return result
 
         result.cleaned_text = str(parsed.get("cleaned_text", transcript_text))
@@ -211,11 +212,17 @@ class TranscriptCleaner:
             return first_response_text(response), None
         # pylint: enable=duplicate-code
         except anthropic.APIStatusError as exc:
-            return "", f"API error: {exc.status_code}"
+            error = describe_failure("cleanup", exc)
+            log_failure(logger, error, exc)
+            return "", error
         except anthropic.APIConnectionError as exc:
-            return "", f"Network error: {exc}"
+            error = describe_failure("cleanup", exc)
+            log_failure(logger, error, exc)
+            return "", error
         except MALFORMED_RESPONSE_ERRORS as exc:
-            return "", f"Malformed API response: {exc}"
+            error = describe_failure("cleanup", exc, reason="malformed_response")
+            log_failure(logger, error, exc)
+            return "", error
 
     def _parse_json_response(self, response_text: str) -> dict[str, Any] | None:
         """Parse a JSON object from model output, tolerating surrounding prose.

@@ -1046,6 +1046,7 @@
                 "type": "null"
               }
             ],
+            "description": "Allowlisted failure descriptors (source, class, protocol code, fixed reason). Historical runs may contain legacy diagnostic text.",
             "title": "Error Summary"
           },
           "id": {

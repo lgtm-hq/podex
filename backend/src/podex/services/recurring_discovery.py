@@ -1,5 +1,6 @@
 """Recurring episode discovery scheduling and execution services."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +19,11 @@ from podex.models import (
 )
 from podex.services.discovery import DiscoveryResult
 from podex.services.discovery_orchestrator import DiscoveryOrchestrator
+from podex.services.failure_descriptors import (
+    describe_failure,
+    log_failure,
+    persisted_failure,
+)
 from podex.services.scheduled_work import (
     PipelineScheduleInputData,
     PipelineScheduleSummaryData,
@@ -25,6 +31,8 @@ from podex.services.scheduled_work import (
     upsert_pipeline_schedule,
 )
 from podex.services.scheduler import ScheduledTaskKind
+
+logger = logging.getLogger(__name__)
 
 DISCOVERY_WORK_KIND = "episode_discovery"
 
@@ -239,9 +247,10 @@ def run_due_episode_discovery_work(
         # pylint: disable-next=broad-exception-caught
         except Exception as exc:
             run.status = IngestionRunStatus.FAILED
-            run.error_summary = str(exc)
+            run.error_summary = describe_failure("discovery", exc)
+            log_failure(logger, run.error_summary, exc)
             run.completed_at = datetime.now(UTC)
-            _mark_work_failed(work_item=work_item, error_message=str(exc))
+            _mark_work_failed(work_item=work_item, error_message=run.error_summary)
             continue
 
         completed_at = datetime.now(UTC)
@@ -250,6 +259,9 @@ def run_due_episode_discovery_work(
             if not discovery_result.errors
             else IngestionRunStatus.FAILED
         )
+        discovery_result.errors = [
+            persisted_failure(error) for error in discovery_result.errors
+        ]
         run.error_summary = "; ".join(discovery_result.errors) or None
         run.completed_at = completed_at
         work_item.status = (

@@ -384,7 +384,7 @@ def test_rate_limit_is_retried_then_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).ends_with(": 429")
+    assert_that(errors[0]).contains("HTTP 429")
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(
         [request.headers["x-stainless-retry-count"] for request in provider.requests],
@@ -409,7 +409,7 @@ def test_server_errors_are_retried_then_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).ends_with(f": {status}")
+    assert_that(errors[0]).contains(f"HTTP {status}")
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(sleeps).is_length(_SDK_MAX_RETRIES)
 
@@ -425,7 +425,7 @@ def test_client_errors_are_reported_without_retry(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).ends_with(": 400")
+    assert_that(errors[0]).contains("HTTP 400")
     assert_that(provider.requests).is_length(1)
     assert_that(sleeps).is_empty()
 
@@ -455,7 +455,7 @@ def test_transport_failures_are_retried_then_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).starts_with("Network error: ")
+    assert_that(errors[0]).contains("API", "request_failed")
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(sleeps).is_length(_SDK_MAX_RETRIES)
 
@@ -519,7 +519,7 @@ def test_malformed_success_responses_are_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).starts_with("Malformed API response: ")
+    assert_that(errors[0]).ends_with("; malformed_response")
     assert_that(provider.requests).is_length(1)
     assert_that(sleeps).is_empty()
 

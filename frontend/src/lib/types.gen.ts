@@ -1442,7 +1442,10 @@ export interface components {
             created_at: string;
             /** Duration Seconds */
             duration_seconds: number | null;
-            /** Error Summary */
+            /**
+             * Error Summary
+             * @description Allowlisted failure descriptors (source, class, protocol code, fixed reason). Historical runs may contain legacy diagnostic text.
+             */
             error_summary: string | null;
             /** Id */
             id: number;

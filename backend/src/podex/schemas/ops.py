@@ -97,7 +97,10 @@ class OpsIngestionRunRead(BaseModel):
     # pylint: disable=duplicate-code
     id: int
     status: str
-    error_summary: str | None
+    error_summary: str | None = Field(
+        description="Allowlisted failure descriptors (source, class, protocol code, "
+        "fixed reason). Historical runs may contain legacy diagnostic text.",
+    )
     started_at: datetime | None
     completed_at: datetime | None
     created_at: datetime

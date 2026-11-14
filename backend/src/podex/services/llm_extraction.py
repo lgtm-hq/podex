@@ -16,6 +16,7 @@ from typing import Any
 import anthropic
 
 from podex.models.media import MediaType
+from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.llm_response import (
     MALFORMED_RESPONSE_ERRORS,
     first_response_text,
@@ -123,16 +124,24 @@ class ExtractionResult:
         return len(self.errors) == 0
 
 
-def _failed_extraction(message: str) -> ExtractionResult:
+def _failed_extraction(
+    error: BaseException, *, malformed: bool = False
+) -> ExtractionResult:
     """Record an SDK failure as the existing extraction result contract.
 
     Args:
-        message: Diagnostic message safe to log and return to the caller.
+        error: SDK or decoding failure.
+        malformed: Whether decoding the response failed.
 
     Returns:
         An empty extraction with the diagnostic recorded once.
     """
-    logger.error(message)
+    message = describe_failure(
+        "extraction",
+        error,
+        reason="malformed_response" if malformed else "request_failed",
+    )
+    log_failure(logger, message, error, level=logging.ERROR)
     return ExtractionResult(errors=[message])
 
 
@@ -201,11 +210,11 @@ class LLMExtractor:
             )
             response_text = first_response_text(response)
         except anthropic.APIStatusError as exc:
-            return _failed_extraction(f"API request failed: {exc.status_code}")
+            return _failed_extraction(exc)
         except anthropic.APIConnectionError as exc:
-            return _failed_extraction(f"Network error: {exc}")
+            return _failed_extraction(exc)
         except MALFORMED_RESPONSE_ERRORS as exc:
-            return _failed_extraction(f"Malformed API response: {exc}")
+            return _failed_extraction(exc, malformed=True)
 
         if not response_text:
             return result
@@ -253,12 +262,12 @@ class LLMExtractor:
         if isinstance(parsed, list):
             return parsed, errors
         if parsed is not None:
-            errors.append(f"Expected JSON array, got {type(parsed).__name__}")
+            errors.append(describe_failure("extraction", reason="expected_json_array"))
             return [], errors
 
         start = response_text.find("[")
         if start < 0:
-            error_msg = f"No JSON array in response: {response_text[:200]}"
+            error_msg = describe_failure("extraction", reason="missing_json_array")
             logger.warning(error_msg)
             errors.append(error_msg)
             return [], errors
@@ -275,7 +284,7 @@ class LLMExtractor:
                     break
 
         if end <= start:
-            error_msg = f"No complete JSON array found: {response_text[:200]}"
+            error_msg = describe_failure("extraction", reason="incomplete_json_array")
             logger.warning(error_msg)
             errors.append(error_msg)
             return [], errors
@@ -283,7 +292,7 @@ class LLMExtractor:
         try:
             return json.loads(response_text[start:end]), errors
         except json.JSONDecodeError as exc:
-            error_msg = f"Failed to parse JSON: {exc}"
-            logger.warning(error_msg)
+            error_msg = describe_failure("extraction", exc, reason="invalid_json")
+            log_failure(logger, error_msg, exc)
             errors.append(error_msg)
             return [], errors
