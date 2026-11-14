@@ -14,16 +14,17 @@ from podex.config import (
     AuthSettings,
     DatabaseSettings,
     ObservabilitySettings,
+    RateLimitSettings,
     Settings,
 )
 from podex.observability import before_breadcrumb, init_sentry
 from podex.redaction import (
-    SHORT_SECRET_LENGTH,
+    SHORT_VALUE_LENGTH,
     SecretRedactor,
     redact_in_place,
     redact_url_userinfo,
     secret_values,
-    short_secret_paths,
+    undersized_field_paths,
 )
 from tests.conftest import SentryEnvelopeRecorder
 
@@ -51,6 +52,12 @@ def _redactor(*secrets: str) -> SecretRedactor:
         ("https://h.test?x=a@b", "https://h.test?x=a@b"),
         ("mail bob@example.test", "mail bob@example.test"),
         ('"https://h.test", "a@b"', '"https://h.test", "a@b"'),
+        (
+            "fetch https://reader:pa'ss@host.invalid/path failed",
+            "fetch https://[redacted]@host.invalid/path failed",
+        ),
+        ("'https://h.test','a@b'", "'https://h.test','a@b'"),
+        ('"https://u:p\'w@h.test"', '"https://[redacted]@h.test"'),
     ],
 )
 def test_url_userinfo_is_redacted_and_nothing_else(text: str, expected: str) -> None:
@@ -75,7 +82,7 @@ def test_short_secrets_are_redacted_and_empty_ones_ignored() -> None:
     short = "s3cr3t"
     redactor = _redactor("", short)
 
-    assert_that(len(short)).is_less_than(SHORT_SECRET_LENGTH)
+    assert_that(len(short)).is_less_than(SHORT_VALUE_LENGTH)
     assert_that(redactor.redact(f"key {short} rejected")).is_equal_to(
         "key [redacted] rejected",
     )
@@ -95,6 +102,40 @@ def test_lowercase_percent_escapes_are_redacted() -> None:
 
     assert_that(lower).is_not_equal_to(upper)
     assert_that(text).is_equal_to("a=[redacted] b=[redacted] c=[redacted]")
+
+
+def test_mixed_case_escapes_match_but_literals_keep_their_case() -> None:
+    """Each escape's hex digits match in either case; letters do not."""
+    secret = f"P+foo/bar{token_hex(3)}"
+    mixed = quote(secret, safe="").replace("%2F", "%2f")
+    redactor = _redactor(secret)
+
+    assert_that(mixed).contains("%2B")
+    assert_that(mixed).contains("%2f")
+    assert_that(redactor.redact(f"key={mixed}")).is_equal_to("key=[redacted]")
+    assert_that(redactor.redact(f"key={mixed.lower()}")).is_equal_to(
+        f"key={mixed.lower()}",
+    )
+
+
+def test_quoted_neighbour_is_still_searched_for_secrets() -> None:
+    """Text skipped as userinfo is still searched for configured values."""
+    secret = f"tok{token_hex(4)}"
+
+    text = _redactor(secret).redact(f"'https://h.test','{secret}@b'")
+
+    assert_that(text).is_equal_to("'https://h.test','[redacted]@b'")
+
+
+def test_secret_without_utf8_encoding_is_redacted_raw() -> None:
+    """A lone surrogate skips the encoded forms; configuring never raises."""
+    secret = f"pw\udcff{token_hex(4)}"
+
+    redactor = _redactor(secret)
+
+    assert_that(redactor.redact(f"login {secret} failed")).is_equal_to(
+        "login [redacted] failed",
+    )
 
 
 def test_overlapping_secrets_are_redacted_whole() -> None:
@@ -155,6 +196,31 @@ def test_other_secrets_are_matched_whole_even_when_url_shaped() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("field", "template"),
+    [
+        ("redis", "redis://redis.invalid:6379/0?password={value}"),
+        ("redis", "rediss://redis.invalid/0?ssl_password={value}&ssl=true"),
+        ("database", "postgresql+psycopg://podex@db.invalid/podex?password={value}"),
+        ("database", "postgresql://podex@db.invalid/podex?sslpassword={value}"),
+    ],
+)
+def test_url_settings_contribute_credential_query_options(
+    field: str,
+    template: str,
+) -> None:
+    """Credential options in a URL's query are matched like its password."""
+    value = f"opt{token_hex(5)}"
+    url = SecretStr(template.format(value=value))
+    settings = (
+        Settings(rate_limit=RateLimitSettings(redis_url=url))
+        if field == "redis"
+        else Settings(database=DatabaseSettings(url=url))
+    )
+
+    assert_that(value in set(secret_values(settings))).is_true()
+
+
 def test_unparsable_url_settings_are_redacted_whole() -> None:
     """A URL setting that cannot be parsed contributes its whole value."""
     url = "postgresql://[unclosed/podex"
@@ -163,7 +229,7 @@ def test_unparsable_url_settings_are_redacted_whole() -> None:
     assert_that(set(secret_values(settings))).contains(url)
 
 
-def test_short_secret_paths_name_fields_only() -> None:
+def test_undersized_field_paths_name_fields_only() -> None:
     """Short configured secrets are listed by path, once each; empty ones not."""
     settings = Settings(
         database=DatabaseSettings(
@@ -175,7 +241,7 @@ def test_short_secret_paths_name_fields_only() -> None:
         ops_api_key=SecretStr(_SECRET),
     )
 
-    assert_that(short_secret_paths(settings)).is_equal_to(
+    assert_that(undersized_field_paths(settings)).is_equal_to(
         ["database.url", "auth.smtp_password"],
     )
 
@@ -219,6 +285,28 @@ def test_breadcrumb_headers_keep_only_the_allowlist() -> None:
         },
     )
     assert_that(sent["message"]).is_equal_to("GET https://[redacted]@h.test/x")
+    assert_that(sent["type"]).is_equal_to("http")
+
+
+def test_nested_breadcrumb_headers_keep_only_the_allowlist() -> None:
+    """Header mappings at any depth of breadcrumb data are reduced."""
+    crumb: Breadcrumb = {
+        "data": {
+            "request": {
+                "headers": {"Authorization": "Bearer tok", "Content-Type": "x"},
+            },
+            "attempts": [{"HEADERS": {"Cookie": "c=1"}}],
+        },
+    }
+
+    sent = before_breadcrumb(crumb, {})
+
+    assert_that(sent["data"]).is_equal_to(
+        {
+            "request": {"headers": {"Content-Type": "x"}},
+            "attempts": [{"HEADERS": {}}],
+        },
+    )
 
 
 def test_startup_warns_once_per_short_secret_by_path_only(
@@ -246,7 +334,7 @@ def test_startup_warns_once_per_short_secret_by_path_only(
     ]
     assert_that(warnings).is_equal_to(
         [
-            "secret setting auth.workos_api_key is shorter than 8 characters; "
+            "setting auth.workos_api_key is shorter than 8 characters; "
             "error reports redact every occurrence of its value",
         ],
     )

@@ -11,45 +11,24 @@ import sqlite3
 import traceback
 from secrets import token_hex
 
-import psycopg.errors
 import pytest
 from assertpy import assert_that
 from sqlalchemy.exc import IntegrityError
 
-from podex.config import ObservabilitySettings, Settings
 from podex.database_errors import (
     describe_database_error,
     format_sanitised_exception,
 )
 from podex.logging_config import configure_logging
-from podex.observability import init_sentry
 from tests.conftest import SentryEnvelopeRecorder
+from tests.database_error_support import unique_violation
 
 _ROW_VALUE = f"row-secret-{token_hex(8)}"
 
 
 def _unique_violation() -> IntegrityError:
-    """Return a SQLAlchemy error wrapping a PostgreSQL unique violation.
-
-    The error is raised and caught, so it carries tracebacks and the driver
-    error as its cause, exactly as SQLAlchemy raises it.
-    """
-    driver = psycopg.errors.UniqueViolation(
-        'duplicate key value violates unique constraint "credentials_value_key"\n'
-        f"DETAIL:  Key (value)=({_ROW_VALUE}) already exists.",
-    )
-    try:
-        try:
-            raise driver
-        except psycopg.errors.UniqueViolation as error:
-            raise IntegrityError(
-                "INSERT INTO credentials (value) VALUES (?)",
-                {"value": _ROW_VALUE},
-                error,
-                hide_parameters=True,
-            ) from error
-    except IntegrityError as wrapped:
-        return wrapped
+    """Return a SQLAlchemy unique violation whose DETAIL reveals the row value."""
+    return unique_violation(_ROW_VALUE)
 
 
 @pytest.fixture(name="logged")
@@ -168,30 +147,21 @@ def test_other_tracebacks_are_formatted_as_usual(explicit_cause: bool) -> None:
 
 
 def test_reported_database_error_withholds_driver_detail(
-    logged: pytest.LogCaptureFixture,
-    sentry_transport: SentryEnvelopeRecorder,
+    reporter: SentryEnvelopeRecorder,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The report carries the descriptor, not the driver's message."""
-    init_sentry(
-        Settings(
-            observability=ObservabilitySettings(
-                sentry_dsn="https://public@sentry.invalid/1",
-            ),
-        ),
-    )
-    configure_logging()
-
     logging.getLogger("podex.scheduler_runner").error(
         "scheduler_tick_failed",
         exc_info=_unique_violation(),
     )
 
-    events = sentry_transport.events()
+    events = reporter.events()
     assert_that(events).is_length(1)
     values = [value["value"] for value in events[0]["exception"]["values"]]
     assert_that(values).contains(
         "IntegrityError (UniqueViolation, SQLSTATE 23505) [driver message withheld]",
     )
-    assert_that(sentry_transport.serialized() + logged.text).does_not_contain(
+    assert_that(reporter.serialized() + caplog.text).does_not_contain(
         _ROW_VALUE,
     )

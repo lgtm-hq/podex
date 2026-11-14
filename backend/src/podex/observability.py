@@ -23,13 +23,17 @@ What the SDK sends, and how credentials are kept out of it:
   carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
   raw query, which carries provider API keys, so it is in the scrubber
   denylist.
-- Free text (exception messages, log messages, breadcrumb text and data):
-  URL userinfo and the known secret values of the loaded settings are
+- Free text and data (messages, exception values and source context,
+  breadcrumb messages and data, extra, non-SDK contexts, request and user
+  data): URL userinfo and the known secret values of the loaded settings are
   replaced by :mod:`podex.redaction` in ``before_send`` and
-  ``before_breadcrumb``, whatever field holds the text. Breadcrumb data keeps
-  only the allowlisted headers, as request data does. A database error's
-  message (statement, parameters, driver ``DETAIL`` with row values) is
-  replaced by its class and SQLSTATE (:mod:`podex.database_errors`).
+  ``before_breadcrumb``. Structural fields (identifiers, enums, timestamps,
+  release and SDK metadata, mapping keys) are never rewritten, so the event
+  stays valid even when a short secret matches them. Breadcrumb data keeps
+  only the allowlisted headers at any depth, as request data does. A
+  database error's message (statement, parameters, driver ``DETAIL`` with
+  row values) is replaced by its class and SQLSTATE
+  (:mod:`podex.database_errors`), in exception groups and chains alike.
 - The provider's rejection of a bad sign-in code, and the callback's handled
   ``502`` for it, are not sent: they are caller-triggerable, already logged,
   and reporting them would let any caller spend the reporting quota. They
@@ -40,7 +44,7 @@ What the SDK sends, and how credentials are kept out of it:
 
 import logging
 import re
-from typing import Any
+from typing import Any, cast
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
@@ -51,16 +55,17 @@ from podex import __version__
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import Settings
 from podex.database_errors import (
+    WITHHELD,
     describe_database_error,
-    exception_chain,
+    exception_tree,
     is_database_error,
 )
 from podex.redaction import (
-    SHORT_SECRET_LENGTH,
+    SHORT_VALUE_LENGTH,
     SecretRedactor,
     redact_in_place,
     secret_values,
-    short_secret_paths,
+    undersized_field_paths,
 )
 from podex.services.workos_auth import WorkOSInvalidCodeError
 
@@ -82,6 +87,21 @@ request-context middleware validates it and sets the ``request_id`` tag.
 # Replaces URL userinfo and the secret values of the settings the reporter was
 # last initialised with; until then, URL userinfo only.
 _REDACTOR = SecretRedactor()
+
+
+# Free-text and data-bearing parts of an event, redacted for URL userinfo and
+# configured secret values. Everything else is structural and never rewritten:
+# identifiers (event_id, trace and span ids), enums (level, platform, type),
+# timestamps, release/environment/dist, sdk and module metadata, tags,
+# fingerprints, exception types/modules/mechanisms, frame locations, the
+# SDK-generated contexts below, breadcrumb type/category/level/timestamp, and
+# every mapping key.
+_REDACTED_TEXT_FIELDS = ("message", "transaction")
+_REDACTED_DATA_FIELDS = ("logentry", "extra", "request", "user")
+_REDACTED_FRAME_FIELDS = ("context_line", "pre_context", "post_context", "vars")
+_STRUCTURAL_CONTEXTS = frozenset(
+    {"trace", "runtime", "os", "device", "app", "cloud_resource", "otel"},
+)
 
 
 # Keys the SDK's scrubber filters in addition to its defaults, wherever they
@@ -140,6 +160,74 @@ def _allowlisted_headers(headers: dict[Any, Any]) -> dict[Any, Any]:
     }
 
 
+def _allowlist_headers_recursively(data: dict[Any, Any] | list[Any]) -> None:
+    """Reduce every nested ``headers`` mapping to the allowlisted headers.
+
+    Args:
+        data: Breadcrumb data, edited in place at any depth.
+    """
+    if isinstance(data, list):
+        for item in data:
+            if isinstance(item, dict | list):
+                _allowlist_headers_recursively(item)
+        return
+    for key, value in data.items():
+        if isinstance(key, str) and key.lower() == "headers":
+            data[key] = _allowlisted_headers(value) if isinstance(value, dict) else {}
+        elif isinstance(value, dict | list):
+            _allowlist_headers_recursively(value)
+
+
+def _redact_frames(container: dict[Any, Any]) -> None:
+    """Redact the source context and variables of a stacktrace's frames."""
+    stacktrace = container.get("stacktrace")
+    frames = stacktrace.get("frames") if isinstance(stacktrace, dict) else None
+    for frame in frames if isinstance(frames, list) else ():
+        if not isinstance(frame, dict):
+            continue
+        for field in _REDACTED_FRAME_FIELDS:
+            value = frame.get(field)
+            if isinstance(value, str):
+                frame[field] = _REDACTOR.redact(value)
+            elif isinstance(value, dict | list):
+                redact_in_place(value, _REDACTOR.redact)
+
+
+def _redact_event(event: dict[str, Any]) -> None:
+    """Redact the free-text and data-bearing fields of an event.
+
+    Breadcrumbs are not touched here: each was redacted once by
+    :func:`before_breadcrumb` when recorded, and redacting twice would
+    rewrite the markers a short secret's redaction inserted.
+
+    Args:
+        event: The event, edited in place.
+    """
+    redact = _REDACTOR.redact
+    for field in _REDACTED_TEXT_FIELDS:
+        text = event.get(field)
+        if isinstance(text, str):
+            event[field] = redact(text)
+    for field in _REDACTED_DATA_FIELDS:
+        data = event.get(field)
+        if isinstance(data, dict | list):
+            redact_in_place(data, redact)
+    contexts = event.get("contexts")
+    if isinstance(contexts, dict):
+        for name, context in contexts.items():
+            if name not in _STRUCTURAL_CONTEXTS and isinstance(context, dict | list):
+                redact_in_place(context, redact)
+    for field in ("exception", "threads"):
+        container = event.get(field)
+        values = container.get("values") if isinstance(container, dict) else None
+        for value in values if isinstance(values, list) else ():
+            if not isinstance(value, dict):
+                continue
+            if isinstance(value.get("value"), str):
+                value["value"] = redact(value["value"])
+            _redact_frames(value)
+
+
 def _minimise_request(request: dict[str, object]) -> None:
     """Reduce captured request data to what is safe and useful to report.
 
@@ -195,8 +283,10 @@ def _is_unreported(hint: Hint) -> bool:
 def scrub_event(event: Event, hint: Hint) -> Event:
     """Minimise an event's data before it is sent.
 
-    Replaces URL userinfo and known secret values in every string of the
-    event (messages, exception values, breadcrumbs, extras), scrubs email
+    Replaces URL userinfo and known secret values in the free-text and
+    data-bearing fields (messages, exception values and source context,
+    extra, non-SDK contexts, request and user data), leaving structural
+    fields valid, scrubs email
     addresses from the event message and ``extra`` values, drops
     ``user.email`` entirely (scrubbing the remaining user fields), and
     reduces request data to the method, the URL without query string, and
@@ -210,7 +300,7 @@ def scrub_event(event: Event, hint: Hint) -> Event:
         The scrubbed event.
     """
     del hint
-    redact_in_place(event, _REDACTOR.redact)
+    _redact_event(cast(dict[str, Any], event))
     message = event.get("message")
     if isinstance(message, str):
         event["message"] = _scrub_text(message)
@@ -242,7 +332,7 @@ def _withhold_database_errors(event: Event, hint: Hint) -> None:
         return
     descriptors = {
         (type(link).__module__, type(link).__qualname__): describe_database_error(link)
-        for link in exception_chain(exc_info[1])
+        for link in exception_tree(exc_info[1])
         if is_database_error(link)
     }
     exception = event.get("exception")
@@ -257,7 +347,7 @@ def _withhold_database_errors(event: Event, hint: Hint) -> None:
             continue
         descriptor = descriptors.get((module, kind))
         if descriptor is not None:
-            value["value"] = f"{descriptor} [driver message withheld]"
+            value["value"] = f"{descriptor} {WITHHELD}"
 
 
 def before_send(event: Event, hint: Hint) -> Event | None:
@@ -279,8 +369,10 @@ def before_send(event: Event, hint: Hint) -> Event | None:
 def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
     """``before_breadcrumb`` hook: keep credentials out of breadcrumbs.
 
-    Header mappings in breadcrumb data keep only the allowlisted headers, and
-    URL userinfo and known secret values are replaced in every string.
+    Header mappings anywhere in breadcrumb data keep only the allowlisted
+    headers, and URL userinfo and known secret values are replaced in the
+    message and in data values. Type, category, level, timestamp and keys
+    are structural and kept as they are.
 
     Args:
         crumb: The breadcrumb about to be recorded.
@@ -292,12 +384,11 @@ def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
     del hint
     data = crumb.get("data")
     if isinstance(data, dict):
-        for key, value in data.items():
-            if isinstance(key, str) and key.lower() == "headers":
-                data[key] = (
-                    _allowlisted_headers(value) if isinstance(value, dict) else {}
-                )
-    redact_in_place(crumb, _REDACTOR.redact)
+        _allowlist_headers_recursively(data)
+        redact_in_place(data, _REDACTOR.redact)
+    message = crumb.get("message")
+    if isinstance(message, str):
+        crumb["message"] = _REDACTOR.redact(message)
     return crumb
 
 
@@ -317,13 +408,14 @@ def init_sentry(settings: Settings) -> bool:
     if not settings.observability.sentry_dsn:
         return False
     _REDACTOR.configure(secret_values(settings))
-    for path in short_secret_paths(settings):
-        # The path only: never the value or its length.
+    # Field paths only, computed from field names: nothing derived from a
+    # configured value is logged.
+    for field_path in undersized_field_paths(settings):
         _logger.warning(
-            "secret setting %s is shorter than %d characters; error reports "
+            "setting %s is shorter than %d characters; error reports "
             "redact every occurrence of its value",
-            path,
-            SHORT_SECRET_LENGTH,
+            field_path,
+            SHORT_VALUE_LENGTH,
         )
     sentry_sdk.init(
         dsn=settings.observability.sentry_dsn,

@@ -1,6 +1,7 @@
 """Shared pytest fixtures."""
 
 import json
+import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,6 +25,7 @@ from podex.config import (
     Settings,
 )
 from podex.database import enable_sqlite_foreign_keys, get_db
+from podex.logging_config import configure_logging
 from podex.main import create_app
 from podex.models import (
     AccountAlertRule,
@@ -34,6 +36,7 @@ from podex.models import (
     Mention,
     Podcast,
 )
+from podex.observability import init_sentry
 from podex.services.account_alerts import create_alert_rule
 from podex.services.recurring_notifications import reconcile_notification_schedules
 from podex.services.scheduled_work import plan_due_scheduled_work
@@ -288,6 +291,30 @@ def sentry_transport_fixture(
     sentry_sdk.get_client().close()
     sentry_sdk.get_global_scope().set_client(None)
     sentry_sdk.get_isolation_scope().clear()
+
+
+@pytest.fixture(name="reporter")
+def reporter_fixture(
+    sentry_transport: SentryEnvelopeRecorder,
+    caplog: pytest.LogCaptureFixture,
+) -> SentryEnvelopeRecorder:
+    """Initialise the reporter and logging as the application does.
+
+    Logs are captured at DEBUG and envelopes are kept in memory.
+
+    Returns:
+        SentryEnvelopeRecorder: The in-memory envelopes.
+    """
+    init_sentry(
+        Settings(
+            observability=ObservabilitySettings(
+                sentry_dsn="https://public@sentry.invalid/1",
+            ),
+        ),
+    )
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+    return sentry_transport
 
 
 def create_reporting_app(db_session: Session) -> FastAPI:

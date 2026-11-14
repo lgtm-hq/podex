@@ -98,7 +98,8 @@ def _report_and_collect(
     except RuntimeError:
         _logger.exception("closing report")
     assert_that(transport.events()).is_not_empty()
-    return transport.serialized() + caplog.text
+    logs: str = caplog.text
+    return transport.serialized() + logs
 
 
 def _enrich(settings: Settings, media_type: MediaType) -> None:

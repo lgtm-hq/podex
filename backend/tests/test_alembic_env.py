@@ -11,7 +11,7 @@ from pathlib import Path
 from secrets import token_hex
 
 import pytest
-from alembic import command
+from alembic.command import upgrade
 from alembic.config import Config
 from assertpy import assert_that
 from pydantic import SecretStr
@@ -32,7 +32,7 @@ def test_offline_migrations_accept_percent_encoded_password(
     output = io.StringIO()
     config = Config(str(_ALEMBIC_INI), output_buffer=output)
 
-    command.upgrade(config, "head", sql=True)
+    upgrade(config, "head", sql=True)
 
     assert_that(config.get_main_option("sqlalchemy.url")).is_equal_to(url)
     assert_that(output.getvalue()).contains("CREATE TABLE")
