@@ -1,5 +1,6 @@
 """Tests for hosted WorkOS AuthKit sign-in."""
 
+import logging
 from dataclasses import fields
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -226,6 +227,138 @@ def test_exchange_code_wraps_transport_errors() -> None:
 
     with pytest.raises(WorkOSAuthError):
         workos.exchange_code(code="auth-code")
+
+
+_CHAIN_API_KEY = "sk_test_789"
+_CHAIN_CODE = "auth-code-chain-321"
+
+
+def _texts_reachable_from(error: BaseException) -> list[str]:
+    """Render everything an error reporter can reach from ``error``'s chain.
+
+    Walks both ``__cause__`` and ``__context__`` and, for every exception
+    found, its message, ``args`` and any attached HTTPX request (URL,
+    headers and body).
+
+    Args:
+        error: The exception raised to the caller.
+
+    Returns:
+        Text renderings of every reachable object.
+    """
+    texts: list[str] = []
+    pending: list[BaseException] = [error]
+    visited: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in visited:
+            continue
+        visited.add(id(current))
+        texts.extend((str(current), repr(current)))
+        texts.extend(repr(argument) for argument in current.args)
+        try:
+            request = getattr(current, "request", None)
+        except RuntimeError:  # httpx raises when no request is attached
+            request = None
+        if isinstance(request, httpx.Request):
+            texts.extend(
+                (
+                    str(request.url),
+                    repr(dict(request.headers)),
+                    request.content.decode("utf-8"),
+                ),
+            )
+        pending.extend(
+            linked
+            for linked in (current.__cause__, current.__context__)
+            if linked is not None
+        )
+    return texts
+
+
+def test_exchange_code_transport_error_keeps_credentials_out_of_chain() -> None:
+    """A failed exchange raises an error that carries no credential."""
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        raise httpx.ConnectError("connection refused", request=request)
+
+    workos = WorkOSAuthClient(
+        client_id="client_123",
+        api_key=_CHAIN_API_KEY,
+        redirect_uri="https://app.example.com/api/v2/auth/callback",
+        transport=httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(WorkOSAuthError) as caught:
+        workos.exchange_code(code=_CHAIN_CODE)
+
+    # The transport error really did hold both credentials.
+    sent_body = sent[0].content.decode("utf-8")
+    assert_that(sent_body).contains(_CHAIN_API_KEY, _CHAIN_CODE)
+    assert_that(str(caught.value)).is_equal_to("WorkOS authentication request failed")
+    assert_that(caught.value.__cause__).is_none()
+    assert_that(caught.value.__context__).is_none()
+    for text in _texts_reachable_from(caught.value):
+        assert_that(text).does_not_contain(_CHAIN_API_KEY)
+        assert_that(text).does_not_contain(_CHAIN_CODE)
+
+
+def test_callback_logs_no_oauth_credentials(
+    client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed callback logs its path and status but never code or state."""
+    # Alembic's ``fileConfig`` in earlier migration tests disables loggers
+    # that already exist; re-enable them so every server log line is seen.
+    for existing in list(logging.root.manager.loggerDict.values()):
+        if isinstance(existing, logging.Logger) and existing.disabled:
+            monkeypatch.setattr(existing, "disabled", False)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection refused", request=request)
+
+    workos = WorkOSAuthClient(
+        client_id="client_123",
+        api_key=_CHAIN_API_KEY,
+        redirect_uri="https://app.example.com/api/v2/auth/callback",
+        transport=httpx.MockTransport(handler),
+    )
+    _override(client, workos)
+    login = client.get("/api/v2/auth/login", follow_redirects=False)
+    state = _state_cookie(login)
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.get(
+            "/api/v2/auth/callback",
+            params={"code": _CHAIN_CODE, "state": state},
+            follow_redirects=False,
+        )
+
+    assert_that(response.status_code).is_equal_to(502)
+    access = [
+        record
+        for record in caplog.records
+        if record.name == "podex.access"
+        and record.__dict__["path"] == "/api/v2/auth/callback"
+    ]
+    assert_that(access).is_length(1)
+    assert_that(access[0].__dict__["status_code"]).is_equal_to(502)
+    assert_that(caplog.messages).contains(
+        "workos_code_exchange_failed: WorkOS authentication request failed",
+    )
+    formatter = logging.Formatter()
+    # ``httpx2`` is the test client logging its own outgoing request line;
+    # every other record was emitted while the server handled the request.
+    server_records = [record for record in caplog.records if record.name != "httpx2"]
+    assert_that(server_records).is_not_empty()
+    for record in server_records:
+        line = formatter.format(record)
+        assert_that(line).does_not_contain(_CHAIN_CODE)
+        assert_that(line).does_not_contain(state)
+        assert_that(line).does_not_contain(_CHAIN_API_KEY)
 
 
 def test_upsert_creates_new_account(db_session: Session) -> None:

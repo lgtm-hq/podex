@@ -221,3 +221,67 @@ def test_access_log_records_request_details(
     assert_that(record.__dict__["status_code"]).is_equal_to(200)
     assert_that(record.__dict__["request_id"]).is_equal_to("log-1")
     assert_that(record.__dict__["duration_ms"]).is_greater_than_or_equal_to(0.0)
+
+
+def _access_records(caplog: pytest.LogCaptureFixture) -> list[logging.LogRecord]:
+    """Return the application access-log records captured so far.
+
+    Args:
+        caplog: The pytest log-capture fixture.
+
+    Returns:
+        list[logging.LogRecord]: Records emitted by ``podex.access``.
+    """
+    return [record for record in caplog.records if record.name == "podex.access"]
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected_status"),
+    [("http://localhost:4321", 200), ("https://untrusted.example", 400)],
+    ids=["allowed-origin", "disallowed-origin"],
+)
+def test_access_log_records_cors_preflight(
+    caplog: pytest.LogCaptureFixture,
+    origin: str,
+    expected_status: int,
+) -> None:
+    """Preflights answered by the CORS layer still produce an access-log line."""
+    settings = Settings(rate_limit=RateLimitSettings(enabled=False))
+    with _make_client(settings) as client, caplog.at_level(
+        logging.INFO, logger="podex.access"
+    ):
+        response = client.options(
+            "/api/v2/status",
+            headers={"Origin": origin, "Access-Control-Request-Method": "GET"},
+        )
+
+    assert_that(response.status_code).is_equal_to(expected_status)
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    assert_that(records[0].__dict__["method"]).is_equal_to("OPTIONS")
+    assert_that(records[0].__dict__["path"]).is_equal_to("/api/v2/status")
+    assert_that(records[0].__dict__["status_code"]).is_equal_to(expected_status)
+    assert_that(records[0].__dict__["duration_ms"]).is_greater_than_or_equal_to(0.0)
+
+
+def test_access_log_records_unrouted_path_without_query(
+    tight_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A 404 is logged by path only; its query string never reaches the log."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = tight_client.get(
+            "/api/v2/does-not-exist",
+            params={"code": "query-code-123", "state": "query-state-456"},
+        )
+
+    assert_that(response.status_code).is_equal_to(404)
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    record = records[0]
+    assert_that(record.__dict__["method"]).is_equal_to("GET")
+    assert_that(record.__dict__["path"]).is_equal_to("/api/v2/does-not-exist")
+    assert_that(record.__dict__["status_code"]).is_equal_to(404)
+    assert_that(record.getMessage()).does_not_contain("query-code-123")
+    assert_that(record.getMessage()).does_not_contain("query-state-456")
+    assert_that(record.getMessage()).does_not_contain("?")
