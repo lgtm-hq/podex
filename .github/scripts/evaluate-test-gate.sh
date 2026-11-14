@@ -7,9 +7,11 @@
 # scripts/ci/evaluate-test-gate.sh.
 #
 # - "success" passes.
-# - "skipped" passes only on a draft pull request (IS_DRAFT=true), the one
-#   case where test jobs skip. On a ready pull request, the merge queue or a
-#   push to main a skipped job fails: nothing ran, so nothing was proven.
+# - "skipped" passes for test, test-coverage, test-postgres-migrations and
+#   test-shell. Draft PRs skip every test job.
+# - "skipped" passes for test-postgres-application (#724) only on a draft
+#   pull request (IS_DRAFT=true), the one case where it skips. On a ready pull
+#   request, the merge queue or a push to main it fails: no PostgreSQL test ran.
 # - "failure" and "cancelled" fail.
 # - Any other value, including an empty one, fails closed; so does an
 #   IS_DRAFT other than "true" or "false".
@@ -23,9 +25,11 @@ usage() {
 	cat <<'EOF'
 Evaluate upstream test job results for the required test gate.
 
-Passes when every upstream job is "success", or "skipped" on a draft pull
-request. Fails when any job is "failure" or "cancelled", is "skipped" on a
-non-draft run, or reports an unexpected value.
+Passes when every upstream job is "success" or "skipped", except that
+test-postgres-application may be "skipped" only on a draft pull request.
+Fails when any job is "failure" or "cancelled", when
+test-postgres-application is "skipped" on a non-draft run, or when a job
+reports an unexpected value.
 
 Usage:
   IS_DRAFT=false TEST_RESULT=success COVERAGE_RESULT=success \
@@ -37,7 +41,7 @@ Required environment variables:
   TEST_RESULT        needs.test.result (Python compatibility matrix)
   COVERAGE_RESULT    needs.test-coverage.result
   MIGRATIONS_RESULT  needs.test-postgres-migrations.result
-  POSTGRES_RESULT    needs.test-postgres-application.result
+  POSTGRES_RESULT    needs.test-postgres-application.result (skip: drafts only)
   SHELL_RESULT       needs.test-shell.result (BATS tests)
 
 Optional environment variables:
@@ -76,18 +80,22 @@ true | false) ;;
 	;;
 esac
 
+# name:VARIABLE:skip rule. "any": skipped passes (as before #724).
+# "draft": skipped passes only when IS_DRAFT=true.
 jobs=(
-	"test:TEST_RESULT"
-	"test-coverage:COVERAGE_RESULT"
-	"test-postgres-migrations:MIGRATIONS_RESULT"
-	"test-postgres-application:POSTGRES_RESULT"
-	"test-shell:SHELL_RESULT"
+	"test:TEST_RESULT:any"
+	"test-coverage:COVERAGE_RESULT:any"
+	"test-postgres-migrations:MIGRATIONS_RESULT:any"
+	"test-postgres-application:POSTGRES_RESULT:draft"
+	"test-shell:SHELL_RESULT:any"
 )
 
 failed=()
 for entry in "${jobs[@]}"; do
 	name="${entry%%:*}"
-	var="${entry##*:}"
+	rest="${entry#*:}"
+	var="${rest%%:*}"
+	skip_rule="${rest#*:}"
 	if [[ -z "${!var+x}" ]]; then
 		echo "::error::${var} is not set" >&2
 		write_outputs failure false
@@ -98,7 +106,7 @@ for entry in "${jobs[@]}"; do
 	case "${result}" in
 	success) ;;
 	skipped)
-		if [[ "${IS_DRAFT}" != "true" ]]; then
+		if [[ "${skip_rule}" == "draft" && "${IS_DRAFT}" != "true" ]]; then
 			failed+=("${name} (skipped on a non-draft run)")
 		fi
 		;;
@@ -113,9 +121,5 @@ if ((${#failed[@]} > 0)); then
 	exit 1
 fi
 
-if [[ "${IS_DRAFT}" == "true" ]]; then
-	echo "All upstream test jobs passed or were skipped (draft pull request)"
-else
-	echo "All upstream test jobs passed"
-fi
+echo "All upstream test jobs passed or were skipped"
 write_outputs success true

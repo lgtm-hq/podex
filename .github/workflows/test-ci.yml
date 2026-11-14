@@ -249,7 +249,8 @@ jobs:
   # Combined test gate (#550): one verdict over every test job, so a failure
   # in the Python matrix, coverage, Postgres replay, Postgres application
   # tests or shell tests fails the required context. Reads needs.*.result
-  # directly. Skipped jobs pass on draft PRs only.
+  # directly. Skipped jobs pass (draft PRs skip them), except
+  # test-postgres-application, whose skip passes on draft PRs only.
   test-gate:
     name: 🚦 Test Gate
     needs:
@@ -277,8 +278,9 @@ jobs:
       - name: Evaluate upstream results
         id: gate
         env:
-          # Only a draft pull request may skip test jobs; the script fails a
-          # skip anywhere else (ready PRs, merge queue, pushes to main).
+          # The script fails a skipped test-postgres-application outside
+          # draft PRs (ready PRs, merge queue, pushes to main); other jobs
+          # are judged as before.
           IS_DRAFT: ${{ github.event.pull_request.draft == true }}
           TEST_RESULT: ${{ needs.test.result }}
           COVERAGE_RESULT: ${{ needs.test-coverage.result }}

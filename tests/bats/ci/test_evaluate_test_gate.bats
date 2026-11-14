@@ -33,7 +33,7 @@ assert_outputs() {
     MIGRATIONS_RESULT=skipped POSTGRES_RESULT=skipped SHELL_RESULT=skipped \
     run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"(draft pull request)"* ]]
+  [[ "${output}" == *"All upstream test jobs passed or were skipped"* ]]
   assert_outputs success true
 }
 
@@ -44,23 +44,53 @@ assert_outputs() {
   assert_outputs success true
 }
 
-@test "fails when any single upstream job is skipped on a non-draft run" {
+@test "existing lanes still pass when skipped on a non-draft run" {
   local var
-  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT POSTGRES_RESULT \
-    SHELL_RESULT; do
+  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT SHELL_RESULT; do
     : >"${GITHUB_OUTPUT}"
     run env "${var}=skipped" bash "${SCRIPT}"
-    [ "${status}" -eq 1 ]
-    [[ "${output}" == *"(skipped on a non-draft run)"* ]]
-    assert_outputs failure false
+    [ "${status}" -eq 0 ]
+    [[ "${output}" == *"All upstream test jobs passed or were skipped"* ]]
+    assert_outputs success true
   done
 }
 
-@test "names a skipped PostgreSQL lane on a non-draft run" {
-  MIGRATIONS_RESULT=skipped POSTGRES_RESULT=skipped run bash "${SCRIPT}"
+@test "existing lanes still pass when all skipped on a non-draft run" {
+  TEST_RESULT=skipped COVERAGE_RESULT=skipped MIGRATIONS_RESULT=skipped \
+    SHELL_RESULT=skipped run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  assert_outputs success true
+}
+
+@test "existing lanes still pass when skipped on a draft PR" {
+  local var
+  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT SHELL_RESULT; do
+    : >"${GITHUB_OUTPUT}"
+    run env IS_DRAFT=true "${var}=skipped" bash "${SCRIPT}"
+    [ "${status}" -eq 0 ]
+    assert_outputs success true
+  done
+}
+
+@test "PostgreSQL application lane fails when skipped on a non-draft run" {
+  POSTGRES_RESULT=skipped run bash "${SCRIPT}"
   [ "${status}" -eq 1 ]
-  [[ "${output}" == *"test-postgres-migrations (skipped on a non-draft run)"* ]]
   [[ "${output}" == *"test-postgres-application (skipped on a non-draft run)"* ]]
+  assert_outputs failure false
+}
+
+@test "PostgreSQL application lane passes when skipped on a draft PR" {
+  IS_DRAFT=true POSTGRES_RESULT=skipped run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  assert_outputs success true
+}
+
+@test "only the PostgreSQL application lane is named when all are skipped" {
+  TEST_RESULT=skipped COVERAGE_RESULT=skipped MIGRATIONS_RESULT=skipped \
+    POSTGRES_RESULT=skipped SHELL_RESULT=skipped run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"Upstream test jobs failed: test-postgres-application (skipped on a non-draft run)"* ]]
+  [[ "${output}" != *"test-postgres-migrations (skipped"* ]]
   assert_outputs failure false
 }
 

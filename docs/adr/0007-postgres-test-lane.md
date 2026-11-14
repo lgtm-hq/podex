@@ -75,8 +75,9 @@ inner runs cannot nest.
 CI runs `pytest tests -m postgres --require-postgres` in the
 `🐘 Postgres Application Tests` job against the same digest-pinned pgvector
 image as the migration replay, and the combined test gate includes its result.
-The gate accepts a skipped test job only on a draft pull request. The lane does
-not collect coverage; the 85% floor stays on the SQLite coverage job. We
+The gate accepts a skipped PostgreSQL application job only on a draft pull
+request; every job that existed before is judged as before. The lane does not
+collect coverage; the 85% floor stays on the SQLite coverage job. We
 deliberately do not run the whole SQLite suite on PostgreSQL.
 
 ## Consequences
