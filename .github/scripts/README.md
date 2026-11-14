@@ -1,6 +1,7 @@
 # Container smoke tests
 
-Run from any working directory with Docker and GNU `timeout` available:
+Run from any working directory with Docker, GNU `timeout` and bash 4.4 or newer
+available (the stock macOS bash 3.2 is too old):
 
 ```sh
 IMAGE=podex-backend:local bash .github/scripts/smoke-backend.sh
@@ -16,12 +17,13 @@ and INT trigger cleanup. Every application container uses `--network none`.
 ## What the probes prove
 
 Both Dockerfiles probe exact `/health` with Python/Node standard runtime APIs,
-without credentials or extra packages. The interval is 30 seconds, request
-timeout 2 seconds, Docker timeout 5 seconds, and three consecutive failures mark
-the container unhealthy. Backend startup has a 300-second grace period for
-optional migrations, with a 5-second start interval so successful startup is
-recognized quickly; frontend has 30 seconds. Once startup grace expires, failure
-is detected within about 95 seconds. Responses need HTTP 200.
+without credentials or extra packages. The interval is 30 seconds, each network
+operation of the request times out after 2 seconds (about 4 seconds worst case),
+Docker timeout 5 seconds, and three consecutive failures mark the container
+unhealthy. Backend startup has a 300-second grace period for optional
+migrations, with a 5-second start interval so successful startup is recognized
+quickly; frontend has 30 seconds. Once startup grace expires, failure is
+detected within about 95 seconds. Responses need HTTP 200.
 
 Backend `/health` is HTTP liveness and is exempt from rate limiting at that
 exact path. It does **not** query the database. Frontend `/health` is uncached

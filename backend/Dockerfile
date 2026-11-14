@@ -104,6 +104,8 @@ EXPOSE 8000
 # listening port must also override the healthcheck to probe that port.
 # The scheduler has no HTTP listener; recognize its module in /proc command
 # lines, including shell/init wrappers. This does not prove scheduler progress.
+# Any visible process counts: a scheduler exec'd into an API container, or one
+# sharing its PID namespace, makes the probe skip the HTTP check.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --start-interval=5s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
 
