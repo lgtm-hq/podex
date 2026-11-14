@@ -9,13 +9,38 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op  # type: ignore[attr-defined]
-
-from podex.models.semantic_chunk import PgVectorType
+from sqlalchemy.ext.compiler import compiles
 
 revision: str = "0010"
 down_revision: str | None = "0009"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
+
+
+# Embedding column type frozen as released in this revision. It renders as
+# ``TEXT`` by default and as pgvector on PostgreSQL. It is defined here rather
+# than imported so later model type changes cannot alter this DDL. The type is
+# built with ``type()`` because the CI lint image type-checks without runtime
+# dependencies, where a ``class`` statement cannot subclass the unresolved base.
+_HistoricalEmbeddingVector: type[sa.Text] = type(
+    "_HistoricalEmbeddingVector",
+    (sa.Text,),
+    {"cache_ok": True},
+)
+
+
+def _compile_postgresql_embedding_vector(
+    _type: sa.Text,
+    _compiler: object,
+    **_kwargs: object,
+) -> str:
+    """Compile the historical embedding column to pgvector on PostgreSQL."""
+    return "vector(1536)"
+
+
+compiles(_HistoricalEmbeddingVector, "postgresql")(
+    _compile_postgresql_embedding_vector,
+)
 
 
 def upgrade() -> None:
@@ -385,7 +410,7 @@ def upgrade() -> None:
         sa.Column("embedding_dimensions", sa.Integer(), nullable=True),
         sa.Column(
             "embedding_vector",
-            PgVectorType(1536),
+            _HistoricalEmbeddingVector(),
             nullable=True,
         ),
         sa.Column("embedding_error", sa.Text(), nullable=True),
