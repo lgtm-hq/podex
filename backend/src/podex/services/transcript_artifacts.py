@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum, auto
@@ -462,7 +463,7 @@ def _hash_artifact_text(
         payload = _processing_payload_from_json(
             artifact_store.get_json(storage_key=storage_key),
         )
-        if payload.raw_text.strip():
+        if _has_visible_text(payload.raw_text):
             result = sha256(payload.raw_text.encode("utf-8")).hexdigest()
         else:
             result = ArtifactVerificationFailure.EMPTY
@@ -473,6 +474,19 @@ def _hash_artifact_text(
     finally:
         payload = None
     return result
+
+
+def _has_visible_text(text: str) -> bool:
+    """Whether the text has any character a reader would see.
+
+    Whitespace and Unicode format, control, surrogate, private-use and
+    unassigned characters (zero-width space, byte-order mark, word joiner)
+    do not count, so text made only of them is treated as empty.
+    """
+    return any(
+        not character.isspace() and unicodedata.category(character)[0] != "C"
+        for character in text
+    )
 
 
 def reacquire_purged_transcript(

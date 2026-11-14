@@ -1,4 +1,3 @@
-<!-- markdownlint-disable MD041 -->
 
 # 0005. Transcript purge proof identifies a verified source
 

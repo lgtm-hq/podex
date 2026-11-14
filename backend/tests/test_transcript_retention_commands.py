@@ -596,7 +596,11 @@ def test_verification_errors_retain_no_transcript_text(
     assert_that(str(error.value)).is_equal_to(f"{ARTIFACT_VERIFICATION_FAILED}: {code}")
 
 
-@pytest.mark.parametrize("empty_text", ["", " \n\t"], ids=["empty", "whitespace"])
+@pytest.mark.parametrize(
+    "empty_text",
+    ["", " \n\t", "\u200b", "\ufeff", " \u200b\n\ufeff\u00a0\u2060"],
+    ids=["empty", "whitespace", "zero-width-space", "bom", "mixed-invisible"],
+)
 def test_artifact_with_empty_text_is_refused_even_when_hash_matches(
     db_session: Session,
     tmp_path: Path,
