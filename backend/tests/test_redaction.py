@@ -1,5 +1,7 @@
 """Tests for the last-resort free-text redaction used by the reporter."""
 
+import logging
+import re
 from secrets import token_hex
 from urllib.parse import quote, quote_plus
 
@@ -8,17 +10,29 @@ from assertpy import assert_that
 from pydantic import SecretStr
 from sentry_sdk.types import Breadcrumb
 
-from podex.config import AuthSettings, DatabaseSettings, Settings
-from podex.observability import before_breadcrumb
+from podex.config import (
+    AuthSettings,
+    DatabaseSettings,
+    ObservabilitySettings,
+    Settings,
+)
+from podex.observability import before_breadcrumb, init_sentry
 from podex.redaction import (
-    MIN_REDACTED_SECRET_LENGTH,
+    SHORT_SECRET_LENGTH,
     SecretRedactor,
     redact_in_place,
     redact_url_userinfo,
     secret_values,
+    short_secret_paths,
 )
+from tests.conftest import SentryEnvelopeRecorder
 
 _SECRET = f"s+cret/{token_hex(8)}"
+
+
+def _lower_escapes(text: str) -> str:
+    """Return ``text`` with its percent-escapes in lowercase hex."""
+    return re.sub(r"%[0-9A-F]{2}", lambda match: match.group(0).lower(), text)
 
 
 def _redactor(*secrets: str) -> SecretRedactor:
@@ -56,12 +70,31 @@ def test_known_secret_values_are_redacted_raw_and_url_encoded() -> None:
     assert_that(text).is_equal_to("raw=[redacted] path=[redacted] query=[redacted]")
 
 
-def test_short_and_empty_secrets_are_not_matched() -> None:
-    """Values too short to be credentials never redact unrelated text."""
-    short = "x" * (MIN_REDACTED_SECRET_LENGTH - 1)
+def test_short_secrets_are_redacted_and_empty_ones_ignored() -> None:
+    """Every non-empty secret is redacted, however short; empty means unset."""
+    short = "s3cr3t"
     redactor = _redactor("", short)
 
-    assert_that(redactor.redact(f"an {short} value")).is_equal_to(f"an {short} value")
+    assert_that(len(short)).is_less_than(SHORT_SECRET_LENGTH)
+    assert_that(redactor.redact(f"key {short} rejected")).is_equal_to(
+        "key [redacted] rejected",
+    )
+    assert_that(_redactor("").redact("nothing to hide")).is_equal_to(
+        "nothing to hide",
+    )
+
+
+def test_lowercase_percent_escapes_are_redacted() -> None:
+    """Percent-encoded forms match with upper- and lowercase escapes."""
+    secret = f"p@ss/w {token_hex(4)}"
+    upper = quote(secret, safe="")
+    lower = _lower_escapes(upper)
+    lower_plus = _lower_escapes(quote_plus(secret))
+
+    text = _redactor(secret).redact(f"a={upper} b={lower} c={lower_plus}")
+
+    assert_that(lower).is_not_equal_to(upper)
+    assert_that(text).is_equal_to("a=[redacted] b=[redacted] c=[redacted]")
 
 
 def test_overlapping_secrets_are_redacted_whole() -> None:
@@ -93,32 +126,57 @@ def test_large_text_is_redacted_in_one_pass() -> None:
     assert_that(_redactor(_SECRET).redact(large)).is_equal_to("[redacted] " * 10_000)
 
 
-def test_secret_values_take_passwords_from_urls() -> None:
-    """URL-valued secrets contribute their password, others their whole value."""
+def test_url_settings_contribute_their_password() -> None:
+    """The database and Redis URL settings contribute only the password."""
     password = f"p%40ss-{token_hex(4)}"
     settings = Settings(
         database=DatabaseSettings(
             url=SecretStr(f"postgresql://podex:{password}@db.invalid/podex"),
         ),
-        auth=AuthSettings(smtp_password=SecretStr(_SECRET)),
     )
 
     values = set(secret_values(settings))
 
-    assert_that(values).contains(password, password.replace("%40", "@"), _SECRET)
-    assert_that(values).does_not_contain("postgresql://podex")
+    assert_that(password in values).is_true()
+    assert_that(password.replace("%40", "@") in values).is_true()
     assert_that([value for value in values if "://" in value]).is_empty()
 
 
-def test_secret_values_ignore_unparsable_urls() -> None:
-    """A malformed URL secret contributes nothing instead of failing."""
-    settings = Settings(
-        database=DatabaseSettings(url=SecretStr("postgresql://[unclosed/podex")),
+def test_other_secrets_are_matched_whole_even_when_url_shaped() -> None:
+    """URL handling is decided by field, so a URL-like password stays whole."""
+    smtp_password = f"pass://{token_hex(6)}"
+    settings = Settings(auth=AuthSettings(smtp_password=SecretStr(smtp_password)))
+
+    values = set(secret_values(settings))
+
+    assert_that(values).contains(smtp_password)
+    assert_that(_redactor(*values).redact(f"login {smtp_password} failed")).is_equal_to(
+        "login [redacted] failed",
     )
 
-    assert_that(set(secret_values(settings))).is_not_empty()
-    assert_that(set(secret_values(settings))).does_not_contain(
-        "postgresql://[unclosed/podex",
+
+def test_unparsable_url_settings_are_redacted_whole() -> None:
+    """A URL setting that cannot be parsed contributes its whole value."""
+    url = "postgresql://[unclosed/podex"
+    settings = Settings(database=DatabaseSettings(url=SecretStr(url)))
+
+    assert_that(set(secret_values(settings))).contains(url)
+
+
+def test_short_secret_paths_name_fields_only() -> None:
+    """Short configured secrets are listed by path, once each; empty ones not."""
+    settings = Settings(
+        database=DatabaseSettings(
+            url=SecretStr(f"postgresql://podex:{token_hex(2)}@db.invalid/podex"),
+        ),
+        auth=AuthSettings(
+            smtp_password=SecretStr("short"), workos_api_key=SecretStr("")
+        ),
+        ops_api_key=SecretStr(_SECRET),
+    )
+
+    assert_that(short_secret_paths(settings)).is_equal_to(
+        ["database.url", "auth.smtp_password"],
     )
 
 
@@ -161,3 +219,36 @@ def test_breadcrumb_headers_keep_only_the_allowlist() -> None:
         },
     )
     assert_that(sent["message"]).is_equal_to("GET https://[redacted]@h.test/x")
+
+
+def test_startup_warns_once_per_short_secret_by_path_only(
+    sentry_transport: SentryEnvelopeRecorder,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each short secret is named by path, never by value or exact length."""
+    del sentry_transport  # requested so init_sentry uses the in-memory transport
+    short = f"k{token_hex(2)}"
+    settings = Settings(
+        auth=AuthSettings(workos_api_key=SecretStr(short)),
+        ops_api_key=SecretStr(_SECRET),
+        observability=ObservabilitySettings(
+            sentry_dsn="https://public@sentry.invalid/1",
+        ),
+    )
+
+    with caplog.at_level(logging.WARNING, logger="podex.observability"):
+        init_sentry(settings)
+
+    warnings = [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == "podex.observability"
+    ]
+    assert_that(warnings).is_equal_to(
+        [
+            "secret setting auth.workos_api_key is shorter than 8 characters; "
+            "error reports redact every occurrence of its value",
+        ],
+    )
+    assert_that(caplog.text).does_not_contain(short)
+    assert_that(caplog.text).does_not_contain(_SECRET)

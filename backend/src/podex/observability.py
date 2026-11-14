@@ -27,7 +27,9 @@ What the SDK sends, and how credentials are kept out of it:
   URL userinfo and the known secret values of the loaded settings are
   replaced by :mod:`podex.redaction` in ``before_send`` and
   ``before_breadcrumb``, whatever field holds the text. Breadcrumb data keeps
-  only the allowlisted headers, as request data does.
+  only the allowlisted headers, as request data does. A database error's
+  message (statement, parameters, driver ``DETAIL`` with row values) is
+  replaced by its class and SQLSTATE (:mod:`podex.database_errors`).
 - The provider's rejection of a bad sign-in code, and the callback's handled
   ``502`` for it, are not sent: they are caller-triggerable, already logged,
   and reporting them would let any caller spend the reporting quota. They
@@ -36,6 +38,7 @@ What the SDK sends, and how credentials are kept out of it:
   its exception chain.
 """
 
+import logging
 import re
 from typing import Any
 
@@ -47,9 +50,21 @@ from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
 from podex import __version__
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import Settings
-from podex.redaction import SecretRedactor, redact_in_place, secret_values
+from podex.database_errors import (
+    describe_database_error,
+    exception_chain,
+    is_database_error,
+)
+from podex.redaction import (
+    SHORT_SECRET_LENGTH,
+    SecretRedactor,
+    redact_in_place,
+    secret_values,
+    short_secret_paths,
+)
 from podex.services.workos_auth import WorkOSInvalidCodeError
 
+_logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _REDACTED = "[redacted-email]"
 _ACCESS_LOGGER = "podex.access"
@@ -212,6 +227,39 @@ def scrub_event(event: Event, hint: Hint) -> Event:
     return event
 
 
+def _withhold_database_errors(event: Event, hint: Hint) -> None:
+    """Replace the message of each reported database error by its descriptor.
+
+    Exception values are matched to the hint's exception chain by module and
+    type name, as the SDK records them.
+
+    Args:
+        event: The event, edited in place.
+        hint: SDK context; ``exc_info`` holds the reported exception.
+    """
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
+        return
+    descriptors = {
+        (type(link).__module__, type(link).__qualname__): describe_database_error(link)
+        for link in exception_chain(exc_info[1])
+        if is_database_error(link)
+    }
+    exception = event.get("exception")
+    values = exception.get("values") if isinstance(exception, dict) else None
+    if not descriptors or not isinstance(values, list):
+        return
+    for value in values:
+        if not isinstance(value, dict):
+            continue
+        module, kind = value.get("module"), value.get("type")
+        if not isinstance(module, str) or not isinstance(kind, str):
+            continue
+        descriptor = descriptors.get((module, kind))
+        if descriptor is not None:
+            value["value"] = f"{descriptor} [driver message withheld]"
+
+
 def before_send(event: Event, hint: Hint) -> Event | None:
     """``before_send`` hook: drop unreported errors, minimise the rest.
 
@@ -224,6 +272,7 @@ def before_send(event: Event, hint: Hint) -> Event | None:
     """
     if _is_unreported(hint):
         return None
+    _withhold_database_errors(event, hint)
     return scrub_event(event, hint)
 
 
@@ -268,6 +317,14 @@ def init_sentry(settings: Settings) -> bool:
     if not settings.observability.sentry_dsn:
         return False
     _REDACTOR.configure(secret_values(settings))
+    for path in short_secret_paths(settings):
+        # The path only: never the value or its length.
+        _logger.warning(
+            "secret setting %s is shorter than %d characters; error reports "
+            "redact every occurrence of its value",
+            path,
+            SHORT_SECRET_LENGTH,
+        )
     sentry_sdk.init(
         dsn=settings.observability.sentry_dsn,
         environment=settings.observability.sentry_environment,

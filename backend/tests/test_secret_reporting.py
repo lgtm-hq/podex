@@ -225,7 +225,9 @@ def test_database_error_with_secret_parameters_leaks_no_secret(
         output = _report_and_collect(sentry_transport, caplog)
     engine.dispose()
 
-    assert_that(output).contains("credential write failed", "parameters hidden")
+    assert_that(output).contains("credential write failed")
+    assert_that(output).contains("IntegrityError (SQLITE_CONSTRAINT_UNIQUE)")
+    assert_that(output).contains("[driver message withheld]")
     assert_that(leaked(output)).is_empty()
 
 
@@ -243,5 +245,6 @@ def test_exception_rendering_settings_leaks_no_secret(
             _logger.exception("startup failed")
         output = _report_and_collect(sentry_transport, caplog)
 
-    assert_that(output).contains("startup failed", "**********")
+    assert_that(output).contains("startup failed")
+    assert_that(output).contains("**********")
     assert_that(leaked(output)).is_empty()

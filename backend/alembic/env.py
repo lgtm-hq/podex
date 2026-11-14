@@ -16,9 +16,11 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 if not config.get_main_option("sqlalchemy.url"):
+    # The option goes through ConfigParser interpolation, which would reject a
+    # percent-encoded password (and print the whole URL); "%%" reads back "%".
     config.set_main_option(
         "sqlalchemy.url",
-        get_settings().database.url.get_secret_value(),
+        get_settings().database.url.get_secret_value().replace("%", "%%"),
     )
 
 target_metadata = Base.metadata
@@ -43,6 +45,8 @@ def run_migrations_online() -> None:
         section,
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
+        # As for the application engine: keep bound values out of errors.
+        hide_parameters=True,
     )
     with connectable.connect() as connection:
         if connection.dialect.name == "postgresql":
