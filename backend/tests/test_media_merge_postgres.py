@@ -84,7 +84,9 @@ def postgres_fixture() -> Iterator[_PostgresDatabase]:
         connect_args={"options": f"-csearch_path={schema},public"},
     )
     try:
-        Base.metadata.create_all(engine)
+        # Create unconditionally: with the existence check, tables already
+        # present in ``public`` would be reused and the tests would write there.
+        Base.metadata.create_all(engine, checkfirst=False)
         yield _PostgresDatabase(
             engine=engine,
             sessions=sessionmaker(bind=engine, expire_on_commit=False),
