@@ -18,29 +18,29 @@ rules:
       - pattern: $NAME = $VALUE
       - metavariable-regex:
           metavariable: $NAME
-          regex: '.*_PROMPT$'
+          regex: ".*_PROMPT$"
     paths:
       exclude:
-        - 'prompts_default.py'
-        - '**/prompts_default.py'
-        - 'src/podex/services/prompts_default.py'
+        - "prompts_default.py"
+        - "**/prompts_default.py"
+        - "src/podex/services/prompts_default.py"
 
   - id: podex-prompt-marker-text-outside-designated-module
     languages: [generic]
     severity: ERROR
     message: >
-      Prompt-shaped text ("<role>", "You are a", "Your task is to") outside
-      the designated fallback module. Prompt text is podex-ops data (issue
-      #29): load it via the prompt_config injection seam, or add a generic
-      fallback to src/podex/services/prompts_default.py.
+      Prompt-shaped text ("<role>", "You are a", "Your task is to") outside the
+      designated fallback module. Prompt text is podex-ops data (issue #29):
+      load it via the prompt_config injection seam, or add a generic fallback to
+      src/podex/services/prompts_default.py.
     pattern-either:
       - pattern: <role>
       - pattern: You are a
       - pattern: Your task is to
     paths:
       include:
-        - '*.py'
+        - "*.py"
       exclude:
-        - 'prompts_default.py'
-        - '**/prompts_default.py'
-        - 'src/podex/services/prompts_default.py'
+        - "prompts_default.py"
+        - "**/prompts_default.py"
+        - "src/podex/services/prompts_default.py"

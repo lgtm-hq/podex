@@ -1,0 +1,42 @@
+# yq (mikefarah/yq v4) program for .github/scripts/check-lgtm-ci-pin-sync.sh.
+#
+# Prints one tab-separated record per pin-relevant value of a workflow:
+#
+#   kind  doc:job  value  tag  line-comment  line
+#
+# kind is `uses` (a job or step `uses:`), `ref` (a job `with:` tooling-ref)
+# or `stepref` (a step `with:` tooling-ref). Aliases are expanded first, so an
+# anchored value is reported for every job that uses it, at the line of the
+# anchored node. Tabs and line breaks inside values become spaces, which keeps
+# one record per line and still fails every shape check.
+
+explode(.)
+| select(tag == "!!map")
+| document_index as $doc
+| (.jobs // {})
+| select(tag == "!!map")
+| to_entries
+| .[]
+| (($doc | tostring) + ":" + (.key | tostring)) as $job
+| .value
+| select(tag == "!!map")
+| . as $j
+| (
+    ($j.uses // null | select(. != null)
+      | ["uses", $job, to_string, tag, line_comment, line]),
+    (($j.steps // []) | select(tag == "!!seq") | .[] | select(tag == "!!map")
+      | (
+          (.uses // null | select(. != null)
+            | ["uses", $job, to_string, tag, line_comment, line]),
+          ((.with // {}) | select(tag == "!!map") | to_entries | .[]
+            | select(.key | tostring | downcase | test("^tooling[-_]ref$"))
+            | .value
+            | ["stepref", $job, to_string, tag, line_comment, line])
+        )),
+    (($j.with // {}) | select(tag == "!!map") | to_entries | .[]
+      | select(.key | tostring | downcase | test("^tooling[-_]ref$"))
+      | .value
+      | ["ref", $job, to_string, tag, line_comment, line])
+  )
+| map(tostring | sub("[\t\r\n]", " "))
+| join("\t")

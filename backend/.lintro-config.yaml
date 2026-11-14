@@ -7,7 +7,7 @@ enforce:
 
 execution:
   enabled_tools: []
-  tool_order: 'priority'
+  tool_order: "priority"
   fail_fast: false
   parallel: true
   max_workers: 10
@@ -21,9 +21,9 @@ defaults:
       tables: false
 
   yamllint:
-    extends: 'default'
+    extends: "default"
     rules:
-      comments-indentation: 'disable'
+      comments-indentation: "disable"
       comments:
         min-spaces-from-content: 1
       truthy:

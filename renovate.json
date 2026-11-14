@@ -1,6 +1,18 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["local>lgtm-hq/.github:renovate-config"],
+  "customManagers": [
+    {
+      "description": "Track the py-lintro image passed as the lintro-image reusable-workflow input (a whole `lintro-image:` line whose value is only the tag@digest image); the org preset's lintro group moves it together with the backend lintro dev pin",
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/[^/]+\\.ya?ml$/"],
+      "matchStrings": [
+        "(?m)^[ \\t]*lintro-image:[ \\t]+[\"']?ghcr\\.io/lgtm-hq/py-lintro:(?<currentValue>[0-9]+\\.[0-9]+\\.[0-9]+)@(?<currentDigest>sha256:[a-f0-9]{64})[\"']?(?:[ \\t]+#[^\\r\\n]*)?[ \\t]*\\r?$"
+      ],
+      "depNameTemplate": "ghcr.io/lgtm-hq/py-lintro",
+      "datasourceTemplate": "docker"
+    }
+  ],
   "packageRules": [
     {
       "description": "Hold TypeScript 7 until Astro/@astrojs/check support it",
@@ -9,7 +21,11 @@
     },
     {
       "description": "Group TypeScript with Astro tooling to prevent split PRs",
-      "matchPackageNames": ["typescript", "@astrojs/check", "@astrojs/language-server"],
+      "matchPackageNames": [
+        "typescript",
+        "@astrojs/check",
+        "@astrojs/language-server"
+      ],
       "groupName": "TypeScript and Astro tooling",
       "groupSlug": "typescript-astro-tooling"
     },
