@@ -96,11 +96,40 @@ exact path. It does **not** query the database. Frontend `/health` is uncached
 SSR HTTP liveness and does **not** fetch the backend. These probes distinguish
 serving HTTP from a process that is alive but stalled; they do not prove
 dependency readiness. The backend scheduler command
-(`python -m podex.scheduler_runner`) shares the image but has no HTTP listener.
-The probe searches Linux `/proc` command lines for `podex.scheduler_runner`,
-including PID 1 and children under shell or init wrappers and Python options
-such as `-u`. This exemption does not prove scheduler progress or database
-readiness. Other command overrides retain the API probe. The backend probe
+(`python -m podex.scheduler_runner`) shares the image but has no HTTP listener,
+so the backend probe decides the container's role before probing:
+
+1. `PODEX_PROCESS_ROLE`, read from the probe's own environment (Docker gives the
+   probe the container's environment): `api` always performs the HTTP check,
+   `scheduler` never does, and any other nonempty value is unhealthy.
+2. When it is unset or empty, the command line of PID 1 alone. Programs that
+   start the real command are unwrapped: tini, docker-init and dumb-init (and
+   their options), the image entrypoint before it execs, `env`, and
+   `sh`/`bash -c` scripts (each simple command, after `exec` and variable
+   assignments). The command is the scheduler when Python, with any interpreter
+   options such as `-u`, runs `-m podex.scheduler_runner`.
+
+No other process is read. A scheduler started with `docker exec` in an API
+container, a `grep` or `pgrep -f` for the module name, a scheduler re-parented
+to PID 1 after the process that started it exited, or a scheduler elsewhere in a
+shared PID namespace leaves the API's HTTP check in force. The direct child of
+an init or shell is taken from the wrapper's own arguments rather than from the
+process table for the same reason: an orphaned exec'd process is re-parented to
+PID 1 and would look like its child. An unreadable or empty PID 1 command line,
+or a shell script that cannot be tokenized, also keeps the HTTP check. Existing
+scheduler deployments that start the module in exec form, through the
+entrypoint, an init process or a `-c` script stay healthy without the setting.
+Set `PODEX_PROCESS_ROLE=scheduler` where PID 1 is not the container's own
+command (`--pid=host`, a shared pod namespace) or the scheduler is started some
+other way, such as from a script file. The scheduler role does not prove
+scheduler progress or database readiness. The role decision reads one small
+file; any failure to decide or probe exits 1.
+
+Probe requests to `/health` stay in the `podex.access` log: one line per probe
+(every 30 seconds, every 5 seconds during start-up) shows when probes ran, their
+status and latency, which is the evidence needed when a container turns
+unhealthy, and it is the same record an external load-balancer check leaves.
+Filtering by path would also hide those external checks. The backend probe
 assumes port **8000**, matching the default CMD. If an operator changes the
 listening port, they must also override the image healthcheck to request exact
 `/health` on the new port; changing only the server command is insufficient.
@@ -108,10 +137,22 @@ listening port, they must also override the image healthcheck to request exact
 Backend smoke starts from a writable, empty SQLite database in tmpfs, enables
 `AUTO_MIGRATE=1`, then reads `/api/v2/podcasts` and asserts an empty page. This
 tests the supported default database, Alembic chain, entrypoint, routing and ORM
-read; it does not test PostgreSQL or external providers. A second container uses
-an inaccessible SQLite path and must exit nonzero with a migration failure
-before the server starts. Its log must name the failure by error class and
-SQLite error name
+read; it does not test PostgreSQL or external providers. Two scheduler
+containers start the same way, one with `python -m podex.scheduler_runner` (exec
+form) and one with `sh -c 'python -u -m podex.scheduler_runner & wait'`, so the
+shell stays PID 1. Each must become Docker healthy, have exec'd past the
+entrypoint, and have a scheduler module process running. A third container
+proves the negative: PID 1 is a Python process that never listens on port 8000,
+it starts a real scheduler as its child, and the smoke starts another with
+`docker exec`. With health timing overridden on `docker run`
+(`--health-start-period=1s --health-interval=2s --health-retries=1`; the image's
+5-second start interval still applies to the first probe), Docker must report it
+unhealthy within seconds rather than after the 300-second start period. Every
+recorded probe must have exited 1 without output, showing the HTTP check ran
+rather than the probe crashing, and both scheduler processes must still be
+running afterwards. Another container uses an inaccessible SQLite path and must
+exit nonzero with a migration failure before the server starts. Its log must
+name the failure by error class and SQLite error name
 (`OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]`)
 and must not contain the driver's own message, which the application withholds
 because it can carry row values. Production auto-migration remains opt-in.
