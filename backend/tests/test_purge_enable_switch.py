@@ -275,6 +275,10 @@ def test_retention_preview_reports_switch_without_changes(
 ) -> None:
     """A safe eligible preview is blocked only when purge is disabled."""
     transcript, _store = purge_asset
+    # Episode candidates carry no generation provenance, so confidence stays
+    # unknown; a source opt-out is the eligible path that does not need it.
+    transcript.source_retention_opt_out = True
+    db_session.commit()
     _configure_api(client, enabled=enabled)
     before = _snapshot(db_session)
     response = client.get(

@@ -28,6 +28,7 @@ from podex.services.scheduler import ScheduledTaskKind
 from podex.services.transcript_retention import TranscriptRetentionPolicy
 from podex.services.transcript_retention_commands import (
     PURGE_DISABLED_REASON,
+    UNKNOWN_RETENTION_CONFIDENCE,
     evaluate_transcript_retention,
 )
 
@@ -268,7 +269,7 @@ def _evaluate_next_retention_batch(
         evaluate_transcript_retention(
             db=db,
             transcript=transcript,
-            extraction_confidence=None,
+            extraction_confidence=UNKNOWN_RETENTION_CONFIDENCE,
             source_retention_opt_out=transcript.source_retention_opt_out,
             policy=policy,
             now=now,

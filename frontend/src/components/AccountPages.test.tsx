@@ -409,7 +409,12 @@ describe("account pages", () => {
     });
   });
 
-  it("MagicLinkVerify redeems the token and redirects", async () => {
+  it.each([
+    ["//other.example", "/account"],
+    ["/\\other.example", "/account"],
+    ["/\t/other.example", "/account"],
+    ["/account/settings?tab=alerts#top", "/account/settings?tab=alerts#top"],
+  ])("MagicLinkVerify safely redirects %j", async (target, expected) => {
     mockRoutes({
       "/auth/magic-link/verify": {
         user: USER,
@@ -419,7 +424,8 @@ describe("account pages", () => {
     const assign = vi.fn();
     vi.stubGlobal("location", {
       ...window.location,
-      search: "?redirect_path=/account/saved",
+      origin: "https://podex.example",
+      search: `?${new URLSearchParams({ redirect_path: target })}`,
       hash: "#token=abc",
       assign,
     });
@@ -427,7 +433,7 @@ describe("account pages", () => {
     render(<MagicLinkVerify />);
 
     await waitFor(() => {
-      expect(assign).toHaveBeenCalledWith("/account/saved");
+      expect(assign).toHaveBeenCalledWith(expected);
     });
   });
 
