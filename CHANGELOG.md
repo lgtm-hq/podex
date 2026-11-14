@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.27] - 2026-11-14
+
+### Changed
+
+- **release**: version 0.41.26 (#817) (0d35ec3)
+
+### Fixed
+
+- **ci**: stop passing the per-platform smoke script on the split path (#823) (478f6b9)
+
 ## [0.41.26] - 2026-11-14
 
 ### Changed
