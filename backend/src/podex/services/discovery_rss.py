@@ -10,7 +10,9 @@ import logging
 import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import feedparser
 
@@ -19,6 +21,7 @@ from podex.services.discovery import (
     DiscoveredPodcast,
     slugify_podcast_name,
 )
+from podex.services.feed_http import FeedFetcher, FeedHttpClient
 
 if TYPE_CHECKING:
     from podex.models import Podcast
@@ -27,7 +30,13 @@ logger = logging.getLogger(__name__)
 
 
 class RSSDiscovery:
-    """Discover podcasts and episodes from RSS feeds."""
+    """Discover podcasts and episodes from RSS feeds.
+
+    Both entry points use the same injectable bounded byte fetcher.
+    """
+
+    def __init__(self, fetcher: FeedFetcher | None = None) -> None:
+        self.fetcher = fetcher if fetcher is not None else FeedHttpClient()
 
     @property
     def name(self) -> str:
@@ -48,10 +57,13 @@ class RSSDiscovery:
         Returns:
             DiscoveredPodcast with metadata, or None if feed is invalid
         """
-        feed = feedparser.parse(rss_url)
+        feed = self._fetch_feed(rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed: %s", rss_url)
+            logger.warning(
+                "Failed to parse RSS feed for podcast %s",
+                self._generate_slug(feed.feed.get("title", "Unknown Podcast")),
+            )
             return None
 
         channel = feed.feed
@@ -95,10 +107,10 @@ class RSSDiscovery:
             logger.warning("Podcast %s has no rss_url", podcast.slug)
             return []
 
-        feed = feedparser.parse(podcast.rss_url)
+        feed = self._fetch_feed(podcast.rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed: %s", podcast.rss_url)
+            logger.warning("Failed to parse RSS feed for podcast %s", podcast.slug)
             return []
 
         episodes = []
@@ -115,6 +127,20 @@ class RSSDiscovery:
 
         logger.info("Discovered %s episodes from RSS feed", len(episodes))
         return episodes
+
+    def _fetch_feed(self, url: str) -> Any:
+        """Parse bounded bytes with their final base URL and HTTP charset."""
+        response = self.fetcher.fetch(url)
+        # Relative values inherit the base URL, so its query (which may hold
+        # an access token) must not become part of stored links or GUIDs.
+        base_url = urlsplit(response.final_url)._replace(query="", fragment="")
+        return feedparser.parse(
+            BytesIO(response.body),
+            response_headers={
+                "content-type": response.content_type,
+                "content-location": base_url.geturl(),
+            },
+        )
 
     def _parse_episode(self, entry: Any) -> DiscoveredEpisode | None:
         """Parse an episode from a feed entry."""
