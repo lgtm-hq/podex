@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from podex.models import (
     IngestionRun,
     IngestionRunStatus,
+    PipelineSchedule,
     Podcast,
     PodcastStatus,
     ScheduledWorkItemModel,
@@ -59,7 +60,11 @@ def reconcile_recurring_discovery_schedules(
     interval_minutes: int = 360,
     now: datetime | None = None,
 ) -> DiscoveryScheduleResultData:
-    """Ensure active podcasts have recurring episode discovery schedules.
+    """Reconcile discovery schedules with current podcast eligibility.
+
+    Existing schedules for inactive or deleted podcasts are disabled and their
+    pending discovery is terminally skipped. Re-enabling uses the schedule
+    contract's first future boundary, without replaying skipped work.
 
     Args:
         db: Database session.
@@ -75,6 +80,11 @@ def reconcile_recurring_discovery_schedules(
         .filter(Podcast.status == PodcastStatus.ACTIVE.value)
         .order_by(Podcast.slug.asc())
         .all()
+    )
+    _disable_inactive_discovery_schedules(
+        db=db,
+        active_podcast_ids={podcast.id for podcast in podcasts},
+        now=effective_now,
     )
     schedules = [
         upsert_pipeline_schedule(
@@ -140,6 +150,11 @@ def run_due_episode_discovery_work(
 ) -> list[DiscoveryWorkRunData]:
     """Run pending scheduled episode discovery work.
 
+    Inactive podcasts produce a terminal ``skipped`` item with a reason and
+    completion timestamp, without an ingestion run or provider invocation.
+    The podcast row lock serializes the eligibility check with status updates
+    until the runner commits. Discovery already in flight can finish.
+
     Args:
         db: Database session.
         runner: Optional discovery runner for tests or alternate execution.
@@ -150,7 +165,7 @@ def run_due_episode_discovery_work(
     """
     effective_runner = runner or _run_discovery_orchestrator
     pending_items = (
-        db.query(ScheduledWorkItemModel)
+        db.query(ScheduledWorkItemModel.id, ScheduledWorkItemModel.metadata_json)
         .filter(ScheduledWorkItemModel.status == ScheduledWorkStatus.PENDING.value)
         .filter(ScheduledWorkItemModel.task_kind == ScheduledTaskKind.INGESTION.value)
         .order_by(ScheduledWorkItemModel.due_at.asc(), ScheduledWorkItemModel.id.asc())
@@ -159,7 +174,21 @@ def run_due_episode_discovery_work(
     )
     results: list[DiscoveryWorkRunData] = []
 
-    for work_item in pending_items:
+    for work_item_id, metadata in pending_items:
+        if not _is_discovery_metadata(metadata=metadata):
+            continue
+        work_item = (
+            db.query(ScheduledWorkItemModel)
+            .filter(
+                ScheduledWorkItemModel.id == work_item_id,
+                ScheduledWorkItemModel.status == ScheduledWorkStatus.PENDING.value,
+            )
+            .with_for_update(skip_locked=True)
+            .populate_existing()
+            .first()
+        )
+        if work_item is None:
+            continue
         if not _is_discovery_metadata(metadata=work_item.metadata_json):
             continue
 
@@ -169,9 +198,23 @@ def run_due_episode_discovery_work(
             _mark_work_failed(work_item=work_item, error_message="Missing podcast_id")
             continue
 
-        podcast = db.query(Podcast).filter(Podcast.id == podcast_id).first()
+        podcast = (
+            db.query(Podcast)
+            .filter(Podcast.id == podcast_id)
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
         if podcast is None:
             _mark_work_failed(work_item=work_item, error_message="Podcast not found")
+            continue
+
+        if podcast.status != PodcastStatus.ACTIVE:
+            _mark_work_skipped(
+                work_item=work_item,
+                reason="Podcast is not active",
+                now=datetime.now(UTC),
+            )
             continue
 
         run = IngestionRun(
@@ -227,6 +270,57 @@ def run_due_episode_discovery_work(
 
     db.flush()
     return results
+
+
+def _disable_inactive_discovery_schedules(
+    *,
+    db: Session,
+    active_podcast_ids: set[int],
+    now: datetime,
+) -> None:
+    """Disable orphaned/inactive discovery schedules and discard pending work."""
+    disabled_ids: list[int] = []
+    for schedule in db.query(PipelineSchedule).all():
+        metadata = schedule.metadata_json or {}
+        if not _is_discovery_metadata(metadata=metadata):
+            continue
+        podcast_id = metadata.get("podcast_id")
+        if isinstance(podcast_id, int) and podcast_id in active_podcast_ids:
+            continue
+        schedule.enabled = False
+        disabled_ids.append(schedule.id)
+
+    pending = (
+        db.query(ScheduledWorkItemModel)
+        .filter(
+            ScheduledWorkItemModel.schedule_id.in_(disabled_ids),
+            ScheduledWorkItemModel.task_kind == ScheduledTaskKind.INGESTION.value,
+            ScheduledWorkItemModel.status == ScheduledWorkStatus.PENDING.value,
+        )
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
+    for item in pending:
+        if _is_discovery_metadata(metadata=item.metadata_json):
+            _mark_work_skipped(
+                work_item=item,
+                reason="Discovery schedule disabled",
+                now=now,
+            )
+    db.flush()
+
+
+def _mark_work_skipped(
+    *,
+    work_item: ScheduledWorkItemModel,
+    reason: str,
+    now: datetime,
+) -> None:
+    """Record a terminal non-executed outcome using the existing status contract."""
+    work_item.status = ScheduledWorkStatus.SKIPPED.value
+    work_item.error_message = reason
+    work_item.completed_at = now
 
 
 def _discovery_schedule_key(
