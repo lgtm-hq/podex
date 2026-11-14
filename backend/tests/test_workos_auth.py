@@ -13,6 +13,7 @@ from assertpy import assert_that
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.testclient import TestClient
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
@@ -481,7 +482,7 @@ def _reported_failed_callback(
         The callback response and the state value it carried.
     """
     app = create_reporting_app(db_session)
-    with TestClient(app) as reporting_client:
+    with TestClient(app, raise_server_exceptions=False) as reporting_client:
         _override(reporting_client, _failing_workos(handler))
         login = reporting_client.get("/api/v2/auth/login", follow_redirects=False)
         state = _state_cookie(login)
@@ -532,6 +533,56 @@ def test_failed_callback_reports_no_credentials(
         "http://testserver/api/v2/auth/callback",
     )
     assert_that(event["request"]).does_not_contain_key("query_string")
+
+
+_HANDLING_FAILURES = [
+    pytest.param(OSError("log volume unavailable"), id="logger-oserror"),
+    pytest.param(
+        OperationalError("SELECT 1", {}, Exception("database unavailable")),
+        id="database-error",
+    ),
+    pytest.param(TypeError("handler bug"), id="handler-bug"),
+]
+
+
+@pytest.mark.parametrize("failure", _HANDLING_FAILURES)
+@pytest.mark.parametrize(
+    "handler",
+    [
+        pytest.param(_invalid_code, id="after-invalid-code"),
+        pytest.param(_invalid_client, id="after-invalid-client"),
+    ],
+)
+def test_failure_while_handling_a_rejection_is_reported(
+    db_session: Session,
+    sentry_transport: CapturingSentryTransport,
+    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+    failure: Exception,
+) -> None:
+    """A server error raised while handling any rejection is never hidden.
+
+    The rejection is still in the new error's context, but only the
+    rejection itself (or its handled 502) is exempt from reporting, so a
+    caller cannot hide a real server error by first sending a bad code.
+    """
+
+    def failing_warning(*_args: object, **_kwargs: object) -> None:
+        """Fail like a broken log handler, database call or handler bug."""
+        raise failure
+
+    monkeypatch.setattr(v2_auth_api.logger, "warning", failing_warning)
+
+    response, state = _reported_failed_callback(db_session, handler)
+
+    assert_that(response.status_code).is_equal_to(500)
+    events = sentry_transport.events()
+    assert_that(events).is_length(1)
+    reported_types = [value["type"] for value in events[0]["exception"]["values"]]
+    assert_that(reported_types).contains(type(failure).__name__)
+    wire = sentry_transport.serialized()
+    for leaked in (_CHAIN_API_KEY, "sk_test_456", _CHAIN_CODE, state):
+        assert_that(wire).does_not_contain(leaked)
 
 
 def test_replayed_invalid_codes_send_no_reports(

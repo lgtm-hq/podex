@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +10,7 @@ from typing import Any
 import fakeredis
 import pytest
 from assertpy import assert_that
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -488,23 +490,113 @@ def test_access_log_escapes_control_characters_in_path(
     assert_that(records[0].__dict__["path"]).is_equal_to(escaped)
 
 
-def test_access_log_escapes_control_characters_in_request_id(
+_GENERATED_ID = re.compile(r"[0-9a-f]{32}")
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        pytest.param("a" * 129, id="129-chars"),
+        pytest.param("x" * (262 * 1024), id="262-kib"),
+        pytest.param("id with spaces", id="space"),
+        pytest.param("id\x85FAKE\x0bLOG", id="c1-and-vt-controls"),
+        pytest.param("a/b", id="slash"),
+        pytest.param("calf\u00e9", id="non-ascii"),
+        pytest.param("", id="empty"),
+    ],
+)
+def test_malformed_request_id_is_replaced_everywhere(
     caplog: pytest.LogCaptureFixture,
+    supplied: str,
 ) -> None:
-    """A caller-supplied request id cannot carry a line break into the log."""
+    """A rejected id is never echoed, logged or used; a new one is generated."""
     with caplog.at_level(logging.INFO, logger="podex.access"):
-        _raw_asgi_request(
+        response = _raw_asgi_request(
             method="GET",
-            path="/api/v2/status",
+            path="/api/v2/does-not-exist",
             query_string=b"",
-            headers=(("x-request-id", "id\x85FAKE\x0bLOG"),),
+            headers=(("x-request-id", supplied),),
         )
+
+    echoed = response.headers["x-request-id"]
+    assert_that(_GENERATED_ID.fullmatch(echoed)).is_not_none()
+    assert_that(echoed).is_not_equal_to(supplied)
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    assert_that(records[0].__dict__["request_id"]).is_equal_to(echoed)
+    assert_that(len(records[0].getMessage())).is_less_than(300)
+
+
+@pytest.mark.parametrize(
+    "supplied",
+    [
+        pytest.param("trace-123", id="plain"),
+        pytest.param("A.b_C-9", id="all-allowed-symbols"),
+        pytest.param("z" * 128, id="128-chars"),
+    ],
+)
+def test_well_formed_request_id_is_preserved_everywhere(
+    tight_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    supplied: str,
+) -> None:
+    """An id within the rule reaches the header, problem body and log intact."""
+    tight_client.get("/api/v2/status")
+    tight_client.get("/api/v2/status")
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = tight_client.get(
+            "/api/v2/status",
+            headers={REQUEST_ID_HEADER: supplied},
+        )
+
+    assert_that(response.status_code).is_equal_to(429)
+    assert_that(response.headers[REQUEST_ID_HEADER]).is_equal_to(supplied)
+    assert_that(response.json()["request_id"]).is_equal_to(supplied)
+    assert_that(_access_records(caplog)[-1].__dict__["request_id"]).is_equal_to(
+        supplied,
+    )
+
+
+def test_problem_body_uses_the_replacement_request_id(
+    tight_client: TestClient,
+) -> None:
+    """A rejected id never appears in a problem response either."""
+    tight_client.get("/api/v2/status")
+    tight_client.get("/api/v2/status")
+    response = tight_client.get(
+        "/api/v2/status",
+        headers={REQUEST_ID_HEADER: "bad id"},
+    )
+
+    assert_that(response.status_code).is_equal_to(429)
+    assert_that(response.json()["request_id"]).is_equal_to(
+        response.headers[REQUEST_ID_HEADER],
+    )
+    assert_that(response.text).does_not_contain("bad id")
+
+
+@pytest.mark.parametrize(
+    ("segment", "escaped_length"),
+    [("a", 1), ("%0a", 4)],
+    ids=["plain", "control-characters"],
+)
+def test_long_paths_are_capped_before_escaping(
+    tight_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    segment: str,
+    escaped_length: int,
+) -> None:
+    """Only the first 2048 path characters are escaped and logged."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        tight_client.get("/" + segment * 6000)
 
     records = _access_records(caplog)
     assert_that(records).is_length(1)
-    line = _LOG_LINE.format(records[0])
-    assert_that(line).contains("request_id=id\\x85FAKE\\x0bLOG ")
-    assert_that(records[0].__dict__["request_id"]).is_equal_to("id\\x85FAKE\\x0bLOG")
+    logged_path = records[0].__dict__["path"]
+    assert_that(logged_path).ends_with("\\...")
+    assert_that(len(logged_path)).is_equal_to(
+        len("/") + (2048 - 1) * escaped_length + len("\\..."),
+    )
 
 
 def test_rate_limit_exemption_requires_the_exact_path(
@@ -523,3 +615,51 @@ def test_rate_limit_exemption_requires_the_exact_path(
     assert_that(first.headers["X-RateLimit-Limit"]).is_equal_to("2")
     assert_that(third.status_code).is_equal_to(429)
     assert_that(tight_client.get("/health").status_code).is_equal_to(200)
+
+
+def test_access_log_failure_never_changes_the_response(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failing access logger leaves status, headers and metrics untouched."""
+    settings = Settings(rate_limit=RateLimitSettings(enabled=True, max_requests=10))
+    with _make_client(settings) as client:
+        baseline = client.get("/api/v2/status", headers={REQUEST_ID_HEADER: "base-1"})
+
+        def broken_info(*_args: object, **_kwargs: object) -> None:
+            """Fail like a broken log handler or filter."""
+            raise RuntimeError("log sink unavailable")
+
+        monkeypatch.setattr(logging.getLogger("podex.access"), "info", broken_info)
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger="podex.access"):
+            response = client.get(
+                "/api/v2/status",
+                headers={REQUEST_ID_HEADER: "after-failure-2"},
+            )
+        app = client.app
+        if not isinstance(app, FastAPI):
+            raise AssertionError("expected a FastAPI test app")
+        registry = app.state.metrics.registry
+
+    assert_that(response.status_code).is_equal_to(baseline.status_code)
+    assert_that(response.json()).is_equal_to(baseline.json())
+    assert_that(set(response.headers)).is_equal_to(set(baseline.headers))
+    assert_that(response.headers[REQUEST_ID_HEADER]).is_equal_to("after-failure-2")
+    labels = {"method": "GET", "route": "/api/v2/status"}
+    ok_count = registry.get_sample_value(
+        "podex_http_requests_total",
+        {**labels, "status": "200"},
+    )
+    assert_that(ok_count).is_equal_to(2.0)
+    error_count = registry.get_sample_value(
+        "podex_http_requests_total",
+        {**labels, "status": "500"},
+    )
+    assert_that(error_count).is_none()
+    fallback = _access_records(caplog)
+    assert_that(fallback).is_length(1)
+    assert_that(fallback[0].levelno).is_equal_to(logging.WARNING)
+    message = fallback[0].getMessage()
+    assert_that(message).is_equal_to("access_log_failed status=200")
+    assert_that(repr(fallback[0].__dict__)).does_not_contain("after-failure-2")

@@ -1,12 +1,15 @@
 """Tests for Sentry initialization and PII scrubbing."""
 
+from collections.abc import Callable
 from unittest.mock import patch
 
 import httpx
+import pytest
 import sentry_sdk
 from assertpy import assert_that
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event
+from starlette.exceptions import HTTPException
 
 from podex import __version__
 from podex.config import ObservabilitySettings, RateLimitSettings, Settings
@@ -199,18 +202,122 @@ def _raised_from(cause: BaseException) -> BaseException:
         return error
 
 
-def test_before_send_drops_events_marked_unreported_anywhere_in_chain() -> None:
-    """An unreported error, even as the cause of another, sends nothing."""
-    wrapped = _raised_from(_ExpectedRejection("bad code"))
-    hint = {"exc_info": (type(wrapped), wrapped, wrapped.__traceback__)}
+def _raise_while_handling(
+    rejection: BaseException,
+    error: BaseException,
+    *,
+    explicit_cause: bool,
+    hide_context: bool = False,
+) -> BaseException:
+    """Attach ``rejection`` to ``error`` as Python's ``raise`` statement would.
 
-    assert_that(before_send({"level": "error"}, hint)).is_none()
+    Raising ``error`` inside ``except rejection`` always sets ``__context__``;
+    ``raise error from rejection`` also sets ``__cause__``, and ``raise
+    error from None`` sets ``__suppress_context__`` while keeping the context.
+
+    Args:
+        rejection: The exception being handled.
+        error: The exception raised while handling it.
+        explicit_cause: Whether ``error`` is raised ``from rejection``.
+        hide_context: Whether ``error`` is raised ``from None``.
+
+    Returns:
+        BaseException: ``error`` with its cause and context attached.
+    """
+    error.__context__ = rejection
+    if explicit_cause:
+        error.__cause__ = rejection
+    error.__suppress_context__ = explicit_cause or hide_context
+    return error
+
+
+def _hint(error: BaseException) -> dict[str, object]:
+    """Build the SDK hint for an exception event."""
+    return {"exc_info": (type(error), error, error.__traceback__)}
+
+
+@pytest.mark.parametrize(
+    ("build", "dropped"),
+    [
+        pytest.param(lambda: _ExpectedRejection("bad code"), True, id="rejection"),
+        pytest.param(
+            lambda: _raise_while_handling(
+                _ExpectedRejection("bad code"),
+                HTTPException(status_code=502),
+                explicit_cause=True,
+            ),
+            True,
+            id="handled-502-from-rejection",
+        ),
+        pytest.param(
+            lambda: _raise_while_handling(
+                _ExpectedRejection("bad code"),
+                OSError("log failed"),
+                explicit_cause=False,
+            ),
+            False,
+            id="error-while-handling",
+        ),
+        pytest.param(
+            lambda: _raise_while_handling(
+                _ExpectedRejection("bad code"),
+                OSError("log failed"),
+                explicit_cause=False,
+                hide_context=True,
+            ),
+            False,
+            id="error-from-none-while-handling",
+        ),
+        pytest.param(
+            lambda: _raised_from(_ExpectedRejection("bad code")),
+            False,
+            id="other-error-from-rejection",
+        ),
+        pytest.param(
+            lambda: _raise_while_handling(
+                _ExpectedRejection("bad code"),
+                HTTPException(status_code=500),
+                explicit_cause=True,
+            ),
+            False,
+            id="handled-500-from-rejection",
+        ),
+        pytest.param(
+            lambda: _raise_while_handling(
+                _ExpectedRejection("bad code"),
+                HTTPException(status_code=502),
+                explicit_cause=False,
+            ),
+            False,
+            id="502-with-rejection-only-as-context",
+        ),
+        pytest.param(
+            lambda: _raise_while_handling(
+                ValueError("provider down"),
+                HTTPException(status_code=502),
+                explicit_cause=True,
+            ),
+            False,
+            id="handled-502-from-other-error",
+        ),
+    ],
+)
+def test_before_send_drops_only_the_rejection_and_its_handled_502(
+    build: Callable[[], BaseException],
+    dropped: bool,
+) -> None:
+    """Only the rejection or the 502 raised from it is dropped."""
+    error = build()
+
+    sent = before_send({"level": "error"}, _hint(error))
+
+    assert_that(sent is None).is_equal_to(dropped)
 
 
 def test_before_send_keeps_and_minimises_other_events() -> None:
     """Other errors are sent, with request headers reduced to the allowlist."""
     wrapped = _raised_from(ValueError("provider down"))
-    hint = {"exc_info": (type(wrapped), wrapped, wrapped.__traceback__)}
+    hint = _hint(wrapped)
     event: Event = {
         "request": {
             "url": "http://testserver/api/v2/ops/metrics",
@@ -232,6 +339,6 @@ def test_before_send_keeps_and_minimises_other_events() -> None:
     assert_that(sent["request"]).is_equal_to(
         {
             "url": "http://testserver/api/v2/ops/metrics",
-            "headers": {"User-Agent": "agent/1", "X-Request-ID": "req-1"},
+            "headers": {"User-Agent": "agent/1"},
         },
     )

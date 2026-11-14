@@ -76,13 +76,11 @@ def _assert_reported_headers(event: dict[str, object], *extra: str) -> None:
     if not isinstance(request, dict):
         raise AssertionError("expected request data in the report")
     headers = request["headers"]
-    assert_that(headers).contains_entry(
-        {"user-agent": _USER_AGENT},
-        {"x-request-id": _REQUEST_ID},
-    )
+    assert_that(headers).contains_entry({"user-agent": _USER_AGENT})
     assert_that(set(headers)).is_subset_of(
-        {"user-agent", "x-request-id", "content-type", "content-length", "host"},
+        {"user-agent", "content-type", "content-length", "host"},
     )
+    assert_that(event["tags"]).contains_entry({"request_id": _REQUEST_ID})
     for name in extra:
         assert_that(headers).contains_key(name)
     assert_that(request).does_not_contain_key("cookies", "data", "env")
@@ -157,3 +155,27 @@ def test_webhook_failure_report_omits_signature_and_body(
     digest = signature.split("h1=", 1)[1]
     for leaked in (signature, digest, "ctm_body_marker_9431", "payer@x.test"):
         assert_that(wire).does_not_contain(leaked)
+
+
+def test_report_uses_the_validated_request_id(
+    reporting_client: TestClient,
+    sentry_transport: CapturingSentryTransport,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A malformed client request id never reaches a report."""
+    enable_ops(reporting_client, api_key=_OPS_KEY)
+    monkeypatch.setattr("podex.api.v2.ops.get_operational_metrics", _boom)
+    supplied = "forged id " + "x" * 4096
+
+    response = reporting_client.get(
+        "/api/v2/ops/metrics",
+        headers={"X-Ops-Key": _OPS_KEY, "X-Request-ID": supplied},
+    )
+
+    assert_that(response.status_code).is_equal_to(500)
+    event = _only_event(sentry_transport)
+    tags = event["tags"]
+    if not isinstance(tags, dict):
+        raise AssertionError("expected tags in the report")
+    assert_that(tags["request_id"]).matches(r"^[0-9a-f]{32}$")
+    assert_that(sentry_transport.serialized()).does_not_contain("forged id")

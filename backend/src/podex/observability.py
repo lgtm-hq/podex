@@ -23,9 +23,11 @@ What the SDK sends, and how credentials are kept out of it:
   carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
   raw query, which carries provider API keys, so it is in the scrubber
   denylist.
-- Errors whose class sets ``reportable = False``, anywhere in the exception
-  chain, are not sent: they are caller-triggerable rejections, already
-  logged, and reporting them would let any caller spend the reporting quota.
+- Errors whose class sets ``reportable = False`` are not sent, nor is the
+  handled ``502`` raised directly from one: they are caller-triggerable
+  rejections, already logged, and reporting them would let any caller spend
+  the reporting quota. Any other error is sent, even if such a rejection is
+  in its exception chain.
 """
 
 import re
@@ -34,6 +36,7 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event, Hint
+from starlette.exceptions import HTTPException
 
 from podex import __version__
 from podex.config import Settings
@@ -43,11 +46,17 @@ _REDACTED = "[redacted-email]"
 _ACCESS_LOGGER = "podex.access"
 
 REPORTED_REQUEST_HEADERS = frozenset(
-    {"content-length", "content-type", "host", "user-agent", "x-request-id"},
+    {"content-length", "content-type", "host", "user-agent"},
 )
-"""Request headers kept in error reports; every other header is dropped."""
+"""Request headers kept in error reports; every other header is dropped.
+
+The request id is not taken from the raw ``X-Request-ID`` header: the
+request-context middleware validates it and sets the ``request_id`` tag.
+"""
 
 _REPORTABLE_ATTRIBUTE = "reportable"
+# Status of the HTTPException a handler raises from an expected rejection.
+_HANDLED_REJECTION_STATUS = 502
 
 
 # Keys the SDK's scrubber filters in addition to its defaults, wherever they
@@ -115,36 +124,41 @@ def _minimise_request(request: dict[str, object]) -> None:
         request.pop("headers", None)
 
 
-def _is_unreported(hint: Hint) -> bool:
-    """Return whether the reported exception's chain marks it unreported.
+def _is_expected_rejection(error: BaseException) -> bool:
+    """Return whether ``error``'s class opts out with ``reportable = False``."""
+    return getattr(error, _REPORTABLE_ATTRIBUTE, True) is False
 
-    An exception class opts out of reporting with ``reportable = False``;
-    the code handling it still logs it.
+
+def _is_unreported(hint: Hint) -> bool:
+    """Return whether the reported exception is an expected rejection.
+
+    Only two shapes are dropped: the rejection itself, and the handled
+    ``502`` ``HTTPException`` raised *from* it (``raise ... from error``), as
+    the sign-in callback does. Anything else is reported, even when a
+    rejection sits in its ``__cause__``/``__context__`` chain: an error
+    raised while handling a rejection (a failing logger, a database error,
+    a bug) is a real server error, and a caller must not be able to hide it
+    by first sending a bad code.
 
     Args:
         hint: The SDK hint, carrying ``exc_info`` for exception events.
 
     Returns:
-        bool: True when any exception in the chain sets ``reportable`` false.
+        bool: True when the event is for an expected rejection only.
     """
     exc_info = hint.get("exc_info")
-    pending: list[BaseException] = []
-    if isinstance(exc_info, tuple) and isinstance(exc_info[1], BaseException):
-        pending.append(exc_info[1])
-    seen: set[int] = set()
-    while pending:
-        current = pending.pop()
-        if id(current) in seen:
-            continue
-        seen.add(id(current))
-        if getattr(current, _REPORTABLE_ATTRIBUTE, True) is False:
-            return True
-        pending.extend(
-            linked
-            for linked in (current.__cause__, current.__context__)
-            if linked is not None
-        )
-    return False
+    if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
+        return False
+    error = exc_info[1]
+    if _is_expected_rejection(error):
+        return True
+    cause = error.__cause__
+    return (
+        isinstance(error, HTTPException)
+        and error.status_code == _HANDLED_REJECTION_STATUS
+        and cause is not None
+        and _is_expected_rejection(cause)
+    )
 
 
 def scrub_event(event: Event, hint: Hint) -> Event:
