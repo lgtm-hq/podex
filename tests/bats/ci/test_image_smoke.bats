@@ -57,14 +57,14 @@ run_smoke() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'failed migration prevents application startup'* ]]
   [ -f "$SMOKE_STATE/removed" ]
-  run rg -- '--network none' "$SMOKE_STATE/commands"
+  run grep -F -- '--network none' "$SMOKE_STATE/commands"
   [ "$status" -eq 0 ]
 }
 
 @test "frontend smoke starts an isolated stub and removes its container" {
   run_smoke frontend
   [ "$status" -eq 0 ]
-  run rg 'node /tmp/podex-smoke-stub.mjs' "$SMOKE_STATE/commands"
+  run grep -F -- 'node /tmp/podex-smoke-stub.mjs' "$SMOKE_STATE/commands"
   [ "$status" -eq 0 ]
   [ -f "$SMOKE_STATE/removed" ]
 }
