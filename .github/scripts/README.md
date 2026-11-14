@@ -17,9 +17,15 @@ failures do not mean `main` itself is broken. Nothing closes the issue
 automatically. Close it by hand after the next green run of the affected
 workflow.
 
+For `vuln-suppression-check`, an expired suppression fails every weekly run
+until it is dealt with: fix the vulnerability or renew its `ignoreUntil` in
+`.osv-scanner.toml` (the job summary lists the IDs). Expect one comment per run
+until then; closing the issue earlier only opens a new one on the next run.
+
 Runs that fail at startup, before any jobs run, and cancelled runs are not
 reported. In particular, `scorecards.yml` cancels an in-progress run when a new
-run starts for the same ref.
+run starts for the same ref. A Scorecard run whose result upload is rejected by
+the Scorecard service but whose job still passes is not reported either.
 
 `tests/bats/ci/test_maintenance_failure_notifier.bats` checks all three callers,
 including their full dependencies, conditions, stable keys and permissions. It
