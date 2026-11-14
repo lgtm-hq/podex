@@ -16,7 +16,6 @@ jobs:
     with:
       job-name: "👤 Auto Assign PR Author"
       codeowners-path: .github/CODEOWNERS
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: github-tooling
     permissions:

@@ -27,7 +27,6 @@ jobs:
       build-mode: none
       config-file: .github/codeql/codeql-config.yml
       category: '/language:all'
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: github-tooling
       # CodeQL bundle downloads redirect to
@@ -68,4 +67,3 @@ jobs:
     with:
       egress-policy: block
       workflow-key: codeql
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
