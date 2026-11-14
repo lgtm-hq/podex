@@ -63,8 +63,8 @@ waiting for the lock under test: waiting in the expected statement
 (`pg_stat_activity`), blocked by the first transaction's backend
 (`pg_blocking_pids`) and, for row locks, on a tuple lock of the expected table
 (`pg_locks`). A wait at some later write does not count. No sleeps decide
-ordering. Each race also runs with its production row lock removed and must then
-fail.
+ordering. Each media-merge race also runs with its production row lock removed
+and must then fail.
 
 Tests that need a whole pytest session launch an inner run on an isolated copy
 of the scaffolding, with explicit node ids and `cwd`, and set
