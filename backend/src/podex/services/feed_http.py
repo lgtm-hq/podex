@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import ipaddress
 import zlib
 from collections.abc import Awaitable, Callable
@@ -11,7 +12,8 @@ from typing import Protocol
 import httpx
 
 from podex.config import FeedHttpSettings, get_settings
-from podex.services.feed_dns import resolve_feed_host
+from podex.services.failure_codes import FailureReason
+from podex.services.feed_dns import FeedDnsError, resolve_feed_host
 from podex.services.feed_response import FeedResponse
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
@@ -34,7 +36,24 @@ _SPECIAL_NETWORKS = tuple(
 
 
 class FeedFetchError(ValueError):
-    """A safe, actionable fetch failure that never includes URL credentials."""
+    """A safe, actionable fetch failure with a code-owned reason and status.
+
+    Args:
+        message: Fixed diagnostic chosen by the fetch boundary.
+        reason: Explicit failure kind selected where the error is raised.
+        status_code: HTTP response status, when applicable.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        reason: FailureReason,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failure_reason = reason
+        self.status_code = status_code
 
 
 class FeedFetcher(Protocol):
@@ -59,11 +78,16 @@ def public_address(value: str) -> str:
     try:
         address = ipaddress.ip_address(value)
     except ValueError:
-        raise FeedFetchError("Feed DNS returned an invalid address") from None
+        raise FeedFetchError(
+            "Feed DNS returned an invalid address", reason=FailureReason.INVALID_ADDRESS
+        ) from None
     if any(
         (not address.is_global, address.is_multicast, address.is_reserved, "%" in value)
     ):
-        raise FeedFetchError("Feed destination must use public unicast addresses")
+        raise FeedFetchError(
+            "Feed destination must use public unicast addresses",
+            reason=FailureReason.BLOCKED_ADDRESS,
+        )
     if isinstance(address, ipaddress.IPv6Address) and any(
         (
             address.is_site_local,
@@ -72,17 +96,28 @@ def public_address(value: str) -> str:
             address.teredo is not None,
         )
     ):
-        raise FeedFetchError("Feed destination must use public unicast addresses")
+        raise FeedFetchError(
+            "Feed destination must use public unicast addresses",
+            reason=FailureReason.BLOCKED_ADDRESS,
+        )
     if any(address in network for network in _SPECIAL_NETWORKS):
-        raise FeedFetchError("Feed destination must use public unicast addresses")
+        raise FeedFetchError(
+            "Feed destination must use public unicast addresses",
+            reason=FailureReason.BLOCKED_ADDRESS,
+        )
     return str(address)
 
 
-def feed_url(value: str) -> httpx.URL:
+def feed_url(
+    value: str,
+    *,
+    invalid_reason: FailureReason | None = None,
+) -> httpx.URL:
     """Validate the URL without echoing credentials or other untrusted values.
 
     Args:
         value: Feed URL or redirect target.
+        invalid_reason: Optional code-owned context for malformed redirect URLs.
 
     Returns:
         Normalized HTTP(S) URL.
@@ -93,24 +128,33 @@ def feed_url(value: str) -> httpx.URL:
     try:
         url = httpx.URL(value)
         if url.scheme not in {"http", "https"} or not url.host:
-            raise FeedFetchError("Feed URL must use HTTP(S) with a host")
+            raise FeedFetchError(
+                "Feed URL must use HTTP(S) with a host",
+                reason=invalid_reason or FailureReason.UNSUPPORTED_URL,
+            )
         if url.userinfo:
-            raise FeedFetchError("Feed URL credentials are not supported")
+            raise FeedFetchError(
+                "Feed URL credentials are not supported",
+                reason=FailureReason.URL_CREDENTIALS,
+            )
         if "%" in url.host:
             # A zone identifier marks a scoped IPv6 literal; any other percent
             # sign is a host that failed to parse.
             if ":" in url.host:
                 raise FeedFetchError(
-                    "Feed destination must use public unicast addresses"
+                    "Feed destination must use public unicast addresses",
+                    reason=FailureReason.BLOCKED_ADDRESS,
                 )
             raise FeedFetchError(
-                "Feed URL must be a valid HTTP(S) URL without credentials"
+                "Feed URL must be a valid HTTP(S) URL without credentials",
+                reason=invalid_reason or FailureReason.INVALID_URL,
             )
     except FeedFetchError:
         raise
     except (httpx.InvalidURL, ValueError):
         raise FeedFetchError(
-            "Feed URL must be a valid HTTP(S) URL without credentials"
+            "Feed URL must be a valid HTTP(S) URL without credentials",
+            reason=invalid_reason or FailureReason.INVALID_URL,
         ) from None
     return url.copy_with(fragment=None)
 
@@ -148,36 +192,67 @@ class FeedHttpClient:
         Raises:
             FeedFetchError: URL, destination, HTTP, size or deadline validation failed.
         """
+        failure = FeedFetchError(
+            "Feed HTTP/DNS request failed; check feed availability",
+            reason=FailureReason.REQUEST_FAILED,
+        )
         try:
             async with asyncio.timeout(self.settings.total_timeout_seconds):
                 return await self._fetch(feed_url(url))
         except TimeoutError:
-            raise FeedFetchError(
-                "Feed total deadline exceeded; check feed availability"
-            ) from None
+            failure = FeedFetchError(
+                "Feed total deadline exceeded; check feed availability",
+                reason=FailureReason.TOTAL_DEADLINE,
+            )
         except httpx.TimeoutException:
-            raise FeedFetchError(
-                "Feed connect/read timeout; check feed availability"
-            ) from None
+            failure = FeedFetchError(
+                "Feed connect/read timeout; check feed availability",
+                reason=FailureReason.TIMEOUT,
+            )
+        except FeedDnsError as error:
+            failure = FeedFetchError(
+                "Feed HTTP/DNS request failed; check feed availability",
+                reason=error.failure_reason,
+            )
         except (httpx.HTTPError, OSError):
-            raise FeedFetchError(
-                "Feed HTTP/DNS request failed; check feed availability"
-            ) from None
+            failure = FeedFetchError(
+                "Feed HTTP/DNS request failed; check feed availability",
+                reason=FailureReason.REQUEST_FAILED,
+            )
         except zlib.error:
-            raise FeedFetchError("Feed contains invalid gzip data") from None
+            failure = FeedFetchError(
+                "Feed contains invalid gzip data", reason=FailureReason.INVALID_GZIP
+            )
+
+        raise failure
 
     async def _destinations(self, url: httpx.URL) -> list[str]:
         """Validate every DNS answer before returning any connection candidates."""
-        try:
+        address: ipaddress.IPv4Address | ipaddress.IPv6Address | None = None
+        with contextlib.suppress(ValueError):
             address = ipaddress.ip_address(url.host)
-        except ValueError:
-            addresses = await self.resolver(
-                url.host, url.port or (443 if url.scheme == "https" else 80)
-            )
+        if address is None:
+            failure: FeedDnsError | None = None
+            addresses: list[str] = []
+            try:
+                addresses = await self.resolver(
+                    url.host, url.port or (443 if url.scheme == "https" else 80)
+                )
+            except FeedDnsError:
+                raise
+            except OSError:
+                failure = FeedDnsError(
+                    "Feed DNS resolution failed",
+                    reason=FailureReason.DNS_FAILURE,
+                )
+            if failure is not None:
+                raise failure
         else:
             addresses = [str(address)]
         if not addresses:
-            raise FeedFetchError("Feed DNS returned no addresses")
+            raise FeedFetchError(
+                "Feed DNS returned no addresses", reason=FailureReason.DNS_NO_ADDRESSES
+            )
         return [public_address(value) for value in addresses]
 
     async def _request(
@@ -208,19 +283,39 @@ class FeedHttpClient:
                 return await transport.handle_async_request(request)
             except (httpx.ConnectError, httpx.ConnectTimeout):
                 continue
-        raise FeedFetchError("Feed connection failed; check feed availability")
+        raise FeedFetchError(
+            "Feed connection failed; check feed availability",
+            reason=FailureReason.CONNECTION_FAILED,
+        )
 
     def _redirect(self, url: httpx.URL, response: httpx.Response) -> httpx.URL:
         """Validate redirect syntax and policy without exposing URL details."""
         location = response.headers.get("location")
         if not location:
-            raise FeedFetchError("Feed redirect is missing its location")
+            raise FeedFetchError(
+                "Feed redirect is missing its location",
+                reason=FailureReason.REDIRECT_MISSING_LOCATION,
+            )
+        failure: FeedFetchError | None = None
         try:
-            target = feed_url(str(url.join(location)))
+            target = feed_url(
+                str(url.join(location)),
+                invalid_reason=FailureReason.REDIRECT_INVALID_URL,
+            )
         except httpx.InvalidURL:
-            raise FeedFetchError("Feed redirect URL is invalid") from None
+            failure = FeedFetchError(
+                "Feed redirect URL is invalid",
+                reason=FailureReason.REDIRECT_INVALID_URL,
+            )
+        else:
+            failure = None
+        if failure is not None:
+            raise failure
         if url.scheme == "https" and target.scheme == "http":
-            raise FeedFetchError("Feed redirect cannot downgrade HTTPS to HTTP")
+            raise FeedFetchError(
+                "Feed redirect cannot downgrade HTTPS to HTTP",
+                reason=FailureReason.REDIRECT_DOWNGRADE,
+            )
         return target
 
     async def _fetch(self, url: httpx.URL) -> FeedResponse:
@@ -234,11 +329,18 @@ class FeedHttpClient:
                 try:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         if hop == self.settings.max_redirects:
-                            raise FeedFetchError("Feed redirect limit exceeded")
+                            raise FeedFetchError(
+                                "Feed redirect limit exceeded",
+                                reason=FailureReason.REDIRECT_LIMIT,
+                            )
                         url = self._redirect(url, response)
                         continue
                     if not response.is_success:
-                        raise FeedFetchError(f"Feed HTTP status {response.status_code}")
+                        raise FeedFetchError(
+                            f"Feed HTTP status {response.status_code}",
+                            reason=FailureReason.HTTP_STATUS,
+                            status_code=response.status_code,
+                        )
                     return FeedResponse(
                         body=await self._read(response),
                         final_url=str(url),
@@ -246,13 +348,18 @@ class FeedHttpClient:
                     )
                 finally:
                     await response.aclose()
-        raise FeedFetchError("Feed redirect limit exceeded")
+        raise FeedFetchError(
+            "Feed redirect limit exceeded", reason=FailureReason.REDIRECT_LIMIT
+        )
 
     async def _read(self, response: httpx.Response) -> bytes:
         """Stream raw bytes and decompress with an output bound per chunk."""
         encoding = response.headers.get("content-encoding", "identity").lower().strip()
         if encoding not in {"identity", "gzip"}:
-            raise FeedFetchError("Feed uses unsupported content encoding")
+            raise FeedFetchError(
+                "Feed uses unsupported content encoding",
+                reason=FailureReason.UNSUPPORTED_ENCODING,
+            )
         decoder = (
             zlib.decompressobj(16 + zlib.MAX_WBITS) if encoding == "gzip" else None
         )
@@ -262,7 +369,8 @@ class FeedHttpClient:
             wire_size += len(chunk)
             if wire_size > self.settings.max_response_bytes:
                 raise FeedFetchError(
-                    "Feed compressed/streaming response exceeds byte limit"
+                    "Feed compressed/streaming response exceeds byte limit",
+                    reason=FailureReason.RESPONSE_TOO_LARGE,
                 )
             if decoder:
                 chunk = decoder.decompress(
@@ -271,10 +379,16 @@ class FeedHttpClient:
                 )
             body.extend(chunk)
             if len(body) > self.settings.max_decompressed_bytes:
-                raise FeedFetchError("Feed decompressed response exceeds byte limit")
+                raise FeedFetchError(
+                    "Feed decompressed response exceeds byte limit",
+                    reason=FailureReason.DECOMPRESSED_RESPONSE_TOO_LARGE,
+                )
             # Yield even for an immediately available chunk so the total deadline
             # also bounds fast streaming and decompression work.
             await asyncio.sleep(0)
         if decoder and (not decoder.eof or decoder.unused_data):
-            raise FeedFetchError("Feed contains incomplete or concatenated gzip data")
+            raise FeedFetchError(
+                "Feed contains incomplete or concatenated gzip data",
+                reason=FailureReason.INCOMPLETE_GZIP,
+            )
         return bytes(body)

@@ -16,9 +16,12 @@ from podex.services.discovery import (
     DiscoveredPodcast,
     slugify_podcast_name,
 )
+from podex.services.failure_codes import FailureReason, PipelineFailure
+from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
     from podex.models import Podcast
+
 
 logger = logging.getLogger(__name__)
 
@@ -54,9 +57,10 @@ class SpotifyDiscovery:
         """Get or create Spotify client."""
         if self._spotify is None:
             if not self.is_configured:
-                raise ValueError(
+                raise PipelineFailure(
                     "Spotify credentials not configured. Set "
-                    "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars."
+                    "SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET env vars.",
+                    reason=FailureReason.CONFIGURATION,
                 )
 
             try:
@@ -90,7 +94,12 @@ class SpotifyDiscovery:
         # Keep other providers and tasks running after this failure.
         # pylint: disable-next=broad-exception-caught
         except Exception as e:
-            logger.warning("Failed to fetch Spotify show %s: %s", spotify_id, e)
+            log_failure(
+                logger,
+                describe_failure("spotify", e),
+                e,
+                context=("show_fetch", spotify_id),
+            )
             return None
 
         if not show:
@@ -148,7 +157,12 @@ class SpotifyDiscovery:
         try:
             client = self._get_client()
         except (ValueError, ImportError) as e:
-            logger.warning("Cannot use Spotify discovery: %s", e)
+            log_failure(
+                logger,
+                describe_failure("spotify", e),
+                e,
+                context=("configuration", podcast.spotify_id),
+            )
             return []
 
         episodes: list[DiscoveredEpisode] = []
@@ -166,7 +180,12 @@ class SpotifyDiscovery:
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
-                logger.warning("Failed to fetch episodes from Spotify: %s", e)
+                log_failure(
+                    logger,
+                    describe_failure("spotify", e),
+                    e,
+                    context=("episode_fetch", podcast.spotify_id),
+                )
                 break
 
             items = result.get("items", [])
@@ -289,7 +308,7 @@ class SpotifyDiscovery:
         # Keep other providers and tasks running after this failure.
         # pylint: disable-next=broad-exception-caught
         except Exception as e:
-            logger.warning("Spotify search failed: %s", e)
+            log_failure(logger, describe_failure("spotify", e), e, context=("search",))
             return []
 
         podcasts = []

@@ -19,6 +19,7 @@ from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
 )
+from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.podscripts_client import (
     BASE_URL,
     build_podscripts_client,
@@ -27,6 +28,7 @@ from podex.services.podscripts_client import (
 
 if TYPE_CHECKING:
     from podex.models import Podcast
+
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +91,12 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.warning("Failed to fetch podcast %s: %s", slug, e)
+            log_failure(
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                context=("podcast_fetch", slug),
+            )
             return None
 
         soup = BeautifulSoup(html, "html.parser")
@@ -189,7 +196,12 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.warning("Failed to fetch page %s: %s", page, e)
+            log_failure(
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                context=("episode_page", slug, page),
+            )
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -256,7 +268,13 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            logger.error("Failed to fetch podcast catalog: %s", e)
+            log_failure(
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                level=logging.ERROR,
+                context=("catalog_fetch",),
+            )
             return []
 
         soup = BeautifulSoup(html, "html.parser")

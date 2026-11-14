@@ -25,6 +25,7 @@ from podex.services.discovery import (
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
+from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
     from podex.models import Podcast
@@ -74,8 +75,8 @@ class DiscoveryOrchestrator:
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
-                error = f"podscripts: {e}"
-                logger.warning(error)
+                error = describe_failure("podscripts", e)
+                log_failure(logger, error, e)
                 errors.append(error)
 
         if podcast.rss_url:
@@ -87,8 +88,8 @@ class DiscoveryOrchestrator:
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
-                error = f"rss: {e}"
-                logger.warning(error)
+                error = describe_failure("rss", e)
+                log_failure(logger, error, e)
                 errors.append(error)
 
         if podcast.spotify_id and self._sources["spotify"].is_configured:
@@ -100,8 +101,8 @@ class DiscoveryOrchestrator:
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
-                error = f"spotify: {e}"
-                logger.warning(error)
+                error = describe_failure("spotify", e)
+                log_failure(logger, error, e)
                 errors.append(error)
 
         # Deduplicate and merge

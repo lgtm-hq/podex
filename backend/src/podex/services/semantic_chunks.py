@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +16,14 @@ from podex.models import (
     SemanticChunkEmbeddingStatus,
     Transcript,
 )
+from podex.services.failure_codes import FailureReason, PipelineFailure
+from podex.services.failure_descriptors import (
+    describe_failure,
+    log_failure,
+    persisted_failure,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -264,11 +273,13 @@ def _embed_chunks(
             expected_dimensions=provider.dimensions,
         )
     except (RuntimeError, ValueError, TypeError) as error:
+        descriptor = persisted_failure(describe_failure("embedding", error))
+        log_failure(logger, descriptor, error)
         for chunk in chunks:
             chunk.embedding_status = SemanticChunkEmbeddingStatus.FAILED.value
             chunk.embedding_model = provider.model_name
             chunk.embedding_dimensions = provider.dimensions
-            chunk.embedding_error = str(error)
+            chunk.embedding_error = descriptor
         return 0, len(chunks)
     for chunk, vector in zip(chunks, vectors, strict=True):
         chunk.embedding_status = SemanticChunkEmbeddingStatus.EMBEDDED.value
@@ -472,10 +483,16 @@ def _validate_embeddings(
 ) -> None:
     """Validate embedding provider output shape."""
     if len(vectors) != expected_count:
-        raise ValueError("embedding provider returned an unexpected vector count")
+        raise PipelineFailure(
+            "embedding provider returned an unexpected vector count",
+            reason=FailureReason.EMBEDDING_COUNT_MISMATCH,
+        )
     for vector in vectors:
         if len(vector) != expected_dimensions:
-            raise ValueError("embedding provider returned unexpected dimensions")
+            raise PipelineFailure(
+                "embedding provider returned unexpected dimensions",
+                reason=FailureReason.EMBEDDING_DIMENSIONS_MISMATCH,
+            )
 
 
 def _transcript_text(

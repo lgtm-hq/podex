@@ -15,6 +15,7 @@ from podex.models import (
     ScheduledWorkItemModel,
 )
 from podex.services.discovery import DiscoveryResult
+from podex.services.failure_descriptors import describe_failure
 from podex.services.recurring_discovery import (
     plan_recurring_discovery_work,
     reconcile_recurring_discovery_schedules,
@@ -480,7 +481,9 @@ def test_runner_exception_records_loadable_failed_run(db_session: Session) -> No
     db_session.commit()
 
     run = db_session.query(IngestionRun).one()
-    assert_that(run.error_summary).is_equal_to("provider unavailable")
+    assert_that(run.error_summary).is_equal_to(
+        "discovery: RuntimeError; request_failed"
+    )
     assert_that(_load_run_statuses(db_session)).is_equal_to(
         [IngestionRunStatus.FAILED],
     )
@@ -491,13 +494,20 @@ def test_reported_errors_record_loadable_failed_run(db_session: Session) -> None
     _plan_discovery_for_active_podcast(db_session)
 
     def failing_runner(_db: Session, _podcast: Podcast) -> DiscoveryResult:
-        return DiscoveryResult(errors=["feed timed out", "bad episode"])
+        return DiscoveryResult(
+            errors=[
+                describe_failure("rss", TimeoutError("feed timed out")),
+                describe_failure("rss", ValueError("bad episode")),
+            ]
+        )
 
     run_due_episode_discovery_work(db=db_session, runner=failing_runner)
     db_session.commit()
 
     run = db_session.query(IngestionRun).one()
-    assert_that(run.error_summary).is_equal_to("feed timed out; bad episode")
+    assert_that(run.error_summary).is_equal_to(
+        "rss: TimeoutError; request_failed; rss: ValueError; request_failed",
+    )
     assert_that(_load_run_statuses(db_session)).is_equal_to(
         [IngestionRunStatus.FAILED],
     )

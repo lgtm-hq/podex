@@ -1442,7 +1442,10 @@ export interface components {
             created_at: string;
             /** Duration Seconds */
             duration_seconds: number | null;
-            /** Error Summary */
+            /**
+             * Error Summary
+             * @description Allowlisted failure descriptors (source, class, protocol code, fixed reason), known fixed historical reasons, or 'legacy failure text withheld' when a stored value is unstructured. Exception names are limited to 64 characters and each descriptor to 384 characters.
+             */
             error_summary: string | null;
             /** Id */
             id: number;
