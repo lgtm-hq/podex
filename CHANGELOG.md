@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.26] - 2026-11-14
+
+### Changed
+
+- **backend**: run PostgreSQL application tests in CI (#796) (5ef8892)
+- **docker**: add healthchecks and image smoke tests (#795) (e36fe68)
+- **auth**: compare failed-exchange responses independently of the clock (#813)
+  (178a6d2)
+
+### Fixed
+
+- **security**: mask secret settings and redact free-text credentials (#797) (4da6a43)
+
 ## [0.41.25] - 2026-11-14
 
 ### Changed
