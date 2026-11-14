@@ -12,6 +12,7 @@ import httpx
 
 from podex.config import FeedHttpSettings, get_settings
 from podex.services.feed_dns import resolve_feed_host
+from podex.services.feed_response import FeedResponse
 
 Resolver = Callable[[str, int], Awaitable[list[str]]]
 
@@ -39,8 +40,8 @@ class FeedFetchError(ValueError):
 class FeedFetcher(Protocol):
     """Injectable byte-fetching contract for synchronous discovery providers."""
 
-    def fetch(self, url: str) -> bytes:
-        """Return bounded response bytes or raise FeedFetchError."""
+    def fetch(self, url: str) -> FeedResponse:
+        """Return bounded bytes and parser metadata or raise FeedFetchError."""
 
 
 def public_address(value: str) -> str:
@@ -97,6 +98,8 @@ def feed_url(value: str) -> httpx.URL:
             raise FeedFetchError("Feed URL credentials are not supported")
         if "%" in url.host:
             raise FeedFetchError("Feed destination must use public unicast addresses")
+    except FeedFetchError:
+        raise
     except (httpx.InvalidURL, ValueError):
         raise FeedFetchError(
             "Feed URL must be a valid HTTP(S) URL without credentials"
@@ -121,18 +124,18 @@ class FeedHttpClient:
         self.resolver = resolver
         self.transport = transport
 
-    def fetch(self, url: str) -> bytes:
+    def fetch(self, url: str) -> FeedResponse:
         """Fetch bytes for synchronous discovery using an isolated event loop."""
         return asyncio.run(self.fetch_async(url))
 
-    async def fetch_async(self, url: str) -> bytes:
+    async def fetch_async(self, url: str) -> FeedResponse:
         """Fetch bytes within one deadline, including DNS and all redirect hops.
 
         Args:
             url: Initial HTTP(S) URL.
 
         Returns:
-            Bounded, decompressed response bytes.
+            Bounded, decompressed bytes with the final URL and content type.
 
         Raises:
             FeedFetchError: URL, destination, HTTP, size or deadline validation failed.
@@ -155,8 +158,8 @@ class FeedHttpClient:
         except zlib.error:
             raise FeedFetchError("Feed contains invalid gzip data") from None
 
-    async def _destination(self, url: httpx.URL) -> str:
-        """Validate every DNS answer and return one pinned public address."""
+    async def _destinations(self, url: httpx.URL) -> list[str]:
+        """Validate every DNS answer before returning any connection candidates."""
         try:
             address = ipaddress.ip_address(url.host)
         except ValueError:
@@ -167,54 +170,72 @@ class FeedHttpClient:
             addresses = [str(address)]
         if not addresses:
             raise FeedFetchError("Feed DNS returned no addresses")
-        validated = [public_address(value) for value in addresses]
-        return validated[0]
+        return [public_address(value) for value in addresses]
 
-    async def _fetch(self, url: httpx.URL) -> bytes:
+    async def _request(
+        self, url: httpx.URL, transport: httpx.AsyncBaseTransport
+    ) -> httpx.Response:
+        """Try vetted addresses in order, retrying only connection establishment."""
+        addresses = await self._destinations(url)
+        timeout = httpx.Timeout(
+            self.settings.read_timeout_seconds,
+            connect=self.settings.connect_timeout_seconds,
+        )
+        for address in addresses:
+            # Pin the connector while retaining Host and TLS verification identity.
+            # Direct transport use also avoids HTTPX's URL-bearing INFO log.
+            request = httpx.Request(
+                "GET",
+                url.copy_with(host=address),
+                headers={
+                    "Host": url.netloc.decode("ascii"),
+                    "Accept-Encoding": "gzip",
+                    "User-Agent": "podex-feed-fetcher/1.0",
+                    "Accept": "application/rss+xml, application/atom+xml, "
+                    "application/xml;q=0.9, text/xml;q=0.9, */*;q=0.1",
+                },
+                extensions={"sni_hostname": url.host, "timeout": timeout.as_dict()},
+            )
+            try:
+                return await transport.handle_async_request(request)
+            except (httpx.ConnectError, httpx.ConnectTimeout):
+                continue
+        raise FeedFetchError("Feed connection failed; check feed availability")
+
+    def _redirect(self, url: httpx.URL, response: httpx.Response) -> httpx.URL:
+        """Validate redirect syntax and policy without exposing URL details."""
+        location = response.headers.get("location")
+        if not location:
+            raise FeedFetchError("Feed redirect is missing its location")
+        try:
+            target = feed_url(str(url.join(location)))
+        except httpx.InvalidURL:
+            raise FeedFetchError("Feed redirect URL is invalid") from None
+        if url.scheme == "https" and target.scheme == "http":
+            raise FeedFetchError("Feed redirect cannot downgrade HTTPS to HTTP")
+        return target
+
+    async def _fetch(self, url: httpx.URL) -> FeedResponse:
         """Follow validated redirects without proxy or cookie state."""
         for hop in range(self.settings.max_redirects + 1):
-            address = await self._destination(url)
-            timeout = httpx.Timeout(
-                self.settings.read_timeout_seconds,
-                connect=self.settings.connect_timeout_seconds,
-            )
             transport = self.transport or httpx.AsyncHTTPTransport(
                 trust_env=False, retries=0
             )
             async with transport:
-                # Only the vetted numeric IP reaches the connector. HTTP Host and
-                # TLS SNI/certificate verification retain the original hostname.
-                # Use the transport directly to avoid HTTPX's URL-bearing INFO log.
-                request = httpx.Request(
-                    "GET",
-                    url.copy_with(host=address),
-                    headers={
-                        "Host": url.netloc.decode("ascii"),
-                        "Accept-Encoding": "gzip",
-                    },
-                    extensions={"sni_hostname": url.host, "timeout": timeout.as_dict()},
-                )
-                response = await transport.handle_async_request(request)
+                response = await self._request(url, transport)
                 try:
                     if response.status_code in {301, 302, 303, 307, 308}:
                         if hop == self.settings.max_redirects:
                             raise FeedFetchError("Feed redirect limit exceeded")
-                        location = response.headers.get("location")
-                        if not location:
-                            raise FeedFetchError(
-                                "Feed redirect is missing its location"
-                            )
-                        try:
-                            target = str(url.join(location))
-                        except httpx.InvalidURL:
-                            raise FeedFetchError(
-                                "Feed redirect URL is invalid"
-                            ) from None
-                        url = feed_url(target)
+                        url = self._redirect(url, response)
                         continue
                     if not response.is_success:
                         raise FeedFetchError(f"Feed HTTP status {response.status_code}")
-                    return await self._read(response)
+                    return FeedResponse(
+                        body=await self._read(response),
+                        final_url=str(url),
+                        content_type=response.headers.get("content-type", ""),
+                    )
                 finally:
                     await response.aclose()
         raise FeedFetchError("Feed redirect limit exceeded")

@@ -56,10 +56,13 @@ class RSSDiscovery:
         Returns:
             DiscoveredPodcast with metadata, or None if feed is invalid
         """
-        feed = feedparser.parse(BytesIO(self.fetcher.fetch(rss_url)))
+        feed = self._fetch_feed(rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed bytes")
+            logger.warning(
+                "Failed to parse RSS feed for podcast %s",
+                self._generate_slug(feed.feed.get("title", "Unknown Podcast")),
+            )
             return None
 
         channel = feed.feed
@@ -103,10 +106,10 @@ class RSSDiscovery:
             logger.warning("Podcast %s has no rss_url", podcast.slug)
             return []
 
-        feed = feedparser.parse(BytesIO(self.fetcher.fetch(podcast.rss_url)))
+        feed = self._fetch_feed(podcast.rss_url)
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed bytes")
+            logger.warning("Failed to parse RSS feed for podcast %s", podcast.slug)
             return []
 
         episodes = []
@@ -123,6 +126,17 @@ class RSSDiscovery:
 
         logger.info("Discovered %s episodes from RSS feed", len(episodes))
         return episodes
+
+    def _fetch_feed(self, url: str) -> Any:
+        """Parse bounded bytes with their final base URL and HTTP charset."""
+        response = self.fetcher.fetch(url)
+        return feedparser.parse(
+            BytesIO(response.body),
+            response_headers={
+                "content-type": response.content_type,
+                "content-location": response.final_url,
+            },
+        )
 
     def _parse_episode(self, entry: Any) -> DiscoveredEpisode | None:
         """Parse an episode from a feed entry."""

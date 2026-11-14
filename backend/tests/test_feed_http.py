@@ -145,7 +145,7 @@ def test_rss_redirect_to_private_is_blocked() -> None:
     """A public response cannot redirect the next connection to metadata."""
     handler = Mock(
         return_value=httpx.Response(
-            302, headers={"location": "http://169.254.169.254/latest/meta-data"}
+            302, headers={"location": "https://169.254.169.254/latest/meta-data"}
         )
     )
     with pytest.raises(FeedFetchError, match="public"):
@@ -207,7 +207,7 @@ def test_public_literals_preserve_host_and_tls_identity(address: str) -> None:
     client = _client(
         handler, resolver=Mock(side_effect=AssertionError("unexpected DNS"))
     )
-    assert_that(client.fetch(f"https://{host}:8443/feed")).is_equal_to(b"feed")
+    assert_that(client.fetch(f"https://{host}:8443/feed").body).is_equal_to(b"feed")
     assert_that(requests[0].url.host).is_equal_to(address)
     assert_that(requests[0].url.port).is_equal_to(8443)
     assert_that(requests[0].headers["host"]).is_equal_to(f"{host}:8443")
@@ -231,9 +231,9 @@ def test_relative_public_redirect_and_no_cookie_forwarding() -> None:
             )
         return httpx.Response(200, stream=httpx.ByteStream(b"feed"))
 
-    assert_that(_client(handler).fetch("https://feeds.example/path/start")).is_equal_to(
-        b"feed"
-    )
+    assert_that(
+        _client(handler).fetch("https://feeds.example/path/start").body
+    ).is_equal_to(b"feed")
     assert_that(requests[1].url.path).is_equal_to("/feed")
     assert_that(requests[1].headers).does_not_contain_key("cookie")
 
@@ -310,7 +310,7 @@ def test_valid_response_at_size_limit(encoding: str) -> None:
         ),
         settings,
     )
-    assert_that(client.fetch("https://feeds.example/feed")).is_equal_to(body)
+    assert_that(client.fetch("https://feeds.example/feed").body).is_equal_to(body)
     assert_that(stream.closed).is_true()
 
 
@@ -427,9 +427,9 @@ def test_query_credentials_are_not_logged(caplog: pytest.LogCaptureFixture) -> N
     client = _client(
         lambda request: httpx.Response(200, stream=httpx.ByteStream(b"feed"))
     )
-    assert_that(client.fetch("https://feeds.example/feed?token=secret")).is_equal_to(
-        b"feed"
-    )
+    assert_that(
+        client.fetch("https://feeds.example/feed?token=secret").body
+    ).is_equal_to(b"feed")
     assert_that(caplog.text).does_not_contain("secret")
 
 
@@ -446,7 +446,7 @@ def test_default_transport_disables_proxy_environment(
     monkeypatch.setattr(httpx, "AsyncHTTPTransport", factory)
     settings = FeedHttpSettings(connect_timeout_seconds=0.5, read_timeout_seconds=0.75)
     client = FeedHttpClient(settings, resolver=_public_dns)
-    assert_that(client.fetch("https://feeds.example/feed")).is_equal_to(b"feed")
+    assert_that(client.fetch("https://feeds.example/feed").body).is_equal_to(b"feed")
     factory.assert_called_once_with(trust_env=False, retries=0)
 
 
@@ -489,7 +489,7 @@ def test_feed_settings_use_nested_environment(monkeypatch: pytest.MonkeyPatch) -
     [
         (503, {}, "HTTP status 503"),
         (302, {}, "missing its location"),
-        (302, {"location": "http://[invalid"}, "valid HTTP(S) URL"),
+        (302, {"location": "http://[invalid"}, "public unicast addresses"),
         (302, {"location": "file:///etc/passwd"}, "HTTP(S)"),
         (200, {"content-encoding": "br"}, "unsupported content encoding"),
     ],
@@ -550,27 +550,49 @@ class _WireStream(anyio.abc.ByteStream):
         self.closed = True
 
 
+@pytest.mark.parametrize("fallback", [False, True])
 def test_real_transport_pins_connector_and_verifies_original_tls_hostname(
     monkeypatch: pytest.MonkeyPatch,
+    fallback: bool,
 ) -> None:
     """Exercise production transport wiring down to TCP and TLS with fake streams."""
     stream = _WireStream()
-    connector = AsyncMock(return_value=stream)
+    connector = AsyncMock(
+        side_effect=[OSError("unreachable"), stream] if fallback else [stream]
+    )
     tls = AsyncMock(return_value=stream)
     monkeypatch.setattr(anyio, "connect_tcp", connector)
     monkeypatch.setattr(anyio.streams.tls.TLSStream, "wrap", tls)
     monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:8080")
-    client = FeedHttpClient(resolver=_public_dns)
 
-    assert_that(client.fetch("https://feeds.example:8443/feed")).is_equal_to(b"feed")
-    connector.assert_awaited_once_with(
-        remote_host="93.184.216.34", remote_port=8443, local_host=None
+    async def resolve(host: str, port: int) -> list[str]:
+        """Offer an unreachable IPv6 address before IPv4 when testing fallback."""
+        addresses = await _public_dns(host, port)
+        return ["2606:4700:4700::1111", *addresses] if fallback else addresses
+
+    client = FeedHttpClient(resolver=resolve)
+
+    assert_that(client.fetch("https://feeds.example:8443/feed").body).is_equal_to(
+        b"feed"
+    )
+    assert_that(connector.await_count).is_equal_to(2 if fallback else 1)
+    assert_that(
+        [call.kwargs["remote_host"] for call in connector.await_args_list]
+    ).is_equal_to(
+        ["2606:4700:4700::1111", "93.184.216.34"] if fallback else ["93.184.216.34"]
+    )
+    assert_that(connector.await_args_list[-1].kwargs).is_equal_to(
+        {"remote_host": "93.184.216.34", "remote_port": 8443, "local_host": None}
     )
     assert_that(tls.await_args_list[0].kwargs["hostname"]).is_equal_to("feeds.example")
     context = tls.await_args_list[0].kwargs["ssl_context"]
     assert_that(context.check_hostname).is_true()
     assert_that(context.verify_mode).is_equal_to(ssl.CERT_REQUIRED)
     assert_that(bytes(stream.sent)).contains(b"Host: feeds.example:8443\r\n")
+    assert_that(bytes(stream.sent)).contains(
+        b"User-Agent: podex-feed-fetcher/1.0\r\n",
+        b"Accept: application/rss+xml, application/atom+xml, ",
+    )
     assert_that(stream.closed).is_true()
 
 
