@@ -93,9 +93,10 @@ jobs:
       # In replace mode the reusable workflow passes a non-empty list to
       # harden-runner on its own, without the docker preset. So this list
       # carries every docker preset host (lgtm-ci presets.sh at the pinned
-      # release) plus the caller-specific extras: Trivy database fallbacks
-      # (gcr.io, public.ecr.aws, get.trivy.dev), deb.debian.org, and PyPI
-      # for `uv sync` in the builder stage.
+      # release) plus the caller-specific extras: Trivy database registry
+      # fallbacks (gcr.io, public.ecr.aws), the legacy Trivy installer host
+      # (get.trivy.dev), deb.debian.org, and PyPI for `uv sync` in the
+      # builder stage.
       allowed-endpoints-mode: replace
       allowed-endpoints: >
         github.com:443
