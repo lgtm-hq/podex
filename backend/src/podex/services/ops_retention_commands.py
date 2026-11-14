@@ -7,7 +7,6 @@ from sqlalchemy.orm import Session
 
 from podex.config import RetentionSettings
 from podex.models import (
-    MentionCandidate,
     Transcript,
     TranscriptArtifact,
     TranscriptDigest,
@@ -26,6 +25,7 @@ from podex.services.transcript_retention import (
     TranscriptRetentionState,
 )
 from podex.services.transcript_retention_commands import (
+    UNKNOWN_RETENTION_CONFIDENCE,
     evaluate_transcript_retention,
     purge_transcript_with_proof,
     require_transcript_purge_enabled,
@@ -112,7 +112,7 @@ def preview_ops_transcript_retention(
     transcript = db.query(Transcript).filter(Transcript.id == transcript_id).first()
     if transcript is None:
         return None
-    extraction_confidence = _latest_confidence(db=db, transcript=transcript)
+    extraction_confidence = UNKNOWN_RETENTION_CONFIDENCE
     service = TranscriptRetentionService(policy=policy)
     decision = service.evaluate(
         state=TranscriptRetentionState(
@@ -156,7 +156,7 @@ def apply_ops_transcript_retention(
     evaluate_transcript_retention(
         db=db,
         transcript=transcript,
-        extraction_confidence=_latest_confidence(db=db, transcript=transcript),
+        extraction_confidence=UNKNOWN_RETENTION_CONFIDENCE,
         source_retention_opt_out=(
             source_retention_opt_out
             if source_retention_opt_out is not None
@@ -255,17 +255,6 @@ def _require_unambiguous_existing_proof(*, db: Session, transcript: Transcript) 
     )
     if len(keys) > 1 or (keys and keys[0] != column_key):
         raise ValueError(AMBIGUOUS_PROOF_REASON)
-
-
-def _latest_confidence(*, db: Session, transcript: Transcript) -> float | None:
-    """Get the highest candidate confidence for the transcript episode."""
-    row = (
-        db.query(MentionCandidate.confidence)
-        .filter(MentionCandidate.episode_id == transcript.episode_id)
-        .order_by(MentionCandidate.confidence.desc())
-        .first()
-    )
-    return row[0] if row is not None else None
 
 
 def _to_ops_transcript_retention(
