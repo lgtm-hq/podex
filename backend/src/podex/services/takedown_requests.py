@@ -24,7 +24,10 @@ from podex.services.transcript_artifacts import (
     list_retained_artifacts,
 )
 from podex.services.transcript_retention import TranscriptRetentionPolicy
-from podex.services.transcript_retention_commands import create_transcript_digest
+from podex.services.transcript_retention_commands import (
+    create_transcript_digest,
+    resolve_column_proof_source,
+)
 from podex.services.transcript_retention_policies import (
     get_transcript_source_retention_policy,
     to_retention_policy,
@@ -235,6 +238,7 @@ def _suppress_raw_transcripts(
         create_transcript_digest(
             db=db,
             transcript=transcript,
+            source=resolve_column_proof_source(transcript),
             purged_at=suppressed_at,
         )
         for artifact in artifacts:

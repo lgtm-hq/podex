@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import boto3
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from podex.config import Settings
@@ -25,6 +25,7 @@ from podex.services.transcript_retention_policies import (
 )
 
 RAW_TRANSCRIPT_CONTENT_TYPE = "application/vnd.podex.transcript+json"
+ARTIFACT_VERIFICATION_FAILED = "Retained transcript artifact failed source verification"
 
 
 class TranscriptArtifactStorageBackend(StrEnum):
@@ -387,16 +388,8 @@ def load_transcript_processing_payload(
     if artifact is not None:
         if artifact_store is None:
             raise ValueError("Encrypted transcript artifact storage is not configured")
-        payload = artifact_store.get_json(storage_key=artifact.storage_key)
-        raw_text = payload.get("raw_text")
-        segments = payload.get("segments")
-        if not isinstance(raw_text, str) or not isinstance(segments, list):
-            raise ValueError("Encrypted transcript artifact payload is malformed")
-        if not all(isinstance(segment, dict) for segment in segments):
-            raise ValueError("Encrypted transcript artifact segments are malformed")
-        return TranscriptProcessingPayloadData(
-            raw_text=raw_text,
-            segments=segments,
+        return _processing_payload_from_json(
+            artifact_store.get_json(storage_key=artifact.storage_key),
         )
 
     if transcript.raw_text is None and transcript.segments_json is None:
@@ -405,6 +398,39 @@ def load_transcript_processing_payload(
         raw_text=transcript.raw_text or "",
         segments=transcript.segments_json or [],
     )
+
+
+def verify_artifact_source_hash(
+    *,
+    artifact: TranscriptArtifact,
+    artifact_store: TranscriptArtifactStore,
+) -> str:
+    """Read one retained artifact and prove it still holds the acquired text.
+
+    The decrypted payload stays local to this call; only its hash is returned.
+
+    Args:
+        artifact: Unpurged artifact metadata recorded at acquisition.
+        artifact_store: Configured encrypted artifact adapter.
+
+    Returns:
+        SHA-256 of the artifact's exact raw UTF-8 text, equal to its metadata.
+
+    Raises:
+        ValueError: If the object is missing, unreadable, cannot be decrypted,
+            is malformed, or hashes differently from its recorded metadata.
+    """
+    try:
+        payload = _processing_payload_from_json(
+            artifact_store.get_json(storage_key=artifact.storage_key),
+        )
+    except (InvalidToken, LookupError, OSError, ValueError):
+        # Drop the cause: decoder errors can carry decrypted payload fragments.
+        raise ValueError(ARTIFACT_VERIFICATION_FAILED) from None
+    source_hash = sha256(payload.raw_text.encode("utf-8")).hexdigest()
+    if source_hash != artifact.source_text_hash:
+        raise ValueError(ARTIFACT_VERIFICATION_FAILED)
+    return source_hash
 
 
 def reacquire_purged_transcript(
@@ -513,6 +539,19 @@ def _store_raw_transcript_artifact(
     db.add(artifact)
     db.flush()
     return artifact
+
+
+def _processing_payload_from_json(
+    payload: dict[str, Any],
+) -> TranscriptProcessingPayloadData:
+    """Validate a decrypted artifact payload's raw text and segment shapes."""
+    raw_text = payload.get("raw_text")
+    segments = payload.get("segments")
+    if not isinstance(raw_text, str) or not isinstance(segments, list):
+        raise ValueError("Encrypted transcript artifact payload is malformed")
+    if not all(isinstance(segment, dict) for segment in segments):
+        raise ValueError("Encrypted transcript artifact segments are malformed")
+    return TranscriptProcessingPayloadData(raw_text=raw_text, segments=segments)
 
 
 def _decode_encrypted_payload(

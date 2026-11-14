@@ -27,7 +27,7 @@ from podex.services.transcript_retention import (
 )
 from podex.services.transcript_retention_commands import (
     evaluate_transcript_retention,
-    purge_transcript_if_eligible,
+    purge_transcript_with_proof,
     require_transcript_purge_enabled,
 )
 
@@ -185,20 +185,15 @@ def purge_ops_transcript(
     coverage = evaluate_episode_derivative_coverage(db=db, episode=transcript.episode)
     if not coverage.purge_safe:
         raise ValueError("Derivative coverage is incomplete for transcript purge")
-    if not purge_transcript_if_eligible(
+    digest = purge_transcript_with_proof(
         db=db,
         transcript=transcript,
+        retention=retention,
         artifact_store=artifact_store,
         now=now,
-        retention=retention,
-    ):
-        raise ValueError("Transcript is not eligible for purge")
-    digest = (
-        db.query(TranscriptDigest)
-        .filter(TranscriptDigest.transcript_id == transcript.id)
-        .order_by(TranscriptDigest.id.desc())
-        .one()
     )
+    if digest is None:
+        raise ValueError("Transcript is not eligible for purge")
     return OpsTranscriptPurgeResultData(
         transcript=_to_ops_transcript_retention(db=db, transcript=transcript),
         digest=digest,

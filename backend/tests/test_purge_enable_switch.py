@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
+from hashlib import sha256
 from typing import Any
 
 import pytest
@@ -29,10 +30,13 @@ from podex.services.recurring_notifications import (
     RETENTION_SCHEDULE_KEY,
     run_due_retention_work,
 )
+from podex.services.transcript_artifacts import ARTIFACT_VERIFICATION_FAILED
 from podex.services.transcript_retention_commands import (
     PURGE_DISABLED_REASON,
     create_transcript_digest,
     purge_transcript_if_eligible,
+    resolve_column_proof_source,
+    resolve_verified_purge_source,
 )
 from tests.conftest import plan_notification_work, seed_catalog_graph
 from tests.test_derivative_generation import FakeSummaryProvider
@@ -66,20 +70,20 @@ def purge_asset_fixture(
         storage_key="transcripts/purge-switch/raw.json.enc",
         payload={"raw_text": transcript.raw_text, "segments": transcript.segments_json},
     )
-    db_session.add(
-        TranscriptArtifact(
-            transcript_id=transcript.id,
-            episode_id=transcript.episode_id,
-            storage_key=stored.storage_key,
-            storage_backend=stored.storage_backend,
-            encryption_key_id=stored.encryption_key_id,
-            byte_size=stored.byte_size,
-            provider=transcript.provider,
-            source_text_hash="existing-artifact-hash",
-            content_type="application/json",
-            stored_at=_NOW,
-        ),
+    artifact = TranscriptArtifact(
+        transcript_id=transcript.id,
+        episode_id=transcript.episode_id,
+        storage_key=stored.storage_key,
+        storage_backend=stored.storage_backend,
+        encryption_key_id=stored.encryption_key_id,
+        byte_size=stored.byte_size,
+        provider=transcript.provider,
+        source_text_hash=sha256(b"original private source text").hexdigest(),
+        content_type="application/json",
+        stored_at=_NOW,
     )
+    db_session.add(artifact)
+    db_session.flush()
     db_session.add(
         MentionCandidate(
             episode_id=graph.episode_id,
@@ -105,7 +109,14 @@ def purge_asset_fixture(
             ),
         ],
     )
-    create_transcript_digest(db=db_session, transcript=transcript, purged_at=_NOW)
+    create_transcript_digest(
+        db=db_session,
+        transcript=transcript,
+        source=resolve_verified_purge_source(
+            transcript=transcript, artifacts=[artifact], artifact_store=store
+        ),
+        purged_at=_NOW,
+    )
     db_session.commit()
     coverage = evaluate_episode_derivative_coverage(
         db=db_session, episode=transcript.episode
@@ -422,3 +433,83 @@ def test_scheduled_retention_evaluates_without_purging(
         )
     assert_that(store.objects).is_equal_to(objects)
     assert_that(store.deleted).is_empty()
+
+
+def test_unverifiable_artifact_blocks_retention_purge_but_not_takedown(
+    client: TestClient,
+    db_session: Session,
+    purge_asset: tuple[Transcript, RecordingArtifactStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verification only restricts retention purge; takedown still deletes."""
+    transcript, store = purge_asset
+    store.objects["transcripts/purge-switch/raw.json.enc"] = {
+        "raw_text": "substituted text",
+        "segments": [],
+    }
+    request = _takedown(db_session, transcript)
+    _configure_api(client, enabled=True)
+    monkeypatch.setattr(
+        "podex.api.v2.ops.build_transcript_artifact_store", lambda **_kwargs: store
+    )
+    before = _snapshot(db_session)
+
+    refused = client.post(
+        f"/api/v2/ops/retention/{transcript.id}/purge", headers=_HEADERS
+    )
+
+    assert_that(refused.status_code).is_equal_to(409)
+    assert_that(refused.json()["detail"]).is_equal_to(ARTIFACT_VERIFICATION_FAILED)
+    assert_that(refused.text).does_not_contain("substituted text")
+    assert_that(_snapshot(db_session)).is_equal_to(before)
+    assert_that(store.deleted).is_empty()
+
+    approved = client.post(
+        f"/api/v2/ops/takedown-requests/{request.id}/decide",
+        json={"status": "approved", "note": "Verified"},
+        headers=_HEADERS,
+    )
+
+    assert_that(approved.status_code).is_equal_to(200)
+    assert_that(approved.json()["execution"]["transcripts_suppressed"]).is_equal_to(1)
+    db_session.expire_all()
+    assert_that(transcript.raw_text).is_none()
+    assert_that(transcript.purged_at).is_not_none()
+    assert_that(store.objects).is_empty()
+
+
+def test_ops_purge_returns_its_own_proof_when_older_digests_exist(
+    db_session: Session,
+    purge_asset: tuple[Transcript, RecordingArtifactStore],
+) -> None:
+    """An earlier proof of another representation does not hide the new one."""
+    transcript, store = purge_asset
+    db_session.query(TranscriptDigest).delete(synchronize_session=False)
+    older = create_transcript_digest(
+        db=db_session,
+        transcript=transcript,
+        source=resolve_column_proof_source(transcript),
+        purged_at=_NOW - timedelta(days=2),
+    )
+    db_session.commit()
+
+    result = purge_ops_transcript(
+        db=db_session,
+        transcript_id=transcript.id,
+        artifact_store=store,
+        retention=RetentionSettings(purge_enabled=True),
+        now=_NOW,
+    )
+    db_session.commit()
+
+    assert_that(result).is_not_none()
+    if result is None:
+        raise AssertionError
+    assert_that(result.digest.id).is_not_equal_to(older.id)
+    assert_that(result.digest.source_text_hash).is_equal_to(
+        sha256(b"original private source text").hexdigest()
+    )
+    assert_that(result.digest.metadata_json).contains_entry(
+        {"source_representation": "encrypted_artifact_raw_text"}
+    )
+    assert_that(db_session.query(TranscriptDigest).count()).is_equal_to(2)
