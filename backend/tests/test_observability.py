@@ -9,6 +9,7 @@ import sentry_sdk
 from assertpy import assert_that
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event
+from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException
 
 from podex import __version__
@@ -17,7 +18,8 @@ from podex.logging_config import configure_logging
 from podex.main import create_app
 from podex.observability import before_send, init_sentry, scrub_event
 from podex.scheduler_runner import main as scheduler_main
-from tests.conftest import CapturingSentryTransport
+from tests.conftest import SentryEnvelopeRecorder
+from tests.workos_support import handled_rejection, invalid_code_rejection
 
 _TEST_DSN = "https://public@sentry.invalid/1"
 
@@ -161,7 +163,7 @@ def test_scrub_event_drops_query_strings_on_every_route() -> None:
 
 
 def test_outbound_request_breadcrumbs_keep_provider_keys_out(
-    sentry_transport: CapturingSentryTransport,
+    sentry_transport: SentryEnvelopeRecorder,
 ) -> None:
     """Provider API keys sent in a query never reach a reported event."""
     provider_key = "omdb-query-key-4821"
@@ -188,126 +190,108 @@ def test_outbound_request_breadcrumbs_keep_provider_keys_out(
     assert_that(sentry_transport.serialized()).does_not_contain(provider_key)
 
 
-class _ExpectedRejection(Exception):
-    """A caller-triggerable failure used to exercise the drop rule."""
-
-    reportable = False
-
-
-def _raised_from(cause: BaseException) -> BaseException:
-    """Return a RuntimeError raised from ``cause`` with its chain attached."""
-    try:
-        raise RuntimeError("wrapped") from cause
-    except RuntimeError as error:
-        return error
-
-
-def _raise_while_handling(
-    rejection: BaseException,
-    error: BaseException,
-    *,
-    explicit_cause: bool,
-    hide_context: bool = False,
-) -> BaseException:
-    """Attach ``rejection`` to ``error`` as Python's ``raise`` statement would.
-
-    Raising ``error`` inside ``except rejection`` always sets ``__context__``;
-    ``raise error from rejection`` also sets ``__cause__``, and ``raise
-    error from None`` sets ``__suppress_context__`` while keeping the context.
-
-    Args:
-        rejection: The exception being handled.
-        error: The exception raised while handling it.
-        explicit_cause: Whether ``error`` is raised ``from rejection``.
-        hide_context: Whether ``error`` is raised ``from None``.
-
-    Returns:
-        BaseException: ``error`` with its cause and context attached.
-    """
-    error.__context__ = rejection
-    if explicit_cause:
-        error.__cause__ = rejection
-    error.__suppress_context__ = explicit_cause or hide_context
-    return error
-
-
 def _hint(error: BaseException) -> dict[str, object]:
     """Build the SDK hint for an exception event."""
     return {"exc_info": (type(error), error, error.__traceback__)}
 
 
+def _chained(
+    error: BaseException,
+    *,
+    cause: BaseException | None = None,
+    context: BaseException | None = None,
+    hide_context: bool = False,
+) -> BaseException:
+    """Attach a cause/context to ``error`` as Python's ``raise`` statement would.
+
+    Raising inside ``except`` sets ``__context__``; ``raise ... from x`` also
+    sets ``__cause__``; ``raise ... from None`` sets ``__suppress_context__``.
+
+    Args:
+        error: The exception being raised.
+        cause: The explicit cause (``raise error from cause``).
+        context: The exception being handled when ``error`` was raised.
+        hide_context: Whether ``error`` is raised ``from None``.
+
+    Returns:
+        BaseException: ``error`` with its chain attached.
+    """
+    error.__context__ = context if context is not None else cause
+    error.__cause__ = cause
+    error.__suppress_context__ = cause is not None or hide_context
+    return error
+
+
+class _SettableOptOut(Exception):
+    """Sets the opt-out attribute an earlier rule honoured; it must not count."""
+
+    reportable = False
+
+
+_Builder = Callable[[Session], BaseException]
+
+
+def _from_rejection(build: Callable[[BaseException], BaseException]) -> _Builder:
+    """Return a builder that wraps a real invalid-code rejection."""
+    return lambda _db: build(invalid_code_rejection())
+
+
 @pytest.mark.parametrize(
     ("build", "dropped"),
     [
-        pytest.param(lambda: _ExpectedRejection("bad code"), True, id="rejection"),
+        pytest.param(lambda _db: invalid_code_rejection(), True, id="rejection"),
+        pytest.param(handled_rejection, True, id="callback-handled-502"),
         pytest.param(
-            lambda: _raise_while_handling(
-                _ExpectedRejection("bad code"),
-                HTTPException(status_code=502),
-                explicit_cause=True,
-            ),
-            True,
-            id="handled-502-from-rejection",
-        ),
-        pytest.param(
-            lambda: _raise_while_handling(
-                _ExpectedRejection("bad code"),
-                OSError("log failed"),
-                explicit_cause=False,
-            ),
+            _from_rejection(lambda r: _chained(OSError("log failed"), context=r)),
             False,
             id="error-while-handling",
         ),
         pytest.param(
-            lambda: _raise_while_handling(
-                _ExpectedRejection("bad code"),
-                OSError("log failed"),
-                explicit_cause=False,
-                hide_context=True,
+            _from_rejection(
+                lambda r: _chained(OSError("log"), context=r, hide_context=True),
             ),
             False,
             id="error-from-none-while-handling",
         ),
         pytest.param(
-            lambda: _raised_from(_ExpectedRejection("bad code")),
+            _from_rejection(lambda r: _chained(RuntimeError("wrapped"), cause=r)),
             False,
             id="other-error-from-rejection",
         ),
         pytest.param(
-            lambda: _raise_while_handling(
-                _ExpectedRejection("bad code"),
-                HTTPException(status_code=500),
-                explicit_cause=True,
-            ),
+            _from_rejection(lambda r: _chained(HTTPException(500), cause=r)),
             False,
-            id="handled-500-from-rejection",
+            id="500-from-rejection",
         ),
         pytest.param(
-            lambda: _raise_while_handling(
-                _ExpectedRejection("bad code"),
-                HTTPException(status_code=502),
-                explicit_cause=False,
-            ),
+            _from_rejection(lambda r: _chained(HTTPException(502), context=r)),
             False,
             id="502-with-rejection-only-as-context",
         ),
         pytest.param(
-            lambda: _raise_while_handling(
-                ValueError("provider down"),
-                HTTPException(status_code=502),
-                explicit_cause=True,
-            ),
+            lambda _db: _chained(HTTPException(502), cause=ValueError("down")),
             False,
-            id="handled-502-from-other-error",
+            id="502-from-other-error",
+        ),
+        pytest.param(
+            _from_rejection(lambda r: _chained(HTTPException(502), cause=r)),
+            False,
+            id="foreign-502-from-rejection",
+        ),
+        pytest.param(
+            lambda _db: _SettableOptOut("not the rejection"),
+            False,
+            id="settable-opt-out-attribute",
         ),
     ],
 )
-def test_before_send_drops_only_the_rejection_and_its_handled_502(
-    build: Callable[[], BaseException],
+def test_before_send_drops_only_the_dedicated_rejection_types(
+    db_session: Session,
+    build: _Builder,
     dropped: bool,
 ) -> None:
-    """Only the rejection or the 502 raised from it is dropped."""
-    error = build()
+    """Only the exchange client's rejection and the callback's 502 are dropped."""
+    error = build(db_session)
 
     sent = before_send({"level": "error"}, _hint(error))
 
@@ -316,7 +300,7 @@ def test_before_send_drops_only_the_rejection_and_its_handled_502(
 
 def test_before_send_keeps_and_minimises_other_events() -> None:
     """Other errors are sent, with request headers reduced to the allowlist."""
-    wrapped = _raised_from(ValueError("provider down"))
+    wrapped = _chained(RuntimeError("wrapped"), cause=ValueError("provider down"))
     hint = _hint(wrapped)
     event: Event = {
         "request": {

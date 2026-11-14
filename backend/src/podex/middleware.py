@@ -12,11 +12,14 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
-from podex.api.v2.errors import PROBLEM_JSON_MEDIA_TYPE, build_problem
+from podex.api.v2.errors import (
+    PROBLEM_JSON_MEDIA_TYPE,
+    REQUEST_ID_HEADER,
+    build_problem,
+)
 from podex.logging_config import get_logger
 from podex.services.limiter import RateLimiter
 
-REQUEST_ID_HEADER = "X-Request-ID"
 RATE_LIMIT_MESSAGE = "Rate limit exceeded. Try again later."
 
 _access_logger = get_logger("podex.access")

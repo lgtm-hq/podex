@@ -14,9 +14,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
+from podex.api.v2.errors import REQUEST_ID_HEADER
 from podex.config import RateLimitSettings, Settings
 from podex.main import create_app
-from podex.middleware import REQUEST_ID_HEADER, RateLimitMiddleware
+from podex.middleware import RateLimitMiddleware
 from podex.services.limiter import SlidingWindowRateLimiter
 from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
@@ -663,3 +664,32 @@ def test_access_log_failure_never_changes_the_response(
     message = fallback[0].getMessage()
     assert_that(message).is_equal_to("access_log_failed status=200")
     assert_that(repr(fallback[0].__dict__)).does_not_contain("after-failure-2")
+
+
+@pytest.mark.parametrize(
+    ("supplied", "expected"),
+    [
+        pytest.param("err-1", "err-1", id="valid-id"),
+        pytest.param(None, None, id="no-id"),
+        pytest.param("bad id", None, id="malformed-id"),
+    ],
+)
+def test_unhandled_error_response_carries_the_request_id(
+    failing_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    supplied: str | None,
+    expected: str | None,
+) -> None:
+    """The 500 for an unhandled error echoes the same id as its body and log."""
+    headers = {REQUEST_ID_HEADER: supplied} if supplied is not None else {}
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = failing_client.get("/boom", headers=headers)
+
+    assert_that(response.status_code).is_equal_to(500)
+    echoed = response.headers[REQUEST_ID_HEADER]
+    if expected is None:
+        assert_that(_GENERATED_ID.fullmatch(echoed)).is_not_none()
+    else:
+        assert_that(echoed).is_equal_to(expected)
+    assert_that(response.json()["request_id"]).is_equal_to(echoed)
+    assert_that(_access_records(caplog)[-1].__dict__["request_id"]).is_equal_to(echoed)

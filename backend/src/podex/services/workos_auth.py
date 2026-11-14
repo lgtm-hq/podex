@@ -9,7 +9,6 @@ referencing our own opaque session ids.
 """
 
 from dataclasses import dataclass
-from typing import ClassVar
 from urllib.parse import urlencode
 
 import httpx
@@ -25,6 +24,9 @@ _EXCHANGE_TIMEOUT_SECONDS = 10.0
 
 
 _INVALID_GRANT = "invalid_grant"
+# Only this module holds the token, so only the exchange client below can
+# construct WorkOSInvalidCodeError.
+_INVALID_CODE_TOKEN = object()
 
 
 class WorkOSAuthError(RuntimeError):
@@ -34,14 +36,33 @@ class WorkOSAuthError(RuntimeError):
 class WorkOSInvalidCodeError(WorkOSAuthError):
     """The provider rejected the authorization code itself.
 
-    Raised for HTTP 400 with the OAuth 2.0 ``invalid_grant`` error (RFC 6749
-    section 5.2: the code is invalid, expired, revoked or already used). Any
-    caller can trigger it by replaying or forging a code, so it is logged
-    but not sent to the error reporter. Every other rejection, including
-    401 for an invalid API key and other 400 errors, stays reportable.
+    Raised only by :meth:`WorkOSAuthClient.exchange_code` for HTTP 400 with
+    the OAuth 2.0 ``invalid_grant`` error (RFC 6749 section 5.2: the code is
+    invalid, expired, revoked or already used). Any caller can trigger it by
+    replaying or forging a code, so it is logged but not sent to the error
+    reporter. Every other rejection, including 401 for an invalid API key
+    and other 400 errors, stays reportable.
+
+    Construction requires a token private to this module, and the class
+    cannot be subclassed, so ``isinstance`` identifies exactly this answer.
+
+    Args:
+        message: Allowlisted description of the rejection.
+        token: The module-private construction token.
+
+    Raises:
+        TypeError: When constructed without the module-private token.
     """
 
-    reportable: ClassVar[bool] = False
+    def __init__(self, message: str, *, token: object) -> None:
+        if token is not _INVALID_CODE_TOKEN:
+            msg = "WorkOSInvalidCodeError is raised only by WorkOSAuthClient"
+            raise TypeError(msg)
+        super().__init__(message)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        msg = "WorkOSInvalidCodeError cannot be subclassed"
+        raise TypeError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +160,7 @@ class WorkOSAuthClient:
         if response.status_code != httpx.codes.OK:
             if _is_invalid_grant(response):
                 msg = "WorkOS rejected the authorization code (HTTP 400 invalid_grant)"
-                raise WorkOSInvalidCodeError(msg)
+                raise WorkOSInvalidCodeError(msg, token=_INVALID_CODE_TOKEN)
             msg = f"WorkOS code exchange rejected with HTTP {response.status_code}"
             raise WorkOSAuthError(msg)
         payload: object = None

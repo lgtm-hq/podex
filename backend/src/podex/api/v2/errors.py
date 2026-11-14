@@ -58,6 +58,10 @@ def error_code_for_status(status_code: int) -> str:
     return STATUS_CODE_TO_ERROR_CODE.get(status_code, f"http_{status_code}")
 
 
+REQUEST_ID_HEADER = "X-Request-ID"
+"""Response header echoing the request id assigned by the middleware."""
+
+
 def _title_for_status(status_code: int) -> str:
     """Return the HTTP reason phrase for ``status_code``.
 
@@ -219,12 +223,19 @@ async def unhandled_exception_handler(
     request: Request,
     exc: Exception,
 ) -> JSONResponse:
-    """Return an opaque 500 problem body for otherwise unhandled exceptions."""
+    """Return an opaque 500 problem body for otherwise unhandled exceptions.
+
+    This response is built outside the request-context middleware, so it
+    sets the request-id header itself, linking it to the access record and
+    the error report.
+    """
     del exc
+    request_id = _request_id(request)
     return build_error_response(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Internal server error.",
         request=request,
+        headers={REQUEST_ID_HEADER: request_id} if request_id else None,
     )
 
 

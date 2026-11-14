@@ -10,12 +10,12 @@ from fastapi.testclient import TestClient
 from podex.api.v2.errors import (
     PROBLEM_JSON_MEDIA_TYPE,
     PROBLEM_TYPE_BASE,
+    REQUEST_ID_HEADER,
     STATUS_CODE_TO_ERROR_CODE,
     error_code_for_status,
 )
 from podex.config import RateLimitSettings, Settings
 from podex.main import create_app
-from podex.middleware import REQUEST_ID_HEADER
 
 
 def test_not_found_returns_problem_details(client: TestClient) -> None:

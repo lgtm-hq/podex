@@ -23,11 +23,12 @@ What the SDK sends, and how credentials are kept out of it:
   carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
   raw query, which carries provider API keys, so it is in the scrubber
   denylist.
-- Errors whose class sets ``reportable = False`` are not sent, nor is the
-  handled ``502`` raised directly from one: they are caller-triggerable
-  rejections, already logged, and reporting them would let any caller spend
-  the reporting quota. Any other error is sent, even if such a rejection is
-  in its exception chain.
+- The provider's rejection of a bad sign-in code, and the callback's handled
+  ``502`` for it, are not sent: they are caller-triggerable, already logged,
+  and reporting them would let any caller spend the reporting quota. They
+  are recognised by two dedicated exception types, each constructible in
+  exactly one place. Any other error is sent, even if the rejection is in
+  its exception chain.
 """
 
 import re
@@ -36,10 +37,11 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event, Hint
-from starlette.exceptions import HTTPException
 
 from podex import __version__
+from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import Settings
+from podex.services.workos_auth import WorkOSInvalidCodeError
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _REDACTED = "[redacted-email]"
@@ -53,10 +55,6 @@ REPORTED_REQUEST_HEADERS = frozenset(
 The request id is not taken from the raw ``X-Request-ID`` header: the
 request-context middleware validates it and sets the ``request_id`` tag.
 """
-
-_REPORTABLE_ATTRIBUTE = "reportable"
-# Status of the HTTPException a handler raises from an expected rejection.
-_HANDLED_REJECTION_STATUS = 502
 
 
 # Keys the SDK's scrubber filters in addition to its defaults, wherever they
@@ -124,40 +122,34 @@ def _minimise_request(request: dict[str, object]) -> None:
         request.pop("headers", None)
 
 
-def _is_expected_rejection(error: BaseException) -> bool:
-    """Return whether ``error``'s class opts out with ``reportable = False``."""
-    return getattr(error, _REPORTABLE_ATTRIBUTE, True) is False
-
-
 def _is_unreported(hint: Hint) -> bool:
-    """Return whether the reported exception is an expected rejection.
+    """Return whether the reported exception is the expected bad-code rejection.
 
-    Only two shapes are dropped: the rejection itself, and the handled
-    ``502`` ``HTTPException`` raised *from* it (``raise ... from error``), as
-    the sign-in callback does. Anything else is reported, even when a
-    rejection sits in its ``__cause__``/``__context__`` chain: an error
-    raised while handling a rejection (a failing logger, a database error,
-    a bug) is a real server error, and a caller must not be able to hide it
-    by first sending a bad code.
+    Only two exception types, each constructible in exactly one place, are
+    dropped: :class:`WorkOSInvalidCodeError` (raised only by the WorkOS
+    exchange client for the provider's ``invalid_grant`` answer) and
+    :class:`RejectedSignInCodeError` (the 502 raised only by the sign-in
+    callback, explicitly from that rejection). Neither can be subclassed, so
+    ``isinstance`` matches exactly those types. Anything else is reported,
+    including any other exception whose cause or context holds the
+    rejection: a real server error raised while handling it must not be
+    hidden, and a caller cannot create a dropped type by sending a bad code.
 
     Args:
         hint: The SDK hint, carrying ``exc_info`` for exception events.
 
     Returns:
-        bool: True when the event is for an expected rejection only.
+        bool: True when the event is for the expected rejection only.
     """
     exc_info = hint.get("exc_info")
     if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
         return False
     error = exc_info[1]
-    if _is_expected_rejection(error):
+    if isinstance(error, WorkOSInvalidCodeError):
         return True
-    cause = error.__cause__
-    return (
-        isinstance(error, HTTPException)
-        and error.status_code == _HANDLED_REJECTION_STATUS
-        and cause is not None
-        and _is_expected_rejection(cause)
+    return isinstance(error, RejectedSignInCodeError) and isinstance(
+        error.__cause__,
+        WorkOSInvalidCodeError,
     )
 
 

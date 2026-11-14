@@ -3,6 +3,10 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from podex.api.v2.auth_rejection import (
+    RejectedSignInCodeError,
+    render_rejected_sign_in_code,
+)
 from podex.api.v2.errors import install_exception_handlers
 from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
@@ -35,6 +39,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.metrics = metrics
 
     install_exception_handlers(application)
+    # A rejected sign-in code renders as the generic 502 but stays a
+    # dedicated type, so it is never reported as a server error.
+    application.add_exception_handler(
+        RejectedSignInCodeError,
+        render_rejected_sign_in_code,
+    )
 
     # Middleware is applied in reverse registration order (last added runs
     # outermost). Register the rate limiter first so CORS wraps it and still

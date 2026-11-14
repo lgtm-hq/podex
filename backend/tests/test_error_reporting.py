@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from podex.api.deps import get_app_settings
 from podex.config import BillingSettings, Settings
 from tests.conftest import (
-    CapturingSentryTransport,
+    SentryEnvelopeRecorder,
     create_reporting_app,
     enable_ops,
 )
@@ -49,7 +49,7 @@ def _boom(**_kwargs: object) -> object:
 @pytest.fixture(name="reporting_client")
 def reporting_client_fixture(
     db_session: Session,
-    sentry_transport: CapturingSentryTransport,
+    sentry_transport: SentryEnvelopeRecorder,
 ) -> Iterator[TestClient]:
     """Return a client for an app that reports errors to memory.
 
@@ -62,7 +62,7 @@ def reporting_client_fixture(
         yield client
 
 
-def _only_event(transport: CapturingSentryTransport) -> dict[str, object]:
+def _only_event(transport: SentryEnvelopeRecorder) -> dict[str, object]:
     """Return the single captured error event."""
     events = transport.events()
     assert_that(events).is_length(1)
@@ -88,7 +88,7 @@ def _assert_reported_headers(event: dict[str, object], *extra: str) -> None:
 
 def test_ops_failure_report_omits_ops_key_cookie_and_peer(
     reporting_client: TestClient,
-    sentry_transport: CapturingSentryTransport,
+    sentry_transport: SentryEnvelopeRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unhandled error on an ops route reports no credential header."""
@@ -107,6 +107,7 @@ def test_ops_failure_report_omits_ops_key_cookie_and_peer(
     )
 
     assert_that(response.status_code).is_equal_to(500)
+    assert_that(response.headers["X-Request-ID"]).is_equal_to(_REQUEST_ID)
     event = _only_event(sentry_transport)
     _assert_reported_headers(event)
     wire = sentry_transport.serialized()
@@ -117,7 +118,7 @@ def test_ops_failure_report_omits_ops_key_cookie_and_peer(
 
 def test_webhook_failure_report_omits_signature_and_body(
     reporting_client: TestClient,
-    sentry_transport: CapturingSentryTransport,
+    sentry_transport: SentryEnvelopeRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """An unhandled error on a verified webhook reports no signature or body."""
@@ -159,7 +160,7 @@ def test_webhook_failure_report_omits_signature_and_body(
 
 def test_report_uses_the_validated_request_id(
     reporting_client: TestClient,
-    sentry_transport: CapturingSentryTransport,
+    sentry_transport: SentryEnvelopeRecorder,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A malformed client request id never reaches a report."""
