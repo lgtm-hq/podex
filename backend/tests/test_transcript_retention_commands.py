@@ -6,6 +6,7 @@ from typing import Any
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
+from podex.config import RetentionSettings
 from podex.models import (
     Episode,
     Podcast,
@@ -102,6 +103,7 @@ def test_purge_transcript_if_eligible_removes_raw_fields(
         db=db_session,
         transcript=transcript,
         now=now,
+        retention=RetentionSettings(purge_enabled=True),
     )
     db_session.commit()
 
@@ -185,6 +187,7 @@ def test_purge_transcript_if_eligible_deletes_external_raw_artifact(
         transcript=transcript,
         artifact_store=store,
         now=now,
+        retention=RetentionSettings(purge_enabled=True),
     )
     db_session.commit()
 

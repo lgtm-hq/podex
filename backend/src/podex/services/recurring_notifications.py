@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from podex.config import get_settings
 from podex.models import (
     AccountPreference,
     AccountUser,
@@ -22,6 +23,7 @@ from podex.services.scheduled_work import (
 from podex.services.scheduler import ScheduledTaskKind
 from podex.services.transcript_retention import TranscriptRetentionPolicy
 from podex.services.transcript_retention_commands import (
+    PURGE_DISABLED_REASON,
     evaluate_transcript_retention,
 )
 
@@ -44,6 +46,7 @@ class RetentionWorkRunData:
 
     work_key: str
     transcripts_evaluated: int
+    purge_blocker: str | None
 
 
 def reconcile_notification_schedules(
@@ -164,6 +167,7 @@ def run_due_retention_work(
         Execution summaries for the work items that ran.
     """
     effective_policy = policy or TranscriptRetentionPolicy()
+    purge_enabled = get_settings().retention.purge_enabled
     effective_now = now or datetime.now(UTC)
     pending = _pending_items(
         db=db,
@@ -191,6 +195,11 @@ def run_due_retention_work(
                 policy=effective_policy,
                 now=effective_now,
             )
+        if not purge_enabled:
+            item.metadata_json = {
+                **(item.metadata_json or {}),
+                "purge_blocker": PURGE_DISABLED_REASON,
+            }
         item.status = ScheduledWorkStatus.COMPLETED.value
         item.completed_at = effective_now
         db.flush()
@@ -198,6 +207,7 @@ def run_due_retention_work(
             RetentionWorkRunData(
                 work_key=item.work_key,
                 transcripts_evaluated=len(transcripts),
+                purge_blocker=None if purge_enabled else PURGE_DISABLED_REASON,
             ),
         )
     return results

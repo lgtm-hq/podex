@@ -6,6 +6,7 @@ from hashlib import sha256
 
 from sqlalchemy.orm import Session
 
+from podex.config import RetentionSettings, get_settings
 from podex.models import (
     DerivativeGenerationRun,
     Transcript,
@@ -22,6 +23,16 @@ from podex.services.transcript_retention import (
     TranscriptRetentionService,
     TranscriptRetentionState,
 )
+
+PURGE_DISABLED_REASON = "Transcript purge is disabled by PODEX_RETENTION__PURGE_ENABLED"
+
+
+def require_transcript_purge_enabled(
+    retention: RetentionSettings | None = None,
+) -> None:
+    """Refuse transcript deletion unless the environment explicitly opts in."""
+    if not (retention or get_settings().retention).purge_enabled:
+        raise ValueError(PURGE_DISABLED_REASON)
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +180,7 @@ def purge_transcript_if_eligible(
     transcript: Transcript,
     artifact_store: TranscriptArtifactStore | None = None,
     now: datetime | None = None,
+    retention: RetentionSettings | None = None,
 ) -> bool:
     """Purge raw transcript fields when the latest evaluation allows it.
 
@@ -177,10 +189,12 @@ def purge_transcript_if_eligible(
         transcript: Transcript to purge.
         artifact_store: Private object adapter used to delete raw artifacts.
         now: Deterministic purge timestamp.
+        retention: Environment purge authorization; defaults to runtime settings.
 
     Returns:
         ``True`` when raw transcript fields were purged.
     """
+    require_transcript_purge_enabled(retention)
     if transcript.purge_eligible_at is None or transcript.purged_at is not None:
         return False
 
