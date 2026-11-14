@@ -152,8 +152,8 @@ def run_due_episode_discovery_work(
 
     Inactive podcasts produce a terminal ``skipped`` item with a reason and
     completion timestamp, without an ingestion run or provider invocation.
-    The podcast row lock serializes the eligibility check with status updates
-    until the runner commits. Discovery already in flight can finish.
+    Eligibility is re-read immediately before the provider is called, without
+    a row lock. Discovery already in flight when a podcast is paused can finish.
 
     Args:
         db: Database session.
@@ -198,10 +198,13 @@ def run_due_episode_discovery_work(
             _mark_work_failed(work_item=work_item, error_message="Missing podcast_id")
             continue
 
+        # Re-read the podcast so a pause since planning is seen. No row lock is
+        # taken: it would be held across the provider's network calls and block
+        # ops edits and follows. A pause that lands during a provider call lets
+        # that one run finish; the next reconcile disables the schedule.
         podcast = (
             db.query(Podcast)
             .filter(Podcast.id == podcast_id)
-            .with_for_update()
             .populate_existing()
             .first()
         )
@@ -280,7 +283,9 @@ def _disable_inactive_discovery_schedules(
 ) -> None:
     """Disable orphaned/inactive discovery schedules and discard pending work."""
     disabled_ids: list[int] = []
-    for schedule in db.query(PipelineSchedule).all():
+    for schedule in db.query(PipelineSchedule).filter(
+        PipelineSchedule.enabled.is_(True),
+    ):
         metadata = schedule.metadata_json or {}
         if not _is_discovery_metadata(metadata=metadata):
             continue
