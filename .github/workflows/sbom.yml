@@ -30,7 +30,7 @@ jobs:
       target: .
       target-type: dir
       sbom-format: cyclonedx-json
-      artifact-name: podex-sbom
+      artifact-name: podex-sbom.cdx.json
       scan-vulnerabilities: true
       create-attestation: true
       egress-policy: block
@@ -64,7 +64,7 @@ jobs:
       # write: attach assets to the existing release
       contents: write
     with:
-      artifact-name: podex-sbom
+      artifact-name: podex-sbom.cdx.json
       release-tag: ${{ github.ref_name }}
       egress-policy: block
       egress-preset: github-tooling

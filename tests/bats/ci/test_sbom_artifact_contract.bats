@@ -6,7 +6,7 @@
 	local producer consumer
 	producer=$(yq -r '.jobs.sbom.with."artifact-name"' "${workflow}")
 	consumer=$(yq -r '.jobs."sbom-release-upload".with."artifact-name"' "${workflow}")
-	[ "${producer}" = "podex-sbom" ]
+	[ "${producer}" = "podex-sbom.cdx.json" ]
 	[ "${consumer}" = "${producer}" ]
 	run yq -r '.jobs."sbom-release-upload".with."release-tag"' "${workflow}"
 	[ "${status}" -eq 0 ]
