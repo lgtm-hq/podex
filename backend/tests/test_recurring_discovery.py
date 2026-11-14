@@ -156,3 +156,37 @@ def test_failed_tick_leaves_loadable_run(db_session: Session) -> None:
     statuses = _load_run_statuses(db_session)
     assert_that(statuses).is_length(1)
     assert_that(list(IngestionRunStatus)).contains(statuses[0])
+
+
+def test_runner_exception_records_loadable_failed_run(db_session: Session) -> None:
+    """A runner that raises leaves a failed run that a fresh session can load."""
+    _plan_discovery_for_active_podcast(db_session)
+
+    def raising_runner(_db: Session, _podcast: Podcast) -> DiscoveryResult:
+        raise RuntimeError("provider unavailable")
+
+    run_due_episode_discovery_work(db=db_session, runner=raising_runner)
+    db_session.commit()
+
+    run = db_session.query(IngestionRun).one()
+    assert_that(run.error_summary).is_equal_to("provider unavailable")
+    assert_that(_load_run_statuses(db_session)).is_equal_to(
+        [IngestionRunStatus.FAILED],
+    )
+
+
+def test_reported_errors_record_loadable_failed_run(db_session: Session) -> None:
+    """A result that reports errors leaves a failed run that can be loaded."""
+    _plan_discovery_for_active_podcast(db_session)
+
+    def failing_runner(_db: Session, _podcast: Podcast) -> DiscoveryResult:
+        return DiscoveryResult(errors=["feed timed out", "bad episode"])
+
+    run_due_episode_discovery_work(db=db_session, runner=failing_runner)
+    db_session.commit()
+
+    run = db_session.query(IngestionRun).one()
+    assert_that(run.error_summary).is_equal_to("feed timed out; bad episode")
+    assert_that(_load_run_statuses(db_session)).is_equal_to(
+        [IngestionRunStatus.FAILED],
+    )
