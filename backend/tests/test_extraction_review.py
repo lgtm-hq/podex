@@ -2,6 +2,7 @@
 
 from typing import cast
 
+import pytest
 from assertpy import assert_that
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -20,6 +21,7 @@ from podex.models import (
 )
 from podex.models.media import MediaType
 from podex.services.extraction_review import (
+    PersistedExtractionReviewData,
     _find_segment_context,
     persist_extracted_candidates,
 )
@@ -486,3 +488,66 @@ def test_persist_caps_candidates_per_episode(db_session: Session) -> None:
 
     assert_that(result.candidates_created).is_equal_to(3)
     assert_that(result.skipped_over_limit).is_equal_to(2)
+
+
+@pytest.mark.parametrize(
+    ("follow_up", "expected"),
+    [
+        pytest.param(
+            ExtractedMedia(title="Gamma", media_type=MediaType.BOOK, confidence=0.1),
+            PersistedExtractionReviewData(
+                candidates_created=1,
+                review_items_created=1,
+                skipped_low_confidence=1,
+                skipped_over_limit=1,
+            ),
+            id="low-confidence",
+        ),
+        pytest.param(
+            ExtractedMedia(title="Dune", media_type=MediaType.BOOK, confidence=0.9),
+            PersistedExtractionReviewData(
+                candidates_created=1,
+                review_items_created=1,
+                skipped_existing_mentions=1,
+                skipped_over_limit=1,
+            ),
+            id="existing-mention",
+        ),
+        pytest.param(
+            ExtractedMedia(title="Alpha", media_type=MediaType.BOOK, confidence=0.95),
+            PersistedExtractionReviewData(
+                candidates_created=1,
+                candidates_updated=1,
+                review_items_created=1,
+                skipped_over_limit=1,
+            ),
+            id="update-existing-candidate",
+        ),
+    ],
+)
+def test_over_limit_count_survives_later_items(
+    db_session: Session,
+    follow_up: ExtractedMedia,
+    expected: PersistedExtractionReviewData,
+) -> None:
+    """Items processed after a capped item keep the over-limit count."""
+    graph = seed_catalog_graph(db_session)
+    episode = cast("Episode", db_session.get(Episode, graph.episode_id))
+    items = [
+        ExtractedMedia(title="Alpha", media_type=MediaType.BOOK, confidence=0.9),
+        ExtractedMedia(title="Beta", media_type=MediaType.BOOK, confidence=0.9),
+        follow_up,
+    ]
+
+    result = persist_extracted_candidates(
+        db=db_session,
+        episode=episode,
+        items=items,
+        segments=None,
+        min_confidence=0.5,
+        extraction_source="llm",
+        max_candidates_per_episode=1,
+    )
+    db_session.commit()
+
+    assert_that(result).is_equal_to(expected)
