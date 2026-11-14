@@ -41,7 +41,7 @@
     "fast-uri": "4.2.3",
     "source-map-js": "1.2.2",
     "glob": "14.0.4",
-    "minimatch": "11.0.5"
+    "minimatch": "11.0.7"
   },
   "patchedDependencies": {
     "@redocly/openapi-core@1.34.21": "patches/@redocly%2Fopenapi-core@1.34.21.patch"
