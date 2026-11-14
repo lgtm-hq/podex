@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.17] - 2026-11-14
+
+### Changed
+
+- **deps-dev**: update dependency lintro to 0.180.30 (patch) (#756) (25cabcd)
+
+### Fixed
+
+- **security**: handle non-ASCII auth inputs (#757) (a4942cd)
+
 ## [0.41.16] - 2026-11-14
 
 ### Changed
