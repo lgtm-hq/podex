@@ -10,7 +10,7 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query, Request, status
 from sqlalchemy.exc import IntegrityError
 
-from podex.api.deps import AppSettings, DbSession
+from podex.api.deps import AppSettings, DbSession, require_ops_access
 from podex.models import (
     AuditAction,
     PodcastStatus,
@@ -75,16 +75,11 @@ router = APIRouter(prefix="/ops", tags=["ops"])
 
 def _require_ops_access(*, request: Request, settings: AppSettings) -> None:
     """Reject the request unless the configured ops key is presented."""
-    if not settings.ops_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Ops console is not configured",
-        )
-    if request.headers.get("X-Ops-Key") != settings.ops_api_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ops authentication required",
-        )
+    require_ops_access(
+        request=request,
+        settings=settings,
+        unconfigured_detail="Ops console is not configured",
+    )
 
 
 def _to_retention_preview_read(
