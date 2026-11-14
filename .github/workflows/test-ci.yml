@@ -118,6 +118,79 @@ jobs:
           PODEX_DATABASE__URL: postgresql+psycopg://podex@localhost:5432/podex
         run: bash .github/scripts/postgres-migration-replay.sh
 
+  # PostgreSQL application lane (#724): runs every test marked `postgres`
+  # (service, API and concurrency tests) against the same pinned pgvector
+  # image as the replay above, each in its own migrated database. The script
+  # passes --require-postgres, so a missing database fails the job instead of
+  # skipping. Reports `🐘 Postgres Application Tests` on every PR and push
+  # (no path filter, so it never leaves the all-checks gate pending). No
+  # coverage: the 85% floor stays on test-coverage alone. Direct job for the
+  # same reason as the replay: reusable-test-python has no service support.
+  test-postgres-application:
+    name: 🐘 Postgres Application Tests
+    runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
+    if: >-
+      github.event_name != 'pull_request'
+      || github.event.pull_request.draft == false
+    permissions:
+      contents: read
+    services:
+      postgres:
+        # Same digest as test-postgres-migrations; migration 0010 needs
+        # pgvector.
+        # yamllint disable-line rule:line-length
+        image: pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
+        env:
+          # Superuser by default: the fixture creates a database per test and
+          # installs pgvector, which needs a superuser on this image.
+          POSTGRES_USER: podex
+          # Trust auth: throwaway CI service on localhost only; avoids a
+          # placeholder password that secret scanners flag.
+          POSTGRES_HOST_AUTH_METHOD: trust
+          POSTGRES_DB: podex
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U podex -d podex"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - name: Harden runner
+        # Same allowlist as test-postgres-migrations: the service image is
+        # pulled before any step runs, so docker.io stays blocked; the tests
+        # reach the database on localhost only.
+        # Pinned to SHA for supply chain security
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            objects.githubusercontent.com:443
+            raw.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            github-releases.githubusercontent.com:443
+            pypi.org:443
+            files.pythonhosted.org:443
+      - name: Checkout repository
+        # Pinned to SHA for supply chain security
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install uv
+        # Pinned to SHA for supply chain security
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          # Exact uv release, kept equal to test-postgres-migrations.
+          version: '0.13.8'
+          enable-cache: false
+      - name: Run PostgreSQL application tests
+        env:
+          PODEX_DATABASE__URL: postgresql+psycopg://podex@localhost:5432/podex
+        run: bash .github/scripts/postgres-application-tests.sh
+
   # Coverage publishing (#200 / epic #114): no separate coverage.yml calling
   # reusable-coverage.yml. test-coverage already collects coverage, enforces the
   # 85% threshold, uploads artifacts, and publishes the PR summary via
@@ -174,12 +247,18 @@ jobs:
       pull-requests: write
 
   # Combined test gate (#550): one verdict over every test job, so a failure
-  # in the Python matrix, coverage, Postgres replay or shell tests fails the
-  # required context. Reads needs.*.result directly. Skipped jobs (draft PRs)
-  # pass.
+  # in the Python matrix, coverage, Postgres replay, Postgres application
+  # tests or shell tests fails the required context. Reads needs.*.result
+  # directly. Skipped jobs pass (draft PRs skip them), except
+  # test-postgres-application, whose skip passes on draft PRs only.
   test-gate:
     name: 🚦 Test Gate
-    needs: [test, test-coverage, test-postgres-migrations, test-shell]
+    needs:
+      - test
+      - test-coverage
+      - test-postgres-migrations
+      - test-postgres-application
+      - test-shell
     if: always() && !cancelled()
     runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
     # No token scopes needed: podex is public, so the sparse checkout below
@@ -199,9 +278,14 @@ jobs:
       - name: Evaluate upstream results
         id: gate
         env:
+          # The script fails a skipped test-postgres-application outside
+          # draft PRs (ready PRs, merge queue, pushes to main); other jobs
+          # are judged as before.
+          IS_DRAFT: ${{ github.event.pull_request.draft == true }}
           TEST_RESULT: ${{ needs.test.result }}
           COVERAGE_RESULT: ${{ needs.test-coverage.result }}
           MIGRATIONS_RESULT: ${{ needs.test-postgres-migrations.result }}
+          POSTGRES_RESULT: ${{ needs.test-postgres-application.result }}
           SHELL_RESULT: ${{ needs.test-shell.result }}
         run: bash .github/scripts/evaluate-test-gate.sh
 
@@ -229,6 +313,7 @@ jobs:
     needs:
       - test
       - test-postgres-migrations
+      - test-postgres-application
       - test-coverage
       - test-shell
       - test-gate
