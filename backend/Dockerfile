@@ -103,13 +103,16 @@ EXPOSE 8000
 # This assumes port 8000 from the default CMD. A deployment that changes the
 # listening port must also override the healthcheck to probe that port.
 # The scheduler has no HTTP listener, so the probe decides the container's role
-# first: PODEX_PROCESS_ROLE=api|scheduler when set, otherwise the command line
-# of PID 1 alone, unwrapping tini/docker-init/dumb-init, this entrypoint before
-# it execs, env and `sh -c` scripts (`python [options] -m podex.scheduler_runner`
-# is the scheduler). Other processes are never read, so a scheduler exec'd into
-# an API container or one in a shared PID namespace keeps the HTTP check. The
-# scheduler role does not prove scheduler progress. Set the role explicitly
-# where PID 1 is not the container's command (e.g. --pid=host).
+# first: PODEX_PROCESS_ROLE=api|scheduler when set, otherwise PID 1's argument
+# vector alone, with a closed rule that never interprets shell. After at most
+# four launchers (this entrypoint, tini/docker-init/dumb-init with their
+# documented options, `env NAME=value ...`), only these forms are the scheduler:
+#   python [-u|-B|-O|-OO ...] -m podex.scheduler_runner [args]
+#   sh|bash|dash|ash -c '[exec] python [-u|-B|-O|-OO ...] -m podex.scheduler_runner'
+# with no shell metacharacter in the script. Everything else, including compound
+# scripts, script files, uv run and shared PID namespaces, gets the HTTP check;
+# such scheduler deployments must set PODEX_PROCESS_ROLE=scheduler. Other
+# processes are never read. The scheduler role does not prove its progress.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --start-interval=5s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
 
