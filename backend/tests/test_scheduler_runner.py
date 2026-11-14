@@ -1,7 +1,8 @@
 """Tests for the scheduler runner, recurring work, and operational alerts."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+import pytest
 from assertpy import assert_that
 from sqlalchemy.orm import Session
 
@@ -11,12 +12,15 @@ from podex.models import (
     AccountUser,
     Episode,
     PipelineSchedule,
+    Podcast,
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
     Transcript,
 )
-from podex.scheduler_runner import run_tick
+from podex.scheduler_runner import TickSummaryData, run_tick
 from podex.services.account_follows import follow_podcast
+from podex.services.discovery import DiscoveryResult
+from podex.services.discovery_orchestrator import DiscoveryOrchestrator
 from podex.services.operational_alerts import (
     OperationalAlertThresholdsData,
     evaluate_operational_alerts,
@@ -175,4 +179,153 @@ def test_operational_alerts_fire_on_thresholds(db_session: Session) -> None:
     assert_that([alert.key for alert in firing]).contains(
         "review_backlog",
         "delivery_backlog",
+    )
+
+
+@pytest.mark.parametrize(
+    ("tick_minutes", "due_minutes"),
+    [((0, 360, 720), (0, 360, 720)), ((0, 737, 1080), (0, 720, 1080))],
+    ids=["successive-boundaries", "late-tick-coalesces-missed-intervals"],
+)
+def test_tick_runs_successive_cadences(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    tick_minutes: tuple[int, ...],
+    due_minutes: tuple[int, ...],
+) -> None:
+    """Three clocked ticks execute each kind once per boundary, even when late."""
+    graph = seed_catalog_graph(db_session)
+    user = AccountUser(email="recurring@example.com")
+    db_session.add(user)
+    db_session.flush()
+    db_session.add(AccountPreference(user_id=user.id))
+    follow_podcast(db=db_session, user_id=user.id, podcast_id=graph.podcast_id)
+    create_podcast_alert_rule(
+        db=db_session,
+        user_id=user.id,
+        podcast_id=graph.podcast_id,
+    )
+    db_session.add(
+        Transcript(episode_id=graph.episode_id, provider="podscripts", raw_text="raw"),
+    )
+    db_session.query(Podcast).filter(
+        Podcast.id == graph.podcast_id
+    ).one().status = "active"
+    db_session.commit()
+    discoveries: list[int] = []
+
+    def discover(
+        _self: DiscoveryOrchestrator,
+        *,
+        podcast: Podcast,
+    ) -> DiscoveryResult:
+        """Add a new episode at the discovery boundary without external I/O."""
+        discoveries.append(podcast.id)
+        db_session.add(
+            Episode(
+                podcast_id=podcast.id,
+                title=f"Recurring episode {len(discoveries)}",
+                episode_number=len(discoveries) + 1,
+            ),
+        )
+        db_session.flush()
+        return DiscoveryResult(new_episodes=1, total_discovered=1)
+
+    monkeypatch.setattr(DiscoveryOrchestrator, "discover_for_podcast", discover)
+    settings = Settings(
+        scheduler_digest_interval_minutes=360,
+        scheduler_retention_interval_minutes=360,
+    )
+    sender = RecordingDigestSender()
+
+    for tick_minute, due_minute in zip(tick_minutes, due_minutes, strict=True):
+        tick_at = _NOW + timedelta(minutes=tick_minute)
+        summary = run_tick(
+            db=db_session,
+            settings=settings,
+            digest_sender=sender,
+            now=tick_at,
+        )
+        assert_that(summary.planned).is_equal_to(3)
+        assert_that(summary.discovery_runs).is_equal_to(1)
+        assert_that(summary.digest_runs).is_equal_to(1)
+        assert_that(summary.retention_runs).is_equal_to(1)
+        items = (
+            db_session.query(ScheduledWorkItemModel)
+            .filter(
+                ScheduledWorkItemModel.due_at
+                == (_NOW + timedelta(minutes=due_minute)).replace(tzinfo=None),
+            )
+            .all()
+        )
+        assert_that(items).is_length(3)
+        assert_that([item.task_kind for item in items]).contains_only(
+            "ingestion",
+            "digest",
+            "retention",
+        )
+        assert_that({item.status for item in items}).is_equal_to({"completed"})
+
+        assert_that(
+            run_tick(
+                db=db_session,
+                settings=settings,
+                digest_sender=sender,
+                now=tick_at,
+            ),
+        ).is_equal_to(
+            TickSummaryData(
+                planned=0, discovery_runs=0, digest_runs=0, retention_runs=0
+            ),
+        )
+
+    items = db_session.query(ScheduledWorkItemModel).all()
+    assert_that(items).is_length(9)
+    assert_that({item.work_key for item in items}).is_length(9)
+    assert_that(discoveries).is_equal_to([graph.podcast_id] * 3)
+    assert_that(sender.sent).is_equal_to([user.email] * 3)
+
+
+def test_tick_respects_changed_intervals(db_session: Session) -> None:
+    """Runner reconciliation applies shorter and longer notification cadences."""
+    settings = Settings(
+        scheduler_digest_interval_minutes=60,
+        scheduler_retention_interval_minutes=60,
+    )
+    sender = RecordingDigestSender()
+    first = run_tick(db=db_session, settings=settings, digest_sender=sender, now=_NOW)
+    assert_that(first.planned).is_equal_to(2)
+    changed_settings = Settings(
+        scheduler_digest_interval_minutes=30,
+        scheduler_retention_interval_minutes=120,
+    )
+    changed = run_tick(
+        db=db_session,
+        settings=changed_settings,
+        digest_sender=sender,
+        now=_NOW + timedelta(minutes=15),
+    )
+    assert_that(changed.planned).is_equal_to(0)
+
+    shorter = run_tick(
+        db=db_session,
+        settings=changed_settings,
+        digest_sender=sender,
+        now=_NOW + timedelta(minutes=30),
+    )
+    assert_that(
+        (shorter.planned, shorter.digest_runs, shorter.retention_runs)
+    ).is_equal_to(
+        (1, 1, 0),
+    )
+    longer = run_tick(
+        db=db_session,
+        settings=changed_settings,
+        digest_sender=sender,
+        now=_NOW + timedelta(minutes=120),
+    )
+    assert_that(
+        (longer.planned, longer.digest_runs, longer.retention_runs)
+    ).is_equal_to(
+        (2, 1, 1),
     )

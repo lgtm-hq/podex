@@ -93,3 +93,26 @@ def test_run_due_episode_discovery_work_uses_runner_and_ingestion_run(
     assert_that(work_item.status).is_equal_to("completed")
     assert_that(work_item.ingestion_run_id).is_equal_to(run.id)
     assert_that(run.status).is_equal_to("completed")
+
+
+def test_reconcile_preserves_next_due_boundary(db_session: Session) -> None:
+    """Reconciliation keeps the next discovery boundary available to plan."""
+    db_session.add(Podcast(name="Recurring", slug="recurring", status="active"))
+    db_session.commit()
+
+    first = plan_recurring_discovery_work(
+        db=db_session,
+        interval_minutes=60,
+        now=datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
+    )
+    db_session.commit()
+    second = plan_recurring_discovery_work(
+        db=db_session,
+        interval_minutes=60,
+        now=datetime(2026, 5, 10, 13, 0, tzinfo=UTC),
+    )
+
+    assert_that(first).is_length(1)
+    assert_that(second).is_length(1)
+    assert_that(second[0].work_key).is_not_equal_to(first[0].work_key)
+    assert_that(db_session.query(ScheduledWorkItemModel).count()).is_equal_to(2)

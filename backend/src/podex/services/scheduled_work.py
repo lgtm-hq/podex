@@ -73,6 +73,16 @@ def upsert_pipeline_schedule(
 ) -> PipelineScheduleSummaryData:
     """Create or update a pipeline schedule.
 
+    Unchanged cadence and enablement preserve the outstanding due boundary,
+    including overdue work. ``start_at`` seeds a new schedule;
+    it is not a reset command on subsequent reconciliations. Metadata updates
+    likewise do not move the boundary.
+
+    Cadence changes and enablement transitions recompute the first boundary
+    strictly after ``now``, anchored at the last planned boundary when available,
+    otherwise at ``start_at`` or the existing due boundary. Disabled schedules
+    produce no work; re-enabling skips disabled intervals without backfilling.
+
     Args:
         db: Database session.
         payload: Desired schedule state.
@@ -92,13 +102,17 @@ def upsert_pipeline_schedule(
         schedule = PipelineSchedule(schedule_key=payload.schedule_key)
         db.add(schedule)
 
+    timing_changed = (
+        schedule.interval_minutes != payload.interval_minutes
+        or schedule.enabled != payload.enabled
+    )
     schedule.task_kind = payload.task_kind.value
     schedule.interval_minutes = payload.interval_minutes
     schedule.enabled = payload.enabled
     schedule.metadata_json = payload.metadata_json
     if schedule.last_scheduled_at is None and schedule.next_due_at is None:
         schedule.next_due_at = payload.start_at or effective_now
-    else:
+    elif timing_changed or schedule.next_due_at is None:
         schedule.next_due_at = _next_due_after(
             start_at=schedule.last_scheduled_at
             or payload.start_at
