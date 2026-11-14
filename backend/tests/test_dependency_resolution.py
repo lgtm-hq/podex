@@ -4,7 +4,6 @@ import tomllib
 from pathlib import Path
 
 from assertpy import assert_that
-from packaging.version import Version
 
 
 def test_supported_python_lock_has_no_vulnerable_soupsieve() -> None:
@@ -19,7 +18,8 @@ def test_supported_python_lock_has_no_vulnerable_soupsieve() -> None:
     assert_that(soupsieve_packages).is_not_empty()
     for package in soupsieve_packages:
         # GHSA-mmhr-3c5m-f64f affects <4.0.0; GHSA-6655-6qjp-jx7x affects <=2.10.
-        assert_that(Version(package["version"]) >= Version("4.0.0")).described_as(
+        major_version = int(package["version"].split(".")[0])
+        assert_that(major_version >= 4).described_as(
             f"Vulnerable Soup Sieve lock branch: {package['version']} "
             f"markers={package.get('resolution-markers')}",
         ).is_true()
