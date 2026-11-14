@@ -1,7 +1,10 @@
 """Integration tests for request-context logging and rate-limit middleware."""
 
+import asyncio
 import logging
 from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Any
 
 import fakeredis
 import pytest
@@ -285,3 +288,166 @@ def test_access_log_records_unrouted_path_without_query(
     assert_that(record.getMessage()).does_not_contain("query-code-123")
     assert_that(record.getMessage()).does_not_contain("query-state-456")
     assert_that(record.getMessage()).does_not_contain("?")
+
+
+_RAW_CLIENT = ("203.0.113.7", 51234)
+
+
+@dataclass
+class _RawResponse:
+    """What a raw ASGI call sent back to the server."""
+
+    status: int | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+
+
+def _raw_asgi_request(
+    *,
+    method: str,
+    path: str,
+    query_string: bytes,
+    headers: tuple[tuple[str, str], ...] = (),
+    client: tuple[str, int] | None = _RAW_CLIENT,
+) -> _RawResponse:
+    """Call the application directly with a hand-built ASGI scope.
+
+    ``TestClient`` normalises the query string, so a non-UTF-8 byte only
+    reaches the application through a raw scope, as a server would pass it.
+
+    Args:
+        method: HTTP method.
+        path: Decoded request path.
+        query_string: Raw query bytes exactly as received.
+        headers: Request headers.
+        client: The peer address the server resolved, if any.
+
+    Returns:
+        _RawResponse: The response status and headers sent by the app.
+    """
+    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=True)))
+    scope: dict[str, Any] = {
+        "type": "http",
+        "asgi": {"version": "3.0"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode("ascii"),
+        "root_path": "",
+        "query_string": query_string,
+        "headers": [
+            (name.encode("latin-1"), value.encode("latin-1"))
+            for name, value in (("host", "testserver"), *headers)
+        ],
+        "client": client,
+        "server": ("testserver", 80),
+    }
+    response = _RawResponse()
+
+    async def receive() -> dict[str, Any]:
+        """Deliver an empty request body."""
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(message: dict[str, Any]) -> None:
+        """Record the response start message."""
+        if message["type"] == "http.response.start":
+            response.status = message["status"]
+            response.headers = {
+                name.decode("latin-1"): value.decode("latin-1")
+                for name, value in message.get("headers", [])
+            }
+
+    asyncio.run(app(scope, receive, send))
+    return response
+
+
+_PREFLIGHT = (
+    ("origin", "http://localhost:4321"),
+    ("access-control-request-method", "GET"),
+)
+_BLOCKED_PREFLIGHT = (
+    ("origin", "https://untrusted.example"),
+    ("access-control-request-method", "GET"),
+)
+
+
+@pytest.mark.parametrize(
+    ("method", "path", "headers", "expected_status"),
+    [
+        ("GET", "/api/v2/status", (), 200),
+        ("GET", "/health", (), 200),
+        ("GET", "/api/v2/does-not-exist", (), 404),
+        ("OPTIONS", "/api/v2/status", _PREFLIGHT, 200),
+        ("OPTIONS", "/api/v2/status", _BLOCKED_PREFLIGHT, 400),
+    ],
+    ids=["route", "exempt-route", "not-found", "preflight", "blocked-preflight"],
+)
+def test_non_utf8_query_is_logged_by_path_without_failing(
+    caplog: pytest.LogCaptureFixture,
+    method: str,
+    path: str,
+    headers: tuple[tuple[str, str], ...],
+    expected_status: int,
+) -> None:
+    """A raw ``0xFF`` query byte neither breaks the middleware nor is logged."""
+    clean = _raw_asgi_request(
+        method=method, path=path, query_string=b"ok=1", headers=headers
+    )
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        response = _raw_asgi_request(
+            method=method, path=path, query_string=b"bad=\xff", headers=headers
+        )
+
+    assert_that(response.status).is_equal_to(expected_status)
+    assert_that(clean.status).is_equal_to(expected_status)
+    # Same CORS (and other) headers as for a well-formed query.
+    for name, value in clean.headers.items():
+        if name.startswith("access-control-"):
+            assert_that(response.headers).contains_entry({name: value})
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    record = records[0]
+    assert_that(record.__dict__["method"]).is_equal_to(method)
+    assert_that(record.__dict__["path"]).is_equal_to(path)
+    assert_that(record.__dict__["status_code"]).is_equal_to(expected_status)
+    assert_that(record.getMessage()).does_not_contain("bad=")
+    assert_that(record.getMessage()).does_not_contain("?")
+
+
+def test_access_log_records_client_address_and_http_version(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The access record carries the resolved peer and HTTP version only."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        _raw_asgi_request(
+            method="GET",
+            path="/api/v2/status",
+            query_string=b"code=query-code-123",
+            headers=(("cookie", "podex_session=cookie-789"),),
+        )
+
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    record = records[0]
+    assert_that(record.__dict__["client_addr"]).is_equal_to("203.0.113.7:51234")
+    assert_that(record.__dict__["http_version"]).is_equal_to("1.1")
+    message = record.getMessage()
+    assert_that(message).contains("client=203.0.113.7:51234", "http_version=1.1")
+    for leaked in ("query-code-123", "cookie-789", "podex_session"):
+        assert_that(message).does_not_contain(leaked)
+        assert_that(repr(record.__dict__)).does_not_contain(leaked)
+
+
+def test_access_log_marks_unknown_client(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A scope without a peer address is logged with a placeholder."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        _raw_asgi_request(
+            method="GET", path="/api/v2/status", query_string=b"", client=None
+        )
+
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    assert_that(records[0].__dict__["client_addr"]).is_equal_to("-")

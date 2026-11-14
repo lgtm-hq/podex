@@ -1,6 +1,7 @@
 """Tests for hosted WorkOS AuthKit sign-in."""
 
 import logging
+from collections.abc import Callable, Iterator
 from dataclasses import fields
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -16,7 +17,14 @@ from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
 from podex.api.v2 import auth as v2_auth_api
-from podex.config import AuthSettings, Settings
+from podex.config import (
+    AuthSettings,
+    ObservabilitySettings,
+    RateLimitSettings,
+    Settings,
+)
+from podex.database import get_db
+from podex.main import create_app
 from podex.models import AccountUser, UserSession
 from podex.services.workos_auth import (
     WORKOS_AUTHENTICATE_URL,
@@ -26,6 +34,7 @@ from podex.services.workos_auth import (
     build_workos_auth_client,
     upsert_workos_account_user,
 )
+from tests.conftest import CapturingSentryTransport
 
 _PROFILE = WorkOSUserData(
     workos_user_id="user_01ABC",
@@ -276,57 +285,94 @@ def _texts_reachable_from(error: BaseException) -> list[str]:
     return texts
 
 
-def test_exchange_code_transport_error_keeps_credentials_out_of_chain() -> None:
-    """A failed exchange raises an error that carries no credential."""
+def _refuse(request: httpx.Request) -> httpx.Response:
+    """Fail like an unreachable WorkOS endpoint."""
+    raise httpx.ConnectError("connection refused by api.workos.com", request=request)
+
+
+def _time_out(request: httpx.Request) -> httpx.Response:
+    """Fail like a WorkOS endpoint that stops responding."""
+    raise httpx.ReadTimeout("read timed out", request=request)
+
+
+def _reject(_request: httpx.Request) -> httpx.Response:
+    """Reject the code, echoing it back in the error body."""
+    return httpx.Response(401, json={"error": "invalid_grant", "code": _CHAIN_CODE})
+
+
+def _malformed(_request: httpx.Request) -> httpx.Response:
+    """Answer 200 with a body that is not JSON and echoes the code."""
+    return httpx.Response(200, content=f"<html>{_CHAIN_CODE}</html>".encode())
+
+
+_FAILURE_MODES = [
+    pytest.param(
+        _refuse,
+        "WorkOS authentication request failed: ConnectError",
+        id="connect-error",
+    ),
+    pytest.param(
+        _time_out,
+        "WorkOS authentication request failed: ReadTimeout",
+        id="timeout",
+    ),
+    pytest.param(_reject, "WorkOS code exchange rejected with HTTP 401", id="http-401"),
+    pytest.param(_malformed, "WorkOS response was not valid JSON", id="malformed-json"),
+]
+
+
+def _failing_workos(handler: Callable[[httpx.Request], httpx.Response]) -> object:
+    """Return a real WorkOS client whose transport answers with ``handler``."""
+    return WorkOSAuthClient(
+        client_id="client_123",
+        api_key=_CHAIN_API_KEY,
+        redirect_uri="https://app.example.com/api/v2/auth/callback",
+        transport=httpx.MockTransport(handler),
+    )
+
+
+@pytest.mark.parametrize(("handler", "expected_message"), _FAILURE_MODES)
+def test_exchange_code_failure_keeps_credentials_out_of_chain(
+    handler: Callable[[httpx.Request], httpx.Response],
+    expected_message: str,
+) -> None:
+    """A failed exchange raises an allowlisted message with no credential."""
     sent: list[httpx.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def recording_handler(request: httpx.Request) -> httpx.Response:
         sent.append(request)
-        raise httpx.ConnectError("connection refused", request=request)
+        return handler(request)
 
     workos = WorkOSAuthClient(
         client_id="client_123",
         api_key=_CHAIN_API_KEY,
         redirect_uri="https://app.example.com/api/v2/auth/callback",
-        transport=httpx.MockTransport(handler),
+        transport=httpx.MockTransport(recording_handler),
     )
 
     with pytest.raises(WorkOSAuthError) as caught:
         workos.exchange_code(code=_CHAIN_CODE)
 
-    # The transport error really did hold both credentials.
+    # The request really did carry both credentials.
     sent_body = sent[0].content.decode("utf-8")
     assert_that(sent_body).contains(_CHAIN_API_KEY, _CHAIN_CODE)
-    assert_that(str(caught.value)).is_equal_to("WorkOS authentication request failed")
+    assert_that(str(caught.value)).is_equal_to(expected_message)
     assert_that(caught.value.__cause__).is_none()
     assert_that(caught.value.__context__).is_none()
     for text in _texts_reachable_from(caught.value):
-        assert_that(text).does_not_contain(_CHAIN_API_KEY)
-        assert_that(text).does_not_contain(_CHAIN_CODE)
+        for leaked in (_CHAIN_API_KEY, _CHAIN_CODE, "api.workos.com", "timed out"):
+            assert_that(text).does_not_contain(leaked)
 
 
+@pytest.mark.parametrize(("handler", "expected_message"), _FAILURE_MODES)
 def test_callback_logs_no_oauth_credentials(
     client: TestClient,
     caplog: pytest.LogCaptureFixture,
-    monkeypatch: pytest.MonkeyPatch,
+    handler: Callable[[httpx.Request], httpx.Response],
+    expected_message: str,
 ) -> None:
-    """A failed callback logs its path and status but never code or state."""
-    # Alembic's ``fileConfig`` in earlier migration tests disables loggers
-    # that already exist; re-enable them so every server log line is seen.
-    for existing in list(logging.root.manager.loggerDict.values()):
-        if isinstance(existing, logging.Logger) and existing.disabled:
-            monkeypatch.setattr(existing, "disabled", False)
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        raise httpx.ConnectError("connection refused", request=request)
-
-    workos = WorkOSAuthClient(
-        client_id="client_123",
-        api_key=_CHAIN_API_KEY,
-        redirect_uri="https://app.example.com/api/v2/auth/callback",
-        transport=httpx.MockTransport(handler),
-    )
-    _override(client, workos)
+    """A failed callback logs path, status and failure type, never secrets."""
+    _override(client, _failing_workos(handler))
     login = client.get("/api/v2/auth/login", follow_redirects=False)
     state = _state_cookie(login)
 
@@ -347,7 +393,7 @@ def test_callback_logs_no_oauth_credentials(
     assert_that(access).is_length(1)
     assert_that(access[0].__dict__["status_code"]).is_equal_to(502)
     assert_that(caplog.messages).contains(
-        "workos_code_exchange_failed: WorkOS authentication request failed",
+        f"workos_code_exchange_failed: {expected_message}",
     )
     formatter = logging.Formatter()
     # ``httpx2`` is the test client logging its own outgoing request line;
@@ -356,9 +402,81 @@ def test_callback_logs_no_oauth_credentials(
     assert_that(server_records).is_not_empty()
     for record in server_records:
         line = formatter.format(record)
-        assert_that(line).does_not_contain(_CHAIN_CODE)
-        assert_that(line).does_not_contain(state)
-        assert_that(line).does_not_contain(_CHAIN_API_KEY)
+        for leaked in (_CHAIN_CODE, state, _CHAIN_API_KEY, "sk_test_456"):
+            assert_that(line).does_not_contain(leaked)
+
+
+_TEST_DSN = "https://public@sentry.invalid/1"
+
+
+def _reported_failed_callback(
+    db_session: Session,
+    handler: Callable[[httpx.Request], httpx.Response],
+) -> tuple[httpx2.Response, str]:
+    """Run a failing sign-in through an app with error reporting enabled.
+
+    Args:
+        db_session: Database session the app should use.
+        handler: Transport behaviour of the WorkOS token endpoint.
+
+    Returns:
+        The callback response and the state value it carried.
+    """
+    app = create_app(
+        Settings(
+            rate_limit=RateLimitSettings(enabled=False),
+            observability=ObservabilitySettings(sentry_dsn=_TEST_DSN),
+        ),
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        """Yield the test database session in place of the real one."""
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    with TestClient(app) as reporting_client:
+        _override(reporting_client, _failing_workos(handler))
+        login = reporting_client.get("/api/v2/auth/login", follow_redirects=False)
+        state = _state_cookie(login)
+        response = reporting_client.get(
+            "/api/v2/auth/callback",
+            params={"code": _CHAIN_CODE, "state": state},
+            follow_redirects=False,
+        )
+    return response, state
+
+
+@pytest.mark.parametrize(("handler", "expected_message"), _FAILURE_MODES)
+def test_failed_callback_reports_no_credentials(
+    db_session: Session,
+    sentry_transport: CapturingSentryTransport,
+    handler: Callable[[httpx.Request], httpx.Response],
+    expected_message: str,
+) -> None:
+    """The error report for a failed callback is useful and credential-free."""
+    response, state = _reported_failed_callback(db_session, handler)
+
+    assert_that(response.status_code).is_equal_to(502)
+    events = sentry_transport.events()
+    assert_that(events).is_length(1)
+    event = events[0]
+    exceptions = {value["type"]: value for value in event["exception"]["values"]}
+    assert_that(exceptions).contains_key("HTTPException", "WorkOSAuthError")
+    assert_that(exceptions["WorkOSAuthError"]["value"]).is_equal_to(expected_message)
+    for value in exceptions.values():
+        for frame in value.get("stacktrace", {}).get("frames", []):
+            assert_that(frame).does_not_contain_key("vars")
+    assert_that(event["transaction"]).is_equal_to("/api/v2/auth/callback")
+    assert_that(event["tags"]["request_id"]).is_equal_to(
+        response.headers["X-Request-ID"],
+    )
+    assert_that(event["request"]["url"]).is_equal_to(
+        "http://testserver/api/v2/auth/callback",
+    )
+    assert_that(event["request"]).does_not_contain_key("query_string")
+    wire = sentry_transport.serialized()
+    for leaked in (_CHAIN_API_KEY, "sk_test_456", _CHAIN_CODE, state):
+        assert_that(wire).does_not_contain(leaked)
 
 
 def test_upsert_creates_new_account(db_session: Session) -> None:

@@ -1,13 +1,17 @@
 """Shared pytest fixtures."""
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import pytest
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sentry_sdk.envelope import Envelope
+from sentry_sdk.transport import Transport
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -211,3 +215,68 @@ def create_podcast_alert_rule(
         event_type="new_episode",
     )
     return rule
+
+
+class CapturingSentryTransport(Transport):
+    """In-memory Sentry transport: keeps envelopes instead of sending them."""
+
+    def __init__(self, options: dict[str, Any] | None = None) -> None:
+        super().__init__(options)
+        self.envelopes: list[Envelope] = []
+
+    def capture_envelope(self, envelope: Envelope) -> None:
+        """Keep the envelope for inspection.
+
+        Args:
+            envelope: The serialisable envelope the SDK would have sent.
+        """
+        self.envelopes.append(envelope)
+
+    def serialized(self) -> str:
+        """Return every captured envelope exactly as it would be sent.
+
+        Returns:
+            str: The concatenated wire payloads, breadcrumbs included.
+        """
+        sentry_sdk.flush()
+        return "".join(
+            envelope.serialize().decode("utf-8") for envelope in self.envelopes
+        )
+
+    def events(self) -> list[dict[str, Any]]:
+        """Return the captured error events.
+
+        Returns:
+            list[dict[str, Any]]: Event payloads in capture order.
+        """
+        sentry_sdk.flush()
+        return [
+            json.loads(item.get_bytes())
+            for envelope in self.envelopes
+            for item in envelope.items
+            if item.type == "event"
+        ]
+
+
+@pytest.fixture(name="sentry_transport")
+def sentry_transport_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[CapturingSentryTransport]:
+    """Route the next ``init_sentry`` call to an in-memory transport.
+
+    Yields:
+        CapturingSentryTransport: Receives every envelope the SDK emits.
+    """
+    transport = CapturingSentryTransport()
+    real_init = sentry_sdk.init
+
+    def init_in_memory(**options: Any) -> object:
+        """Initialise the real SDK with the capturing transport."""
+        return real_init(transport=transport, **options)
+
+    monkeypatch.setattr(sentry_sdk, "init", init_in_memory)
+    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
+    yield transport
+    sentry_sdk.get_client().close()
+    sentry_sdk.get_global_scope().set_client(None)
+    sentry_sdk.get_isolation_scope().clear()

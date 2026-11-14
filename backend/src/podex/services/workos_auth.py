@@ -93,7 +93,13 @@ class WorkOSAuthClient:
         Raises:
             WorkOSAuthError: If the exchange fails or omits id/email.
         """
+        # Every failure below is raised after leaving its ``except`` block, so
+        # the original error, whose request body holds the client secret and
+        # the code, is neither the cause nor the context of the public error.
+        # Messages carry only allowlisted descriptors (error class name, HTTP
+        # status), never the raw error text, URL or body.
         response: httpx.Response | None = None
+        failure = ""
         try:
             with httpx.Client(
                 transport=self._transport,
@@ -108,18 +114,23 @@ class WorkOSAuthClient:
                         "code": code,
                     },
                 )
-        except httpx.HTTPError:
-            response = None
-        # Raised after leaving the handler: the HTTPX error's request body holds
-        # the client secret and the code, so it must be neither the cause nor
-        # the context of the public error.
+        except httpx.HTTPError as error:
+            failure = type(error).__name__
         if response is None:
-            msg = "WorkOS authentication request failed"
+            msg = f"WorkOS authentication request failed: {failure}"
             raise WorkOSAuthError(msg)
         if response.status_code != httpx.codes.OK:
             msg = f"WorkOS code exchange rejected with HTTP {response.status_code}"
             raise WorkOSAuthError(msg)
-        payload = response.json()
+        payload: object = None
+        valid_json = True
+        try:
+            payload = response.json()
+        except ValueError:
+            valid_json = False
+        if not valid_json:
+            msg = "WorkOS response was not valid JSON"
+            raise WorkOSAuthError(msg)
         user = payload.get("user") if isinstance(payload, dict) else None
         if not isinstance(user, dict):
             msg = "WorkOS response did not include a user object"

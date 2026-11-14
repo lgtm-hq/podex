@@ -2,14 +2,21 @@
 
 from unittest.mock import patch
 
+import httpx
+import sentry_sdk
 from assertpy import assert_that
+from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event
 
 from podex import __version__
 from podex.config import ObservabilitySettings, RateLimitSettings, Settings
+from podex.logging_config import configure_logging
 from podex.main import create_app
 from podex.observability import init_sentry, scrub_event
 from podex.scheduler_runner import main as scheduler_main
+from tests.conftest import CapturingSentryTransport
+
+_TEST_DSN = "https://public@sentry.invalid/1"
 
 
 def test_init_sentry_noops_without_dsn() -> None:
@@ -32,12 +39,27 @@ def test_init_sentry_initializes_with_dsn() -> None:
     with patch("podex.observability.sentry_sdk.init") as mock_init:
         result = init_sentry(settings)
     assert_that(result).is_true()
-    mock_init.assert_called_once_with(
-        dsn="https://key@sentry.example/1",
-        environment="staging",
-        release=f"podex@{__version__}",
-        before_send=scrub_event,
-        send_default_pii=False,
+    mock_init.assert_called_once()
+    options = dict(mock_init.call_args.kwargs)
+    scrubber = options.pop("event_scrubber")
+    assert_that(options).is_equal_to(
+        {
+            "dsn": "https://key@sentry.example/1",
+            "environment": "staging",
+            "release": f"podex@{__version__}",
+            "before_send": scrub_event,
+            "send_default_pii": False,
+            "include_local_variables": False,
+        },
+    )
+    assert_that(scrubber).is_instance_of(EventScrubber)
+    assert_that(scrubber.recursive).is_true()
+    # The scrubber matches keys case-insensitively and stores them lowercased.
+    assert_that(scrubber.denylist).contains(
+        *(entry.lower() for entry in DEFAULT_DENYLIST),
+    )
+    assert_that(scrubber.denylist).contains(
+        "http.query", "http.fragment", "code", "state", "client_secret"
     )
 
 
@@ -117,3 +139,46 @@ def test_scheduler_main_initializes_sentry() -> None:
         scheduler_main()
     mock_init.assert_called_once()
     mock_runner.return_value.run_forever.assert_called_once_with()
+
+
+def test_scrub_event_drops_query_strings_on_every_route() -> None:
+    """Request query strings never leave the process, whatever the route."""
+    event: Event = {
+        "request": {
+            "url": "http://testserver/api/v2/podcasts?token=query-secret#frag",
+            "query_string": "token=query-secret&code=query-code",
+            "method": "GET",
+        },
+    }
+    scrubbed = scrub_event(event, {})
+    assert_that(scrubbed["request"]).is_equal_to(
+        {"url": "http://testserver/api/v2/podcasts", "method": "GET"},
+    )
+
+
+def test_outbound_request_breadcrumbs_keep_provider_keys_out(
+    sentry_transport: CapturingSentryTransport,
+) -> None:
+    """Provider API keys sent in a query never reach a reported event."""
+    provider_key = "omdb-query-key-4821"
+    init_sentry(Settings(observability=ObservabilitySettings(sentry_dsn=_TEST_DSN)))
+    configure_logging()
+    with httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(503)),
+    ) as http:
+        http.get(
+            "https://www.omdbapi.com/",
+            params={"apikey": provider_key, "i": "tt0111161"},
+        )
+    try:
+        raise RuntimeError("enrichment provider failed")
+    except RuntimeError as error:
+        sentry_sdk.capture_exception(error)
+
+    events = sentry_transport.events()
+    assert_that(events).is_length(1)
+    crumbs = events[0]["breadcrumbs"]["values"]
+    http_crumbs = [crumb for crumb in crumbs if crumb.get("type") == "http"]
+    assert_that(http_crumbs).is_length(1)
+    assert_that(http_crumbs[0]["data"]["url"]).is_equal_to("https://www.omdbapi.com/")
+    assert_that(sentry_transport.serialized()).does_not_contain(provider_key)

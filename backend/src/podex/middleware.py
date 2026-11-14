@@ -5,6 +5,7 @@ import time
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
+import sentry_sdk
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -21,13 +22,47 @@ _access_logger = get_logger("podex.access")
 RequestResponder = Callable[[Request], Awaitable[Response]]
 
 
+def _request_path(request: Request) -> str:
+    """Return the decoded request path without touching the query string.
+
+    ``request.url`` decodes the whole URL, so a query that is not valid UTF-8
+    would raise; the server has already decoded the path into the scope.
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        str: The request path.
+    """
+    return str(request.scope.get("path", ""))
+
+
+def _client_address(request: Request) -> str:
+    """Return the peer address as the server resolved it, or ``-``.
+
+    ``request.client`` reflects the server's proxy-header trust settings;
+    forwarding headers are deliberately not parsed here.
+
+    Args:
+        request: The incoming request.
+
+    Returns:
+        str: ``host:port`` of the peer, or ``-`` when unknown.
+    """
+    if request.client is None:
+        return "-"
+    return f"{request.client.host}:{request.client.port}"
+
+
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """Attach a request id and emit a structured access log per request.
 
     The middleware honours an inbound ``X-Request-ID`` header when present and
     otherwise generates one. The id is stored on ``request.state.request_id``,
-    echoed back on the response, and included in the access log alongside the
-    method, path, status code, and wall-clock duration.
+    echoed back on the response, attached to error reports as a tag, and
+    included in the access log alongside the method, path, status code,
+    wall-clock duration, peer address and HTTP version. Query strings,
+    headers, cookies and bodies are never logged.
     """
 
     async def dispatch(self, request: Request, call_next: RequestResponder) -> Response:
@@ -43,6 +78,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         """
         request_id = request.headers.get(REQUEST_ID_HEADER) or uuid4().hex
         request.state.request_id = request_id
+        sentry_sdk.set_tag("request_id", request_id)
 
         start = time.perf_counter()
         status_code = 500
@@ -77,19 +113,26 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             request_id: The request id associated with this request.
         """
         duration_ms = (time.perf_counter() - start) * 1000.0
+        path = _request_path(request)
+        client_addr = _client_address(request)
+        http_version = str(request.scope.get("http_version", "-"))
         _access_logger.info(
-            "%s %s %s %.2fms request_id=%s",
+            "%s %s %s %.2fms request_id=%s client=%s http_version=%s",
             request.method,
-            request.url.path,
+            path,
             status_code,
             duration_ms,
             request_id,
+            client_addr,
+            http_version,
             extra={
                 "method": request.method,
-                "path": request.url.path,
+                "path": path,
                 "status_code": status_code,
                 "duration_ms": round(duration_ms, 2),
                 "request_id": request_id,
+                "client_addr": client_addr,
+                "http_version": http_version,
             },
         )
 
@@ -152,7 +195,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             Response: A ``429`` response when the budget is exhausted, otherwise
             the downstream response annotated with rate-limit headers.
         """
-        if request.url.path in self._exempt_paths:
+        if _request_path(request) in self._exempt_paths:
             return await call_next(request)
 
         decision = self._limiter.check(self._client_key(request))
