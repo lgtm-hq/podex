@@ -4,10 +4,16 @@ Each test builds a real ``anthropic.Anthropic`` client whose ``httpx2`` client
 uses a ``MockTransport``. The SDK therefore serializes the request, applies its
 headers and retry policy, maps error statuses to its own exception classes and
 decodes response bodies exactly as in production; only the socket layer is
-replaced. Sockets are blocked for the whole module, so no test can reach the
+replaced. Connection setup, name resolution and datagram sends through the
+``socket`` module are blocked for the whole module, so no test can reach the
 network, and only a dummy credential is used.
+
+The expected request contract (default models, system prompts, message
+templates) is written here independently of the code under test, so changing
+any of them in production fails a test until it is updated deliberately.
 """
 
+import hashlib
 import json
 import os
 import socket
@@ -21,20 +27,51 @@ import httpx2
 import pytest
 from assertpy import assert_that
 
-from podex.services.llm_extraction import DEFAULT_EXTRACTION_MODEL, LLMExtractor
-from podex.services.llm_transcript_cleanup import (
-    DEFAULT_CLEANUP_MODEL,
-    TranscriptCleaner,
-)
-from podex.services.prompts_default import (
-    DEFAULT_CLEANUP_SYSTEM_PROMPT,
-    DEFAULT_EXTRACTION_SYSTEM_PROMPT,
-)
+from podex.services.llm_extraction import LLMExtractor
+from podex.services.llm_transcript_cleanup import TranscriptCleaner
 
 _API_KEY = "test-key-not-a-credential"
 _MESSAGES_URL = "https://api.anthropic.com/v1/messages"
 _TRANSCRIPT = "word " * 60
 _SDK_MAX_RETRIES = anthropic.DEFAULT_MAX_RETRIES
+
+_EXTRACTION_MODEL = "claude-opus-4-8"
+_CLEANUP_MODEL = "claude-opus-4-8"
+
+# Prompt text may live only in podex.services.prompts_default (enforced by
+# .semgrep/prompt-boundary.yaml), so the exact system prompts are pinned by the
+# SHA-256 of their UTF-8 text plus a few anchoring phrases, not by a copy. After
+# a deliberate prompt change, recompute the digest with
+# hashlib.sha256(prompt.encode()).hexdigest().
+_EXTRACTION_SYSTEM_SHA256 = (
+    "411634344ad2de93bf8c6756d52ab4e476d6638e51ae20f46cfa443c1f35b8b7"
+)
+_EXTRACTION_SYSTEM_ANCHORS = (
+    "<output_schema>",
+    "<security>",
+    "Return ONLY a valid JSON array.",
+)
+_CLEANUP_SYSTEM_SHA256 = (
+    "c50aa63b22cf6ced6fb0771b3bd5b41ed63c19583dd8fecd9d211a7233ef2c34"
+)
+_CLEANUP_SYSTEM_ANCHORS = (
+    "DO NOT:",
+    "Only include corrections that were actually made.",
+    "untrusted third-party data",
+)
+_CLEANUP_USER_MESSAGE = (
+    "CONTEXT:\n"
+    "Podcast: Example Show\n"
+    "Host: Host Example\n"
+    "Guest: Guest Example\n"
+    "Known terms and names: podex, alembic\n"
+    "\n"
+    "TRANSCRIPT TO CLEAN:\n"
+    f"<transcript>\n{_TRANSCRIPT}\n</transcript>\n"
+    "\n"
+    "Please analyze the transcript and fix any transcription errors. "
+    "Return as JSON."
+)
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
 
@@ -63,7 +100,12 @@ class _Provider:
 
 @pytest.fixture(name="network_attempts", autouse=True)
 def _blocked_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[object]]:
-    """Fail the test if anything tries to resolve or connect a socket.
+    """Fail the test on any outbound network use through ``socket``.
+
+    Blocks connection setup (``socket.connect``, ``connect_ex``,
+    ``create_connection``), name resolution (``getaddrinfo``) and datagram
+    sends (``sendto``, ``sendmsg``). Code that bypasses the ``socket`` module,
+    such as direct ``_socket`` use, is outside this guarantee.
 
     The SDK wraps transport exceptions in ``APIConnectionError``, which the
     services swallow, so the guard also records attempts and asserts on them
@@ -77,6 +119,8 @@ def _blocked_network(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[object]]:
 
     monkeypatch.setattr(socket.socket, "connect", refuse)
     monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    monkeypatch.setattr(socket.socket, "sendto", refuse)
+    monkeypatch.setattr(socket.socket, "sendmsg", refuse)
     monkeypatch.setattr(socket, "create_connection", refuse)
     monkeypatch.setattr(socket, "getaddrinfo", refuse)
     yield attempts
@@ -118,7 +162,7 @@ def _message(text: str) -> dict[str, Any]:
         "id": "msg_contract",
         "type": "message",
         "role": "assistant",
-        "model": DEFAULT_EXTRACTION_MODEL,
+        "model": _EXTRACTION_MODEL,
         "content": [{"type": "text", "text": text}],
         "stop_reason": "end_turn",
         "stop_sequence": None,
@@ -170,6 +214,21 @@ def _assert_messages_request(request: httpx2.Request) -> None:
     assert_that(request.headers.get("authorization", "")).contains(_API_KEY)
 
 
+def _assert_system_prompt(
+    system: object,
+    *,
+    sha256: str,
+    anchors: tuple[str, ...],
+) -> None:
+    """Assert the exact system prompt text by digest and anchoring phrases."""
+    assert_that(system).is_instance_of(str)
+    text = str(system)
+    assert_that(text).contains(*anchors)
+    assert_that(hashlib.sha256(text.encode()).hexdigest()).described_as(
+        "SHA-256 of the system prompt",
+    ).is_equal_to(sha256)
+
+
 def test_extraction_sends_messages_request_and_decodes_items() -> None:
     """The extractor's request and response pass through the real SDK."""
     payload = json.dumps(
@@ -193,11 +252,16 @@ def test_extraction_sends_messages_request_and_decodes_items() -> None:
     assert_that(result.items[1].year).is_equal_to(2016)
     assert_that(provider.requests).is_length(1)
     _assert_messages_request(provider.requests[0])
-    assert_that(provider.bodies()[0]).is_equal_to(
+    body = provider.bodies()[0]
+    _assert_system_prompt(
+        body.pop("system", None),
+        sha256=_EXTRACTION_SYSTEM_SHA256,
+        anchors=_EXTRACTION_SYSTEM_ANCHORS,
+    )
+    assert_that(body).is_equal_to(
         {
-            "model": DEFAULT_EXTRACTION_MODEL,
+            "model": _EXTRACTION_MODEL,
             "max_tokens": 4000,
-            "system": DEFAULT_EXTRACTION_SYSTEM_PROMPT,
             "messages": [
                 {
                     "role": "user",
@@ -225,6 +289,9 @@ def test_cleanup_sends_messages_request_and_decodes_corrections() -> None:
     result = TranscriptCleaner(client=_client(provider)).cleanup_transcript(
         _TRANSCRIPT,
         podcast_name="Example Show",
+        host_name="Host Example",
+        guest_name="Guest Example",
+        terminology=["podex", "alembic"],
     )
 
     assert_that(result.errors).is_empty()
@@ -233,15 +300,17 @@ def test_cleanup_sends_messages_request_and_decodes_corrections() -> None:
     assert_that(provider.requests).is_length(1)
     _assert_messages_request(provider.requests[0])
     body = provider.bodies()[0]
-    assert_that(body).contains_only("model", "max_tokens", "system", "messages")
-    assert_that(body["model"]).is_equal_to(DEFAULT_CLEANUP_MODEL)
-    assert_that(body["max_tokens"]).is_equal_to(8000)
-    assert_that(body["system"]).is_equal_to(DEFAULT_CLEANUP_SYSTEM_PROMPT)
-    assert_that(body["messages"]).is_length(1)
-    assert_that(body["messages"][0]["role"]).is_equal_to("user")
-    assert_that(body["messages"][0]["content"]).contains(
-        "Podcast: Example Show",
-        f"<transcript>\n{_TRANSCRIPT}\n</transcript>",
+    _assert_system_prompt(
+        body.pop("system", None),
+        sha256=_CLEANUP_SYSTEM_SHA256,
+        anchors=_CLEANUP_SYSTEM_ANCHORS,
+    )
+    assert_that(body).is_equal_to(
+        {
+            "model": _CLEANUP_MODEL,
+            "max_tokens": 8000,
+            "messages": [{"role": "user", "content": _CLEANUP_USER_MESSAGE}],
+        },
     )
 
 
@@ -285,7 +354,7 @@ def test_sdk_maps_error_statuses_to_api_status_errors(
 
     with pytest.raises(anthropic.APIStatusError) as caught:
         _client(provider).messages.create(
-            model=DEFAULT_EXTRACTION_MODEL,
+            model=_EXTRACTION_MODEL,
             max_tokens=1,
             messages=[{"role": "user", "content": "ping"}],
         )
@@ -397,7 +466,7 @@ def test_sdk_maps_read_timeout_to_api_timeout_error(sleeps: list[float]) -> None
 
     with pytest.raises(anthropic.APITimeoutError) as caught:
         _client(provider).messages.create(
-            model=DEFAULT_EXTRACTION_MODEL,
+            model=_EXTRACTION_MODEL,
             max_tokens=1,
             messages=[{"role": "user", "content": "ping"}],
         )
@@ -461,7 +530,11 @@ def test_services_build_default_sdk_client_from_environment(
     """Without an injected client the services build the SDK default client."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", _API_KEY)
 
-    for client in (LLMExtractor().client, TranscriptCleaner().client):
+    extractor, cleaner = LLMExtractor(), TranscriptCleaner()
+
+    assert_that(extractor.model).is_equal_to(_EXTRACTION_MODEL)
+    assert_that(cleaner.model).is_equal_to(_CLEANUP_MODEL)
+    for client in (extractor.client, cleaner.client):
         assert_that(client).is_instance_of(anthropic.Anthropic)
         assert_that(str(client.base_url)).is_equal_to("https://api.anthropic.com")
         assert_that(client.max_retries).is_equal_to(_SDK_MAX_RETRIES)
@@ -470,16 +543,25 @@ def test_services_build_default_sdk_client_from_environment(
 def test_network_guard_blocks_a_real_sdk_request(
     network_attempts: list[object],
 ) -> None:
-    """The module guard stops the SDK's default transport before any socket."""
+    """The module guard stops the SDK's default transport and datagram sends."""
     client = anthropic.Anthropic(api_key=_API_KEY, max_retries=0)
 
     with pytest.raises(anthropic.APIConnectionError) as caught:
         client.messages.create(
-            model=DEFAULT_EXTRACTION_MODEL,
+            model=_EXTRACTION_MODEL,
             max_tokens=1,
             messages=[{"role": "user", "content": "ping"}],
         )
 
     assert_that(network_attempts).is_length(1)
     assert_that(str(caught.value.__cause__)).contains("network access is blocked")
+
+    loopback = ("127.0.0.1", 9)
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as udp:
+        with pytest.raises(ConnectionRefusedError):
+            udp.sendto(b"ping", loopback)
+        with pytest.raises(ConnectionRefusedError):
+            udp.sendmsg([b"ping"], [], 0, loopback)
+
+    assert_that(network_attempts).is_length(3)
     network_attempts.clear()
