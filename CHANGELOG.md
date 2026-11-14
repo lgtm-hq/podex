@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.20] - 2026-11-14
+
+### Fixed
+
+- **scheduler**: stop discovery for paused podcasts (#766) (cd40b2a)
+
 ## [0.41.19] - 2026-11-14
 
 ### Fixed
