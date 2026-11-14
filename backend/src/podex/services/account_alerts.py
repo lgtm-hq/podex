@@ -117,9 +117,15 @@ def evaluate_alert_rules(
     user_id: int,
     now: datetime | None = None,
 ) -> list[AlertEventData]:
-    """Generate one notification event per rule whose public count increased."""
+    """Generate one notification event per rule whose public count increased.
+
+    The user's rules are locked before baselines are read, so evaluation cannot
+    interleave with a canonical media merge or another evaluation and write back
+    a stale baseline.
+    """
     evaluated_at = now or datetime.now(UTC)
     generated: list[AlertEventData] = []
+    _lock_alert_rules(db=db, user_id=user_id)
     for rule in list_alert_rules(db=db, user_id=user_id):
         if not rule.enabled:
             continue
@@ -141,6 +147,23 @@ def evaluate_alert_rules(
             generated.append(AlertEventData(event=event, rule=rule))
     db.flush()
     return generated
+
+
+def _lock_alert_rules(*, db: Session, user_id: int) -> None:
+    """Lock and reload one user's alert rules in ascending id order.
+
+    Media merges lock the rules they reconcile in ``(user_id, id)`` order, which
+    matches this order for one user and the scheduler's ascending user order, so
+    the two never deadlock. SQLite has a single writer and ignores ``FOR UPDATE``.
+    """
+    (
+        db.query(AccountAlertRule)
+        .filter(AccountAlertRule.user_id == user_id)
+        .order_by(AccountAlertRule.id.asc())
+        .with_for_update()
+        .populate_existing()
+        .all()
+    )
 
 
 def _get_rule(*, db: Session, user_id: int, rule_id: int) -> AccountAlertRule | None:
