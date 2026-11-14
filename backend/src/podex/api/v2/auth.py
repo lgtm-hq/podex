@@ -14,6 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from podex.api.deps import AppSettings, DbSession
+from podex.api.v2.auth_state import (
+    WORKOS_CALLBACK_ROUTE_NAME,
+    WORKOS_STATE_COOKIE,
+    expire_workos_state,
+)
 from podex.config import Settings, get_settings
 from podex.logging_config import get_logger
 from podex.models import AccountUser, AuditAction
@@ -110,7 +115,6 @@ logger = get_logger(__name__)
 
 # The OAuth ``state`` value only needs to survive one round-trip through the
 # hosted sign-in screen, so its cookie stays deliberately short-lived.
-WORKOS_STATE_COOKIE = "podex_oauth_state"
 _WORKOS_STATE_TTL_SECONDS = 10 * 60
 
 
@@ -343,11 +347,12 @@ def complete_workos_callback(
     except UnicodeEncodeError:
         valid_state = False
     # Keep encoding errors, which hold the state, out of the response context.
-    if not valid_state:
+    if not code or not valid_state:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Sign-in state is invalid or expired",
         )
+    request.state.consumed_workos_state_secure = settings.auth.session_cookie_secure
     try:
         profile = workos.exchange_code(code=code)
     except WorkOSAuthError as error:
@@ -371,7 +376,7 @@ def complete_workos_callback(
         token=authenticated.token,
         settings=settings,
     )
-    redirect.delete_cookie(key=WORKOS_STATE_COOKIE, path="/")
+    expire_workos_state(response=redirect, secure=settings.auth.session_cookie_secure)
     db.commit()
     return redirect
 
@@ -803,6 +808,7 @@ router.add_api_route(
 router.add_api_route(
     "/auth/callback",
     complete_workos_callback,
+    name=WORKOS_CALLBACK_ROUTE_NAME,
     methods=["GET"],
     response_model=None,
 )
