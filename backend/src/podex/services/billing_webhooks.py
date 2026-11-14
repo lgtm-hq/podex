@@ -71,9 +71,12 @@ def verify_paddle_signature(
     if signature_header.count(";") >= _MAX_SIGNATURE_PARTS:
         raise PaddleSignatureFormatError
     for element in signature_header.split(";"):
-        key, separator, value = element.strip().partition("=")
+        # Only the key is trimmed. The value is validated as received, so
+        # padded text cannot stand in for the canonical value that was signed.
+        raw_key, separator, value = element.partition("=")
         if not separator:
             continue
+        key = raw_key.strip()
         if key == "ts":
             if (
                 not value

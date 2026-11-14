@@ -233,7 +233,17 @@ async def test_webhook_route_rejects_non_decimal_timestamp_bytes(
 @pytest.mark.parametrize("anyio_backend", ["asyncio"])
 @pytest.mark.parametrize(
     "form",
-    ["plus", "space", "nbsp", "underscores", "leading-zero", "long-leading-zeros"],
+    [
+        "plus",
+        "space",
+        "nbsp",
+        "underscores",
+        "leading-zero",
+        "long-leading-zeros",
+        "trailing-space",
+        "trailing-tab",
+        "trailing-nbsp",
+    ],
 )
 async def test_webhook_route_rejects_normalized_timestamp_aliases(
     client: TestClient,
@@ -251,6 +261,9 @@ async def test_webhook_route_rejects_normalized_timestamp_aliases(
         "underscores": seconds[:1] + b"_" + seconds[1:],
         "leading-zero": b"0" + seconds,
         "long-leading-zeros": b"0" * 13 + seconds,
+        "trailing-space": seconds + b" ",
+        "trailing-tab": seconds + b"\t",
+        "trailing-nbsp": seconds + b"\xa0",
     }
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=client.app, raise_app_exceptions=False),
