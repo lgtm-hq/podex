@@ -151,10 +151,11 @@ this repository there:
   nonempty health command.
 - `smoke-test-script` runs in `verify-per-platform`, which pulls each staging
   image by a digest read from a run artifact named `staging-digest-<platform>`.
-  Both image jobs of one run write that same name, so one image's job pulls the
-  other image's digest and fails (lgtm-hq/lgtm-ci#1579). With the input set,
-  v0.41.26 published the frontend image and no backend image. The input is not
-  passed until that is fixed upstream and the pin is bumped (#822).
+  Both image jobs of one run write that same name, so depending on upload order
+  one image's job can pull the other image's digest, which fails
+  (lgtm-hq/lgtm-ci#1579). With the input set, v0.41.26 published the frontend
+  image and no backend image. The input is not passed until that is fixed
+  upstream and the pin is bumped (#822).
 
 A tag therefore publishes the same Dockerfiles that the PR and `main` builds of
 the same commit smoked on linux/amd64; linux/arm64 images are not smoked. The
