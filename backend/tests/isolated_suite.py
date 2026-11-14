@@ -12,6 +12,7 @@ variable refuses to launch another (here and at collection, see
 ``tests/conftest.py``), so inner runs never nest.
 """
 
+import os
 import shutil
 import sys
 from collections.abc import Sequence
@@ -115,11 +116,14 @@ def launch_inner_pytest(
     if not node_ids:
         pytest.fail("inner runs need explicit node ids", pytrace=False)
     command = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider"]
-    with monkeypatch.context() as patch:
-        # popen copies os.environ for the child; scope the sentinel to that.
+    # popen copies os.environ for the child; scope the sentinel to that. A
+    # /dev/null stdin keeps Popen.stdin unset: popen's default closed stdin
+    # pipe makes communicate(timeout=...) fail on Python 3.11 and 3.12.
+    with monkeypatch.context() as patch, open(os.devnull, "rb") as devnull:
         patch.setenv(INNER_RUN_ENV, "1")
         process: InnerProcess = pytester.popen(
             [*command, *options, *node_ids],
+            stdin=devnull,
             cwd=pytester.path,
         )
     return process
