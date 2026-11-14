@@ -5,18 +5,21 @@ exercised on an inner pytest run against an isolated copy of the scaffolding.
 """
 
 import signal
-import sys
 import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
-from pathlib import Path
+from typing import Any
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import create_engine, text
+from sqlalchemy import Engine, create_engine, text
 
-from tests.isolated_suite import build_isolated_suite
+from tests.isolated_suite import (
+    INNER_RUN_TIMEOUT_SECONDS,
+    build_isolated_suite,
+    launch_inner_pytest,
+)
 from tests.postgres import conftest as fixture_module
 from tests.postgres.conftest import (
     NAME_ATTEMPTS,
@@ -26,8 +29,6 @@ from tests.postgres.conftest import (
 )
 
 pytestmark = pytest.mark.postgres
-
-_INNER_TIMEOUT_SECONDS = 120.0
 
 OpenDatabase = Callable[[PostgresServer], AbstractContextManager[str]]
 
@@ -154,16 +155,86 @@ def test_exhausted_names_fail_without_dropping_anything(
     )
 
 
-def test_sigterm_drops_the_template_and_test_database(
-    pytester: pytest.Pytester,
+def _drop_if_left(server: PostgresServer, names: list[str]) -> None:
+    """Drop databases a failing boundary test may have leaked."""
+    for name in names:
+        fixture_module.drop_database(server.admin, name)
+
+
+@pytest.mark.parametrize(
+    "open_database",
+    [_open_template, _open_private],
+    ids=["template", "per-test"],
+)
+def test_signal_right_after_create_still_drops_the_database(
     postgres_server: PostgresServer,
+    monkeypatch: pytest.MonkeyPatch,
+    open_database: OpenDatabase,
 ) -> None:
-    """SIGTERM mid-test ends the inner session with both databases dropped."""
-    ready = pytester.path / "ready.txt"
-    build_isolated_suite(
-        pytester,
-        {
-            "test_wait.py": f'''
+    """A signal landing just after CREATE DATABASE arrives once it is owned."""
+    created: list[str] = []
+    create = fixture_module.create_unique_database
+
+    def create_then_interrupt(*args: Any, **kwargs: Any) -> str:
+        name = create(*args, **kwargs)
+        created.append(name)
+        signal.raise_signal(signal.SIGINT)
+        return name
+
+    monkeypatch.setattr(fixture_module, "create_unique_database", create_then_interrupt)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with open_database(postgres_server):
+                pytest.fail("the deferred SIGINT must end the setup")
+
+        assert_that(created).is_length(1)
+        assert_that(_database_exists(postgres_server, created[0])).is_false()
+    finally:
+        _drop_if_left(postgres_server, created)
+
+
+@pytest.mark.parametrize(
+    "open_database",
+    [_open_template, _open_private],
+    ids=["template", "per-test"],
+)
+def test_signal_during_teardown_waits_for_the_drop(
+    postgres_server: PostgresServer,
+    monkeypatch: pytest.MonkeyPatch,
+    open_database: OpenDatabase,
+) -> None:
+    """A signal landing just before DROP DATABASE arrives after the drop."""
+    opened: list[str] = []
+    drop = fixture_module.drop_database
+
+    def interrupt_then_drop(admin: Engine, name: str) -> None:
+        signal.raise_signal(signal.SIGINT)
+        drop(admin, name)
+
+    monkeypatch.setattr(fixture_module, "drop_database", interrupt_then_drop)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            with open_database(postgres_server) as name:
+                opened.append(name)
+
+        assert_that(opened).is_length(1)
+        assert_that(_database_exists(postgres_server, opened[0])).is_false()
+    finally:
+        monkeypatch.undo()
+        _drop_if_left(postgres_server, opened)
+
+
+@pytest.mark.parametrize("fixture", ["db_session", "client", "seeded_graph"])
+def test_sqlite_fixtures_fail_in_postgres_tests(
+    request: pytest.FixtureRequest,
+    fixture: str,
+) -> None:
+    """A PostgreSQL test cannot fall back to an inherited SQLite fixture."""
+    with pytest.raises(pytest.fail.Exception, match=f"{fixture} is the SQLite"):
+        request.getfixturevalue(fixture)
+
+
+_WAITING_TEST = '''
 import time
 from pathlib import Path
 
@@ -175,24 +246,31 @@ pytestmark = pytest.mark.postgres
 def test_wait(postgres: object, postgres_server: object) -> None:
     """Report the databases in use, then wait to be terminated."""
     names = [postgres_server.template, postgres.url.database]
-    Path({str(ready)!r}).write_text("\\n".join(names))
-    time.sleep({_INNER_TIMEOUT_SECONDS})
-''',
-        },
-    )
-    inner = pytester.popen(
-        [
-            sys.executable,
-            "-m",
-            "pytest",
-            "tests",
-            "-p",
-            "no:cacheprovider",
-            "--require-postgres",
-        ],
+    Path({ready!r}).write_text("\\n".join(names))
+    time.sleep({seconds})
+'''
+
+
+@pytest.mark.launches_pytest
+def test_sigterm_drops_the_template_and_test_database(
+    request: pytest.FixtureRequest,
+    pytester: pytest.Pytester,
+    monkeypatch: pytest.MonkeyPatch,
+    postgres_server: PostgresServer,
+) -> None:
+    """SIGTERM mid-test ends the inner session with both databases dropped."""
+    ready = pytester.path / "ready.txt"
+    source = _WAITING_TEST.format(ready=str(ready), seconds=INNER_RUN_TIMEOUT_SECONDS)
+    build_isolated_suite(pytester, {"test_wait.py": source})
+    inner = launch_inner_pytest(
+        request,
+        pytester,
+        monkeypatch,
+        ["tests/postgres/test_wait.py::test_wait"],
+        "--require-postgres",
     )
     try:
-        deadline = time.monotonic() + _INNER_TIMEOUT_SECONDS
+        deadline = time.monotonic() + INNER_RUN_TIMEOUT_SECONDS
         while not ready.exists() and inner.poll() is None:
             if time.monotonic() > deadline:
                 raise AssertionError("the inner test never reported its databases")
@@ -202,14 +280,13 @@ def test_wait(postgres: object, postgres_server: object) -> None:
         assert_that(all(_database_exists(postgres_server, n) for n in names)).is_true()
 
         inner.send_signal(signal.SIGTERM)
-        output, _ = inner.communicate(timeout=_INNER_TIMEOUT_SECONDS)
+        output, _ = inner.communicate(timeout=INNER_RUN_TIMEOUT_SECONDS)
     finally:
         if inner.poll() is None:
             inner.kill()
             inner.communicate()
 
     assert_that(inner.returncode).is_equal_to(128 + signal.SIGTERM)
-    assert_that(Path(ready).exists()).is_true()
     assert_that(output.decode()).contains("terminated by signal 15")
     for name in names:
         assert_that(_database_exists(postgres_server, name)).is_false()

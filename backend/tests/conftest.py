@@ -74,6 +74,41 @@ def pytest_runtest_setup(item: pytest.Item) -> None:
     pytest.skip(reason)
 
 
+# Set for every pytest a test launches. A run that sees it refuses to launch
+# another, so test-launched runs can never nest.
+INNER_RUN_ENV = "PODEX_TESTS_INNER_RUN"
+_INNER_RUN = pytest.StashKey[bool]()
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    """Record whether this session was launched by another test."""
+    session.config.stash[_INNER_RUN] = bool(os.environ.get(INNER_RUN_ENV))
+
+
+def is_inner_run(config: pytest.Config) -> bool:
+    """Return whether this session, or its environment, is an inner run."""
+    return config.stash.get(_INNER_RUN, False) or bool(os.environ.get(INNER_RUN_ENV))
+
+
+def check_nested_launch(item: pytest.Item, *, inner_run: bool) -> None:
+    """Refuse a test that launches pytest when this run is itself an inner run.
+
+    Raises:
+        pytest.UsageError: If ``item`` launches pytest inside an inner run.
+    """
+    if inner_run and item.get_closest_marker("launches_pytest") is not None:
+        msg = (
+            f"{item.nodeid} launches pytest, but this run was launched by a test "
+            f"({INNER_RUN_ENV} is set); nested inner runs are refused"
+        )
+        raise pytest.UsageError(msg)
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Fail collection of a pytest-launching test inside an inner run."""
+    check_nested_launch(item, inner_run=item.config.stash.get(_INNER_RUN, False))
+
+
 @dataclass
 class SeededGraph:
     """Identifiers for a linked podcast, episode, media, and mention graph.

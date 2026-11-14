@@ -53,10 +53,31 @@ PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \
 docker rm -f podex-pg
 ```
 
-Databases are dropped when tests fail, on Ctrl-C and on SIGTERM. A run killed
-with SIGKILL (or a lost connection) can leave databases named
-`podex_test_<32 hex>` or `podex_test_template_<32 hex>` behind. When no test run
-is using the server, this drops exactly those and nothing else:
+Each database is recorded as owned in the same step that creates it, with SIGINT
+and SIGTERM held until that step ends, and its drop also runs with them held. So
+a failing test, Ctrl-C or SIGTERM drops it. Cleanup cannot run when:
+
+- the run is killed with SIGKILL (or the machine stops);
+- the connection is lost after the server created a database but before the
+  fixture saw the reply;
+- the fixture is driven from a thread other than the main one, where Python
+  cannot install signal handlers.
+
+Leftovers are named `podex_test_<32 hex>` or `podex_test_template_<32 hex>`.
+Removing them is a sweep by name pattern, so do it only on a disposable server
+and only when no test run is using it: a concurrent run's databases match the
+same pattern. List the matches first:
+
+```bash
+docker exec -i podex-pg psql -U podex -d podex <<'SQL'
+SELECT datname
+FROM pg_database
+WHERE datname ~ '^podex_test_(template_)?[0-9a-f]{32}$'
+ORDER BY datname;
+SQL
+```
+
+Check that every listed name is a leftover you expect to remove, then drop them:
 
 ```bash
 docker exec -i podex-pg psql -U podex -d podex <<'SQL'

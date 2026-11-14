@@ -12,6 +12,13 @@
 # =============================================================================
 set -euo pipefail
 
+# Tests set PODEX_TESTS_INNER_RUN for every pytest they launch; nothing started
+# from inside such a run may start this lane again.
+if [[ -n "${PODEX_TESTS_INNER_RUN:-}" ]]; then
+	echo "PODEX_TESTS_INNER_RUN is set: refusing to start the PostgreSQL lane from inside a test-launched run" >&2
+	exit 1
+fi
+
 if [[ -z "${PODEX_DATABASE__URL:-}" ]]; then
 	echo "PODEX_DATABASE__URL must be set to the Postgres service URL" >&2
 	exit 1

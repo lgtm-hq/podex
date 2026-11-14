@@ -18,6 +18,14 @@ EOF
   chmod +x "${STUB_BIN}/uv"
   export PATH="${STUB_BIN}:${PATH}"
   export PODEX_DATABASE__URL="postgresql+psycopg://podex@localhost:5432/podex"
+  unset PODEX_TESTS_INNER_RUN
+}
+
+@test "refuses to start inside a test-launched run" {
+  PODEX_TESTS_INNER_RUN=1 run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"refusing to start the PostgreSQL lane"* ]]
+  [ ! -e "${UV_LOG}" ]
 }
 
 @test "fails before installing when PODEX_DATABASE__URL is unset" {

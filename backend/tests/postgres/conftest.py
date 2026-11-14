@@ -11,33 +11,33 @@ Safety rules:
 
 - Only databases this process created are dropped. Names are random
   (``DATABASE_NAME_PATTERN``); a name that already exists is never adopted.
-  Creation retries with a fresh name, and cleanup is armed only after
-  ``CREATE DATABASE`` succeeded.
+  Creation retries with a fresh name, and a failed create never makes a name
+  owned.
+- A database is recorded as owned in the same signal-deferred step that
+  creates it, and its drop is signal-deferred too (``tests/postgres/signals``),
+  so SIGINT or SIGTERM cannot leave it behind. While databases exist, SIGTERM
+  ends the session like Ctrl-C (``pytest.exit``). What remains: SIGKILL, a
+  connection lost after the server created a database, and fixtures driven
+  from a non-main thread; CONTRIBUTING.md has the recovery sweep.
 - The database named in the URL is used only to issue ``CREATE DATABASE`` and
   ``DROP DATABASE``; no table in it is read or written.
-- Cleanup runs in ``finally`` blocks with ``DROP ... WITH (FORCE)``, so a
-  failing test or a leaked connection still cleans up. While databases exist,
-  SIGTERM ends the session like Ctrl-C (``pytest.exit``), so teardown runs.
-  SIGKILL cannot be handled; CONTRIBUTING.md has the recovery command.
 - Every test collected from this directory must carry
-  ``@pytest.mark.postgres``, checked before ``-m`` filtering, and the SQLite
+  ``@pytest.mark.postgres``. That is checked as each test is collected, before
+  any ``pytest_collection_modifyitems`` hook can deselect it. The SQLite
   fixtures (``db_session``, ``client``, ``seeded_graph``) fail here.
 
-Run locally::
+Run locally (disposable server only; see CONTRIBUTING.md)::
 
     PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \\
     uv run pytest tests -m postgres --require-postgres
 """
 
 import os
-import signal
-import threading
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from types import FrameType
 from typing import NoReturn
 
 import pytest
@@ -51,6 +51,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import NullPool
 
 from tests.conftest import POSTGRES_URL_ENV
+from tests.postgres.signals import deferred_signals, sigterm_exits_session
 
 ALEMBIC_INI = Path(__file__).resolve().parents[2] / "alembic.ini"
 POSTGRES_TESTS_DIR = Path(__file__).resolve().parent
@@ -99,7 +100,7 @@ def new_database_name(prefix: str) -> str:
     return f"{prefix}{uuid.uuid4().hex}"
 
 
-def _create_unique_database(admin: Engine, prefix: str, *, template: str | None) -> str:
+def create_unique_database(admin: Engine, prefix: str, *, template: str | None) -> str:
     """Create a database under a fresh name, never adopting an existing one.
 
     Args:
@@ -131,11 +132,36 @@ def _create_unique_database(admin: Engine, prefix: str, *, template: str | None)
     raise RuntimeError(msg)
 
 
-def _drop_database(admin: Engine, name: str) -> None:
+def drop_database(admin: Engine, name: str) -> None:
     """Drop a database this process created, ending sessions still on it."""
     quoted = admin.dialect.identifier_preparer.quote(name)
     with admin.connect() as connection:
         connection.execute(text(f"DROP DATABASE IF EXISTS {quoted} WITH (FORCE)"))
+
+
+@contextmanager
+def _owned_database(
+    admin: Engine, prefix: str, *, template: str | None
+) -> Iterator[str]:
+    """Create a database, own it from that instant, and drop it on exit.
+
+    Creation and the ownership record share one signal-deferred step inside
+    the ``try`` whose ``finally`` drops what is owned, so a signal delivered
+    when that step ends is already covered by cleanup. The drop is deferred
+    too, so it runs to completion before a pending signal is delivered.
+
+    Yields:
+        The created database's name.
+    """
+    owned: list[str] = []
+    try:
+        with deferred_signals():
+            owned.append(create_unique_database(admin, prefix, template=template))
+        yield owned[0]
+    finally:
+        with deferred_signals():
+            for name in owned:
+                drop_database(admin, name)
 
 
 def _migrate(url: URL) -> None:
@@ -154,12 +180,9 @@ def migrated_template(admin: Engine, base_url: URL) -> Iterator[str]:
     Yields:
         The template database's name.
     """
-    name = _create_unique_database(admin, TEMPLATE_PREFIX, template=None)
-    try:
+    with _owned_database(admin, TEMPLATE_PREFIX, template=None) as name:
         _migrate(base_url.set(database=name))
         yield name
-    finally:
-        _drop_database(admin, name)
 
 
 @contextmanager
@@ -169,70 +192,43 @@ def private_database(server: PostgresServer) -> Iterator[PostgresDatabase]:
     Yields:
         The new database's URL, engine and session factory.
     """
-    name = _create_unique_database(
+    with _owned_database(
         server.admin, DATABASE_PREFIX, template=server.template
-    )
-    try:
-        engine = create_engine(server.base_url.set(database=name))
+    ) as name:
+        url = server.base_url.set(database=name)
+        engine = create_engine(url)
         try:
             yield PostgresDatabase(
-                url=server.base_url.set(database=name),
+                url=url,
                 engine=engine,
                 sessions=sessionmaker(bind=engine, expire_on_commit=False),
             )
         finally:
             engine.dispose()
-    finally:
-        _drop_database(server.admin, name)
 
 
-def _exit_on_signal(signum: int, _frame: FrameType | None) -> None:
-    """End the pytest session in order so fixture teardown drops databases."""
-    pytest.exit(f"terminated by signal {signum}", returncode=128 + signum)
-
-
-@contextmanager
-def _sigterm_exits_session() -> Iterator[None]:
-    """Turn SIGTERM into an orderly ``pytest.exit`` while databases exist.
-
-    Installed only from the main thread and only over the default handler, so
-    a handler someone else installed is left alone.
-    """
-    if (
-        threading.current_thread() is not threading.main_thread()
-        or signal.getsignal(signal.SIGTERM) is not signal.SIG_DFL
-    ):
-        yield
-        return
-    signal.signal(signal.SIGTERM, _exit_on_signal)
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
-    """Refuse to collect an unmarked test from this directory.
-
-    Runs before ``-m`` deselection, so the PostgreSQL lane cannot silently
-    drop an unmarked test, and the SQLite jobs cannot silently run one.
+def check_postgres_marker(item: pytest.Item, *, directory: Path) -> None:
+    """Refuse a test collected from ``directory`` without the postgres marker.
 
     Raises:
-        pytest.UsageError: If any test here lacks ``@pytest.mark.postgres``.
+        pytest.UsageError: If ``item`` lives under ``directory`` unmarked.
     """
-    unmarked = [
-        item.nodeid
-        for item in items
-        if item.path.is_relative_to(POSTGRES_TESTS_DIR)
+    if (
+        item.path.is_relative_to(directory)
         and item.get_closest_marker("postgres") is None
-    ]
-    if unmarked:
-        msg = (
-            "tests under tests/postgres must carry @pytest.mark.postgres: "
-            + ", ".join(unmarked)
-        )
-        raise pytest.UsageError(msg)
+    ):
+        msg = "tests under tests/postgres must carry @pytest.mark.postgres: "
+        raise pytest.UsageError(msg + item.nodeid)
+
+
+def pytest_itemcollected(item: pytest.Item) -> None:
+    """Check each test as it is collected, before any hook can deselect it.
+
+    ``-m`` filtering and every ``pytest_collection_modifyitems`` hook, including
+    one in a nested conftest, run only after collection, so neither the
+    PostgreSQL lane nor a nested hook can drop an unmarked test unnoticed.
+    """
+    check_postgres_marker(item, directory=POSTGRES_TESTS_DIR)
 
 
 def _sqlite_fixture_unavailable(name: str) -> NoReturn:
@@ -272,7 +268,7 @@ def postgres_server_fixture() -> Iterator[PostgresServer]:
     base_url = make_url(os.environ[POSTGRES_URL_ENV])
     admin = create_engine(base_url, isolation_level="AUTOCOMMIT", poolclass=NullPool)
     try:
-        with _sigterm_exits_session(), migrated_template(admin, base_url) as template:
+        with sigterm_exits_session(), migrated_template(admin, base_url) as template:
             yield PostgresServer(admin=admin, base_url=base_url, template=template)
     finally:
         admin.dispose()

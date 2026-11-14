@@ -35,7 +35,7 @@ from podex.services.recurring_discovery import (
     plan_recurring_discovery_work,
     run_due_episode_discovery_work,
 )
-from tests.postgres.concurrency import run_overlapping
+from tests.postgres.concurrency import insert_wait, run_overlapping
 from tests.postgres.conftest import ALEMBIC_INI, PostgresDatabase
 
 pytestmark = pytest.mark.postgres
@@ -136,6 +136,7 @@ def test_concurrent_unique_insert_waits_then_conflicts(
             postgres,
             first=lambda db: _add_podcast(db, slug="race"),
             second=lambda db: _add_podcast(db, slug="race"),
+            expected=insert_wait("podcasts"),
         )
 
     assert_that(raised.value.orig).is_instance_of(psycopg.errors.UniqueViolation)
