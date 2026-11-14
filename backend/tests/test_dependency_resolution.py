@@ -20,5 +20,6 @@ def test_supported_python_lock_has_no_vulnerable_soupsieve() -> None:
     for package in soupsieve_packages:
         # GHSA-mmhr-3c5m-f64f affects <4.0.0; GHSA-6655-6qjp-jx7x affects <=2.10.
         assert_that(Version(package["version"]) >= Version("4.0.0")).described_as(
-            f"Vulnerable Soup Sieve lock branch: {package}"
+            f"Vulnerable Soup Sieve lock branch: {package['version']} "
+            f"markers={package.get('resolution-markers')}",
         ).is_true()
