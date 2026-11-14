@@ -74,14 +74,19 @@ def upsert_pipeline_schedule(
     """Create or update a pipeline schedule.
 
     Unchanged cadence and enablement preserve the outstanding due boundary,
-    including overdue work. ``start_at`` seeds a new schedule;
-    it is not a reset command on subsequent reconciliations. Metadata updates
-    likewise do not move the boundary.
+    including overdue work. ``start_at`` seeds a new schedule; it is not a
+    reset command on subsequent reconciliations. Metadata updates likewise do
+    not move the boundary.
 
-    Cadence changes and enablement transitions recompute the first boundary
-    strictly after ``now``, anchored at the last planned boundary when available,
-    otherwise at ``start_at`` or the existing due boundary. Disabled schedules
-    produce no work; re-enabling skips disabled intervals without backfilling.
+    A cadence change moves the boundary to one new interval after the last
+    planned boundary. If that is already due, the planner creates one item
+    for the latest missed boundary. A schedule that was never planned keeps
+    its outstanding boundary.
+
+    An enablement transition recomputes the first boundary strictly after
+    ``now``, anchored at the last planned boundary when available, otherwise
+    at the existing due boundary. Disabled schedules produce no work;
+    re-enabling skips disabled intervals without backfilling.
 
     Args:
         db: Database session.
@@ -102,24 +107,25 @@ def upsert_pipeline_schedule(
         schedule = PipelineSchedule(schedule_key=payload.schedule_key)
         db.add(schedule)
 
-    timing_changed = (
-        schedule.interval_minutes != payload.interval_minutes
-        or schedule.enabled != payload.enabled
-    )
+    interval_changed = schedule.interval_minutes != payload.interval_minutes
+    enablement_changed = schedule.enabled != payload.enabled
     schedule.task_kind = payload.task_kind.value
     schedule.interval_minutes = payload.interval_minutes
     schedule.enabled = payload.enabled
     schedule.metadata_json = payload.metadata_json
     if schedule.last_scheduled_at is None and schedule.next_due_at is None:
         schedule.next_due_at = payload.start_at or effective_now
-    elif timing_changed or schedule.next_due_at is None:
+    elif enablement_changed or schedule.next_due_at is None:
         schedule.next_due_at = _next_due_after(
             start_at=schedule.last_scheduled_at
-            or payload.start_at
             or schedule.next_due_at
             or effective_now,
             interval_minutes=payload.interval_minutes,
             after=effective_now,
+        )
+    elif interval_changed and schedule.last_scheduled_at is not None:
+        schedule.next_due_at = schedule.last_scheduled_at + timedelta(
+            minutes=payload.interval_minutes,
         )
     db.flush()
     return _to_schedule_summary(schedule=schedule)
