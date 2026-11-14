@@ -6,13 +6,14 @@ the changelog record _what_ changed.
 
 ## Index
 
-| Number                                            | Title                                               | Status   | Date       |
-| ------------------------------------------------- | --------------------------------------------------- | -------- | ---------- |
-| [0001](./0001-nested-settings-models.md)          | Nested settings models with hard cutover            | accepted | 2026-07-20 |
-| [0002](./0002-enrichment-provider-registry.md)    | Enrichment provider registry                        | accepted | 2026-07-21 |
-| [0003](./0003-bounded-public-feed-http.md)        | Bounded public feed HTTP boundary                   | proposed | 2026-11-14 |
-| [0004](./0004-keyset-sweep-checkpoints.md)        | Keyset checkpoints for recurring batched sweeps     | proposed | 2026-11-14 |
-| [0005](./0005-verified-transcript-purge-proof.md) | Transcript purge proof identifies a verified source | proposed | 2026-11-14 |
+| Number                                                  | Title                                                           | Status   | Date       |
+| ------------------------------------------------------- | --------------------------------------------------------------- | -------- | ---------- |
+| [0001](./0001-nested-settings-models.md)                | Nested settings models with hard cutover                        | accepted | 2026-07-20 |
+| [0002](./0002-enrichment-provider-registry.md)          | Enrichment provider registry                                    | accepted | 2026-07-21 |
+| [0003](./0003-bounded-public-feed-http.md)              | Bounded public feed HTTP boundary                               | proposed | 2026-11-14 |
+| [0004](./0004-keyset-sweep-checkpoints.md)              | Keyset checkpoints for recurring batched sweeps                 | proposed | 2026-11-14 |
+| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source             | proposed | 2026-11-14 |
+| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction | proposed | 2026-11-14 |
 
 ## Format
 

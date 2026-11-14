@@ -30,6 +30,13 @@ from podex.services.transcript_retention import (
 PURGE_DISABLED_REASON = "Transcript purge is disabled by PODEX_RETENTION__PURGE_ENABLED"
 NO_PURGE_SOURCE_REASON = "Transcript has no retained source text to prove before purge"
 EMPTY_SOURCE_TEXT_HASH = sha256(b"").hexdigest()
+# Retention confidence counts only when it comes from a completed extraction
+# generation of the evaluated transcript (ADR 0006). Mention candidates record
+# an episode but no transcript or extraction generation, so no transcript has
+# such a confidence yet. Scheduled sweeps and operator preview/apply all use
+# this value, so they reach the same decision and keep the missing-confidence
+# purge blocker in force.
+UNKNOWN_RETENTION_CONFIDENCE: float | None = None
 
 
 class TranscriptSourceRepresentation(StrEnum):
