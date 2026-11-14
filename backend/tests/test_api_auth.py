@@ -3,6 +3,7 @@
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
 
+import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -131,6 +132,44 @@ def test_magic_link_request_requires_configured_delivery(
         json={"email": "reader@example.com"},
     )
     assert_that(response.status_code).is_equal_to(503)
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("//other.example", "/account"),
+        ("/\\other.example", "/account"),
+        ("/\t/other.example", "/account"),
+        ("/a/..//other.example", "/account"),
+        ("/a/../account?tab=alerts#top", "/account?tab=alerts#top"),
+        ("/%2F%2Fother.example", "/%2F%2Fother.example"),
+        ("/%5Cother.example", "/%5Cother.example"),
+    ],
+)
+def test_magic_link_email_constrains_redirect_path(
+    client: TestClient,
+    db_session: Session,
+    target: str,
+    expected: str,
+) -> None:
+    """Client-supplied destinations are normalized before storage and email."""
+    sender = CapturingMagicLinkSender()
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise AssertionError("Expected FastAPI test application")
+    app.dependency_overrides[v2_auth_api.get_auth_magic_link_sender] = lambda: sender
+
+    response = client.post(
+        "/api/v2/auth/magic-link/request",
+        json={"email": "reader@example.com", "redirect_path": target},
+    )
+
+    assert_that(response.status_code).is_equal_to(202)
+    link = urlparse(sender.deliveries[0][1])
+    assert_that(parse_qs(link.query)["redirect_path"]).is_equal_to([expected])
+    assert_that(db_session.query(MagicLinkToken).one().redirect_path).is_equal_to(
+        expected,
+    )
 
 
 def test_me_requires_authentication(client: TestClient) -> None:

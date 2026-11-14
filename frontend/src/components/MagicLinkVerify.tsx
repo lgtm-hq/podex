@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
 import { AccountApiError, verifyMagicLink } from "../lib/account";
+import { sitePath } from "../lib/navigation";
 
 /**
  * Redeems the one-time token from the emailed sign-in link and forwards the
@@ -21,10 +22,7 @@ export default function MagicLinkVerify() {
     }
     verifyMagicLink(token)
       .then(() => {
-        const redirect = params.get("redirect_path");
-        window.location.assign(
-          redirect && redirect.startsWith("/") ? redirect : "/account",
-        );
+        window.location.assign(sitePath(params.get("redirect_path")));
       })
       .catch((cause: unknown) => {
         void (cause instanceof AccountApiError);

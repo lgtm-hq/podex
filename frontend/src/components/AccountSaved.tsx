@@ -5,6 +5,7 @@ import {
   removeSavedMedia,
   type SavedMediaList,
 } from "../lib/account";
+import { sitePath } from "../lib/navigation";
 import AccountShell from "./AccountShell";
 
 /** Saved media list with removal. */
@@ -48,7 +49,10 @@ function SavedBody() {
           className="flex items-center justify-between rounded-lg border border-[color:var(--color-hairline)] p-4"
         >
           <div>
-            <a className="font-medium underline" href={`/media/${item.media.id}`}>
+            <a
+              className="font-medium underline"
+              href={sitePath(`/media/${item.media.id}`)}
+            >
               {item.media.title}
             </a>
             <p className="mt-1 text-xs text-[color:var(--color-muted)]">

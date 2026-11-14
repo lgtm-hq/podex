@@ -103,6 +103,7 @@ from podex.services.magic_link_delivery import (
     build_magic_link_sender,
 )
 from podex.services.notification_delivery import DigestSender, build_digest_sender
+from podex.services.redirect_paths import site_path
 from podex.services.workos_auth import (
     WorkOSAuthClient,
     WorkOSAuthError,
@@ -236,7 +237,11 @@ def request_auth_magic_link(
     issued = issue_magic_link(
         db=db,
         email=payload.email,
-        redirect_path=payload.redirect_path,
+        redirect_path=(
+            site_path(target=payload.redirect_path, origin=settings.public_web_url)
+            if payload.redirect_path is not None
+            else None
+        ),
         ttl_minutes=settings.auth.magic_link_ttl_minutes,
     )
     # The token travels in the URL fragment, which browsers never send in
