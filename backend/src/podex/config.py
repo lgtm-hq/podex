@@ -3,8 +3,29 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class SecretEncodingError(RuntimeError):
+    """Invalid credential configuration, deliberately outside Pydantic errors.
+
+    Pydantic wraps ValueError with the original field input, including in repr.
+    A separate error avoids retaining that secret in a validation diagnostic.
+    """
+
+
+def _validate_secret_encoding(value: str, *, setting: str) -> str:
+    """Require strict UTF-8 without attaching encoding errors containing secrets."""
+    valid = True
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        valid = False
+    if not valid:
+        # Outside the handler: even a suppressed exception context holds the input.
+        raise SecretEncodingError(f"{setting} must be encodable as UTF-8")
+    return value
 
 
 class DatabaseSettings(BaseModel):
@@ -162,6 +183,15 @@ class BillingSettings(BaseModel):
     paddle_webhook_secret: str = ""
     paddle_price_id: str = ""
     paddle_checkout_url: str = ""
+
+    @field_validator("paddle_webhook_secret")
+    @classmethod
+    def validate_webhook_secret(cls, value: str) -> str:
+        """Reject webhook credentials that can never authenticate."""
+        return _validate_secret_encoding(
+            value,
+            setting="PODEX_BILLING__PADDLE_WEBHOOK_SECRET",
+        )
 
     @property
     def paddle_checkout_enabled(self) -> bool:
@@ -378,6 +408,12 @@ class Settings(BaseSettings):
     scheduler_tick_seconds: int = 60
     scheduler_digest_interval_minutes: int = 1440
     scheduler_retention_interval_minutes: int = 1440
+
+    @field_validator("ops_api_key")
+    @classmethod
+    def validate_ops_key(cls, value: str) -> str:
+        """Reject ops credentials that can never authenticate."""
+        return _validate_secret_encoding(value, setting="PODEX_OPS_API_KEY")
 
 
 @lru_cache

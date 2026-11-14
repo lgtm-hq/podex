@@ -26,6 +26,14 @@ PADDLE_SIGNATURE_HEADER = "Paddle-Signature"
 SIGNATURE_TOLERANCE_SECONDS = 300
 """Maximum accepted skew between the signed timestamp and receipt time."""
 
+# Paddle signs Unix seconds. Cover its entire RFC 3339 date range through
+# 9999-12-31T23:59:59Z, rather than constraining timestamps to today's digit count.
+_MAX_SIGNATURE_TIMESTAMP = 253402300799
+_MAX_SIGNATURE_TIMESTAMP_DIGITS = len(str(_MAX_SIGNATURE_TIMESTAMP))
+# One timestamp plus 31 signatures is far above the few needed during rotation.
+# Count before splitting so attacker-controlled parts cannot allocate a huge list.
+_MAX_SIGNATURE_PARTS = 32
+
 _ACTIVE_PADDLE_STATUSES = frozenset({"active", "trialing"})
 _SUBSCRIPTION_EVENT_PREFIX = "subscription."
 
@@ -60,15 +68,23 @@ def verify_paddle_signature(
     """
     timestamp: int | None = None
     digests: list[str] = []
+    if signature_header.count(";") >= _MAX_SIGNATURE_PARTS:
+        raise PaddleSignatureFormatError
     for element in signature_header.split(";"):
         key, separator, value = element.strip().partition("=")
         if not separator:
             continue
         if key == "ts":
-            try:
-                timestamp = int(value)
-            except ValueError as exc:
-                raise PaddleSignatureFormatError from exc
+            if (
+                not value
+                or len(value) > _MAX_SIGNATURE_TIMESTAMP_DIGITS
+                or not value.isascii()
+                or not value.isdecimal()
+            ):
+                raise PaddleSignatureFormatError
+            timestamp = int(value)
+            if timestamp > _MAX_SIGNATURE_TIMESTAMP:
+                raise PaddleSignatureFormatError
         elif key == "h1":
             digests.append(value)
     if timestamp is None or not digests:

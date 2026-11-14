@@ -99,6 +99,52 @@ def _state_cookie(response: httpx2.Response) -> str:
     return cookie[v2_auth_api.WORKOS_STATE_COOKIE].value
 
 
+@pytest.mark.parametrize(
+    ("failure", "expected_status"),
+    [
+        ("mismatch", 400),
+        ("disabled", 404),
+        ("code", 422),
+        ("state", 422),
+        ("error", 500),
+    ],
+)
+def test_failed_callback_expires_state_cookie(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+    expected_status: int,
+) -> None:
+    """Every terminal callback error expires state without changing its status."""
+    _override(client, StubWorkOSClient())
+    if failure == "error":
+
+        def fail_upsert(**_kwargs: object) -> None:
+            """Simulate an unexpected account persistence failure."""
+            raise RuntimeError("persistence failed")
+
+        monkeypatch.setattr(v2_auth_api, "upsert_workos_account_user", fail_upsert)
+    with TestClient(client.app, raise_server_exceptions=False) as callback_client:
+        login = callback_client.get("/api/v2/auth/login", follow_redirects=False)
+        params = {"code": "auth-code", "state": _state_cookie(login)}
+        if failure == "mismatch":
+            params["state"] = "wrong-state"
+        elif failure == "disabled":
+            _override(client, None)
+        elif failure in {"code", "state"}:
+            del params[failure]
+        response = callback_client.get("/api/v2/auth/callback", params=params)
+
+        assert_that(response.status_code).is_equal_to(expected_status)
+        cookie = SimpleCookie(response.headers.get("set-cookie", ""))
+        assert_that(cookie).contains_key(v2_auth_api.WORKOS_STATE_COOKIE)
+        assert_that(cookie[v2_auth_api.WORKOS_STATE_COOKIE]["max-age"]).is_equal_to("0")
+        assert_that(cookie[v2_auth_api.WORKOS_STATE_COOKIE]["path"]).is_equal_to("/")
+        assert_that(callback_client.cookies).does_not_contain(
+            v2_auth_api.WORKOS_STATE_COOKIE
+        )
+
+
 def test_workos_enabled_requires_all_three_settings() -> None:
     """The feature stays off unless every WorkOS credential is present."""
     assert_that(Settings().auth.workos_enabled).is_false()
@@ -547,3 +593,8 @@ def test_callback_maps_exchange_failure_to_bad_gateway(
     )
 
     assert_that(response.status_code).is_equal_to(502)
+    # Default policy: a transient exchange failure requires a fresh sign-in too.
+    cookie = SimpleCookie(response.headers.get("set-cookie", ""))
+    assert_that(cookie).contains_key(v2_auth_api.WORKOS_STATE_COOKIE)
+    assert_that(cookie[v2_auth_api.WORKOS_STATE_COOKIE]["max-age"]).is_equal_to("0")
+    assert_that(client.cookies).does_not_contain(v2_auth_api.WORKOS_STATE_COOKIE)

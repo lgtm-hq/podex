@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from podex.api.deps import AppSettings, DbSession
+from podex.api.v2.auth_state import WORKOS_CALLBACK_ROUTE_NAME, WORKOS_STATE_COOKIE
 from podex.config import Settings, get_settings
 from podex.logging_config import get_logger
 from podex.models import AccountUser, AuditAction
@@ -110,7 +111,6 @@ logger = get_logger(__name__)
 
 # The OAuth ``state`` value only needs to survive one round-trip through the
 # hosted sign-in screen, so its cookie stays deliberately short-lived.
-WORKOS_STATE_COOKIE = "podex_oauth_state"
 _WORKOS_STATE_TTL_SECONDS = 10 * 60
 
 
@@ -803,6 +803,7 @@ router.add_api_route(
 router.add_api_route(
     "/auth/callback",
     complete_workos_callback,
+    name=WORKOS_CALLBACK_ROUTE_NAME,
     methods=["GET"],
     response_model=None,
 )

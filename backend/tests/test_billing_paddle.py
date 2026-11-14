@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import time
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -157,6 +158,100 @@ def test_verify_signature_accepts_valid_header() -> None:
         raw_body=body,
         secret=_SECRET,
     )
+
+
+@pytest.mark.parametrize(
+    "timestamp",
+    ["9" * 309, "9" * 5000, "253402300800", "-1", "+1", "1.0", " 1", "١"],
+)
+def test_verify_signature_rejects_unbounded_or_non_decimal_timestamp(
+    timestamp: str,
+) -> None:
+    """Only bounded ASCII decimal provider timestamps reach skew arithmetic."""
+    with pytest.raises(PaddleSignatureFormatError):
+        verify_paddle_signature(
+            signature_header=f"ts={timestamp};h1=bad",
+            raw_body=b"{}",
+            secret=_SECRET,
+        )
+
+
+def test_verify_signature_accepts_last_provider_timestamp_and_rotation() -> None:
+    """The full provider date range and several rotated signatures remain valid."""
+    verify_paddle_signature(
+        signature_header=_sign(b"{}", ts=253402300799) + ";h1=old;h1=older",
+        raw_body=b"{}",
+        secret=_SECRET,
+        now=datetime(9999, 12, 31, 23, 59, 59, tzinfo=UTC),
+    )
+
+
+@pytest.mark.parametrize("parts", [32, 33])
+def test_signature_parts_limit_preserves_rotation(parts: int) -> None:
+    """A valid final signature works at the cap and is rejected above it."""
+    timestamp, digest = _sign(b"{}").split(";")
+    header = ";".join([timestamp, *(["h1=old"] * (parts - 2)), digest])
+    if parts == 33:
+        with pytest.raises(PaddleSignatureFormatError):
+            verify_paddle_signature(
+                signature_header=header, raw_body=b"{}", secret=_SECRET
+            )
+    else:
+        verify_paddle_signature(signature_header=header, raw_body=b"{}", secret=_SECRET)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("anyio_backend", ["asyncio"])
+@pytest.mark.parametrize("timestamp", [b"+1", b"1.5", b"\xb2", b"\xd9\xa1"])
+async def test_webhook_route_rejects_non_decimal_timestamp_bytes(
+    client: TestClient,
+    timestamp: bytes,
+) -> None:
+    """Raw non-decimal header bytes receive the ordinary malformed response."""
+    _configure_paddle(client)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=client.app, raise_app_exceptions=False),
+        base_url="http://testserver",
+        headers={"X-Request-ID": "timestamp-format-regression"},
+    ) as webhook_client:
+        malformed = await webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers=[(b"Paddle-Signature", b"ts=abc;h1=bad")],
+        )
+        response = await webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers=[(b"Paddle-Signature", b"ts=" + timestamp + b";h1=bad")],
+        )
+
+    assert_that(response.status_code).is_equal_to(400)
+    assert_that(response.json()).is_equal_to(malformed.json())
+
+
+@pytest.mark.parametrize("header", ["ts=" + "9" * 309 + ";h1=bad", "parts"])
+def test_webhook_route_rejects_oversized_signature_input(
+    client: TestClient,
+    header: str,
+) -> None:
+    """Oversized timestamps and thousands of parts use the malformed response."""
+    _configure_paddle(client)
+    signature = _sign(b"{}") + ";h1=old" * 2000 if header == "parts" else header
+    with TestClient(client.app, raise_server_exceptions=False) as webhook_client:
+        headers = {"X-Request-ID": "malformed-webhook-regression"}
+        malformed = webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers={**headers, "Paddle-Signature": "ts=abc;h1=bad"},
+        )
+        response = webhook_client.post(
+            _WEBHOOK_PATH,
+            content=b"{}",
+            headers={**headers, "Paddle-Signature": signature},
+        )
+
+    assert_that(response.status_code).is_equal_to(400)
+    assert_that(response.json()).is_equal_to(malformed.json())
 
 
 @pytest.mark.parametrize(
