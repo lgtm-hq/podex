@@ -42,7 +42,8 @@ def test_ops_and_metrics_use_constant_time_verifier(
     assert_that(operands).is_length(2)
     for operand in operands:
         assert_that(operand).is_instance_of(bytes)
-    assert_that(operands).contains(credential.encode(), _OPS_KEY.encode())
+    # The configured key is the second operand, so timing follows its length.
+    assert_that(operands).is_equal_to((credential.encode(), _OPS_KEY.encode()))
     assert_that(response.text + caplog.text).does_not_contain(_OPS_KEY, credential)
 
 
@@ -103,3 +104,16 @@ def test_invalid_ops_access_is_opaque(
     assert_that(output).does_not_contain(_OPS_KEY)
     if credential:
         assert_that(output).does_not_contain(credential.decode("latin-1"))
+
+
+@pytest.mark.parametrize("path", _PATHS)
+def test_key_with_invalid_utf8_bytes_is_rejected_without_error(
+    client: TestClient,
+    path: str,
+) -> None:
+    """A configured key read from invalid UTF-8 bytes still yields 401."""
+    enable_ops(client, api_key="k\udcff")
+
+    response = client.get(path, headers={"X-Ops-Key": "wrong"})
+
+    assert_that(response.status_code).is_equal_to(401)

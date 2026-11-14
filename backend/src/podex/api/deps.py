@@ -86,8 +86,13 @@ def require_ops_access(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=unconfigured_detail,
         )
-    supplied_key = request.headers.get("X-Ops-Key", "").encode("utf-8")
-    expected_key = settings.ops_api_key.encode("utf-8")
+    # An environment value with invalid UTF-8 bytes is read as lone surrogates;
+    # surrogateescape restores those bytes, so encoding cannot raise.
+    supplied_key = request.headers.get("X-Ops-Key", "").encode(
+        "utf-8",
+        "surrogateescape",
+    )
+    expected_key = settings.ops_api_key.encode("utf-8", "surrogateescape")
     if not secrets.compare_digest(supplied_key, expected_key):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
