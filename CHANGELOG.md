@@ -22,6 +22,56 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.13] - 2026-11-14
+
+### Changed
+
+- **deps**: update pgvector/pgvector:pg16 docker digest to 484e838 (#674) (899aee0)
+- **deps-dev**: update dependency lintro to 0.180.18 (patch) (#676) (27f4287)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.8 (patch) (#673) (f1683b1)
+- **deps-dev**: update dependency lintro to 0.180.14 (patch) (#672) (174b5b5)
+- **deps-dev**: update dependency lintro to 0.180.8 (patch) (#671) (607d364)
+- **deps-dev**: update dependency lintro to 0.180.4 (patch) (#669) (0e89778)
+- **deps-dev**: update dependency lintro to 0.180.1 (minor) (#668) (9d4b219)
+- **deps**: update node.js to 26.13.1 (patch) (#667) (75e27c7)
+- **deps-dev**: update dependency lintro to 0.179.1 (patch) (#666) (13d81d4)
+- **deps-dev**: update dependency lintro to 0.179.0 (minor) (#665) (b471f8b)
+- **deps**: update dependency glob to 14.0.4 (patch) (#663) (c876e4e)
+- **deps-dev**: update dependency lintro to 0.178.2 (patch) (#664) (e75fb49)
+- **deps**: lock file maintenance (#662) (89bfe6c)
+- **deps**: update dependency minimatch to 11.0.5 (patch) (#661) (358c9cf)
+- **deps**: update python:3.15-slim-trixie docker digest to 65a65fc (#660) (9d79af5)
+- **deps**: update step-security/harden-runner action to v2.22.4 (patch) (#659)
+  (faeb932)
+- **deps-dev**: update dependency lintro to 0.178.1 (minor) (#656) (262d8bb)
+- **deps**: update python:3.15-slim-trixie docker digest to e97b88e (#655) (7c05981)
+- **deps**: update node.js to 5adad64 (#653) (e33b417)
+- **deps**: update python:3.15-slim-trixie docker digest to f0aecb3 (#654) (692c696)
+- **deps-dev**: update dependency lintro to 0.177.24 (patch) (#651) (ff2ff5e)
+- **deps-dev**: update dependency lintro to 0.177.22 (patch) (#650) (8b6e68d)
+- **deps**: lock file maintenance (#621) (c108554)
+- **deps-dev**: update dependency lintro to 0.177.19 (patch) (#649) (e2421fb)
+- **deps**: update oven/bun docker tag to 1.4.4 (patch) (#616) (5cc63e4)
+- **deps**: update github-actions (#615) (1c4eca9)
+- **deps-dev**: update dependency lintro to 0.177.18 (patch) (#648) (62b1d8f)
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.84.1 (minor) (#629) (f1500e9)
+- **deps-dev**: update dependency lintro to 0.177.15 (patch) (#647) (cbf2c99)
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.7 (patch) (#646) (00fdf82)
+- **deps**: update python:3.15-slim-trixie docker digest to 8c13a3f (#611) (bbc2095)
+- **deps-dev**: update dependency lintro to 0.177.12 (patch) (#645) (cff22d5)
+- add all-checks gate workflow (#609) (5ec3a36)
+- **deps**: update dependency @types/node to 26.6.6 (patch) (#644) (943021c)
+- **deps-dev**: update dependency lintro to 0.177.11 (patch) (#643) (5f3b3d7)
+- **deps-dev**: update dependency lintro to 0.173.3 (patch) (#639) (19e5a2c)
+- **ci**: make podex runner-switch ready (#640) (bc41ae2)
+- restore block egress policy and pin lgtm-ci v0.79.2 (#638) (63f2177)
+- **deps**: update node.js to 26.13.0 (minor) (#633) (96c719e)
+
+### Fixed
+
+- **ingest**: write a valid run status during discovery (#737) (702fd32)
+- **deps**: clear the dependency security audit findings (#738) (b0135ec)
+
 ## [0.41.12] - 2026-10-29
 
 ### Changed
