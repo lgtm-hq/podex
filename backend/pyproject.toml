@@ -97,6 +97,14 @@ strict = true
 module = ["podex.models.*", "src.podex.models.*"]
 disallow_subclassing_any = false
 
+# The current lint image no longer ships `pydantic-settings`, so `BaseSettings`
+# resolves to `Any` there and the same check rejects the settings class. Scope
+# it off for the settings module only, in both module spellings. Remove this
+# override once the image resolves the dependency again (lgtm-hq/py-lintro#3331).
+[[tool.mypy.overrides]]
+module = ["podex.config", "src.podex.config"]
+disallow_subclassing_any = false
+
 # The CI lint image type-checks without runtime deps installed, so the bare
 # `alembic` import name resolves to the local `alembic/` migration directory
 # (a namespace package) instead of the installed library. Its runtime-proxy
@@ -174,6 +182,12 @@ exclude-too-few-public-methods = [
   "typing.Protocol",
   "starlette.middleware.base.BaseHTTPMiddleware",
 ]
+
+[tool.lintro.mypy]
+# Lintro's own `strict` adds `--allow-subclassing-any` and
+# `--allow-untyped-decorators` after `--strict`, which switches off two checks.
+# Leave strictness to `[tool.mypy] strict = true` above, so both stay on.
+strict = false
 
 [tool.lintro.semgrep]
 # Match quality-ci.yml's explicit, repository-owned Python >=3.11 ruleset.
