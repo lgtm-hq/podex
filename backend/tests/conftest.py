@@ -1,19 +1,28 @@
 """Shared pytest fixtures."""
 
+import json
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 import pytest
+import sentry_sdk
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sentry_sdk.envelope import Envelope
+from sentry_sdk.transport import HttpTransport
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from podex.api.deps import get_app_settings
-from podex.config import RateLimitSettings, RetentionSettings, Settings
+from podex.config import (
+    ObservabilitySettings,
+    RateLimitSettings,
+    RetentionSettings,
+    Settings,
+)
 from podex.database import enable_sqlite_foreign_keys, get_db
 from podex.main import create_app
 from podex.models import (
@@ -211,3 +220,100 @@ def create_podcast_alert_rule(
         event_type="new_episode",
     )
     return rule
+
+
+class SentryEnvelopeRecorder:
+    """Keeps every envelope the reporter would send, instead of sending it.
+
+    Installed by the ``sentry_transport`` fixture in place of
+    ``HttpTransport.capture_envelope``: the SDK builds its normal HTTP
+    transport for the configured DSN, and each envelope (events with their
+    breadcrumbs, sessions, client reports) is recorded here at the point it
+    would be queued for the network. Nothing is sent.
+    """
+
+    def __init__(self) -> None:
+        self.envelopes: list[Envelope] = []
+
+    def record(self, envelope: Envelope) -> None:
+        """Keep the envelope for inspection.
+
+        Args:
+            envelope: The serialisable envelope the SDK would have sent.
+        """
+        self.envelopes.append(envelope)
+
+    def serialized(self) -> str:
+        """Return every captured envelope exactly as it would be sent.
+
+        Returns:
+            str: The concatenated wire payloads (before transport compression).
+        """
+        sentry_sdk.flush()
+        return "".join(
+            envelope.serialize().decode("utf-8") for envelope in self.envelopes
+        )
+
+    def events(self) -> list[dict[str, Any]]:
+        """Return the captured error events.
+
+        Returns:
+            list[dict[str, Any]]: Event payloads in capture order.
+        """
+        sentry_sdk.flush()
+        return [
+            json.loads(item.get_bytes())
+            for envelope in self.envelopes
+            for item in envelope.items
+            if item.type == "event"
+        ]
+
+
+@pytest.fixture(name="sentry_transport")
+def sentry_transport_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[SentryEnvelopeRecorder]:
+    """Record, instead of send, every envelope the reporter emits.
+
+    ``init_sentry`` runs unchanged; only the HTTP transport's send step is
+    replaced for the duration of the test.
+
+    Yields:
+        SentryEnvelopeRecorder: Receives every envelope the SDK emits.
+    """
+    recorder = SentryEnvelopeRecorder()
+    monkeypatch.setattr(HttpTransport, "capture_envelope", recorder.record)
+    sentry_sdk.get_isolation_scope().clear_breadcrumbs()
+    yield recorder
+    sentry_sdk.get_client().close()
+    sentry_sdk.get_global_scope().set_client(None)
+    sentry_sdk.get_isolation_scope().clear()
+
+
+def create_reporting_app(db_session: Session) -> FastAPI:
+    """Build an app that reports errors, with the test database session.
+
+    Use together with the ``sentry_transport`` fixture so reports stay in
+    memory.
+
+    Args:
+        db_session: Database session the app should use.
+
+    Returns:
+        FastAPI: The configured application.
+    """
+    app: FastAPI = create_app(
+        Settings(
+            rate_limit=RateLimitSettings(enabled=False),
+            observability=ObservabilitySettings(
+                sentry_dsn="https://public@sentry.invalid/1",
+            ),
+        ),
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        """Yield the test database session in place of the real one."""
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    return app

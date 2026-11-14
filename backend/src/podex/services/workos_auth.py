@@ -23,8 +23,46 @@ WORKOS_AUTHENTICATE_URL = "https://api.workos.com/user_management/authenticate"
 _EXCHANGE_TIMEOUT_SECONDS = 10.0
 
 
+_INVALID_GRANT = "invalid_grant"
+# Only this module holds the token, so only the exchange client below can
+# construct WorkOSInvalidCodeError.
+_INVALID_CODE_TOKEN = object()
+
+
 class WorkOSAuthError(RuntimeError):
     """Raised when the WorkOS code exchange fails or yields no usable user."""
+
+
+class WorkOSInvalidCodeError(WorkOSAuthError):
+    """The provider rejected the authorization code itself.
+
+    Raised only by :meth:`WorkOSAuthClient.exchange_code` for HTTP 400 with
+    the OAuth 2.0 ``invalid_grant`` error (RFC 6749 section 5.2: the code is
+    invalid, expired, revoked or already used). Any caller can trigger it by
+    replaying or forging a code, so it is logged but not sent to the error
+    reporter. Every other rejection, including 401 for an invalid API key
+    and other 400 errors, stays reportable.
+
+    Construction requires a token private to this module, and the class
+    cannot be subclassed, so ``isinstance`` identifies exactly this answer.
+
+    Args:
+        message: Allowlisted description of the rejection.
+        token: The module-private construction token.
+
+    Raises:
+        TypeError: When constructed without the module-private token.
+    """
+
+    def __init__(self, message: str, *, token: object) -> None:
+        if token is not _INVALID_CODE_TOKEN:
+            msg = "WorkOSInvalidCodeError is raised only by WorkOSAuthClient"
+            raise TypeError(msg)
+        super().__init__(message)
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        msg = "WorkOSInvalidCodeError cannot be subclassed"
+        raise TypeError(msg)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,6 +131,13 @@ class WorkOSAuthClient:
         Raises:
             WorkOSAuthError: If the exchange fails or omits id/email.
         """
+        # Every failure below is raised after leaving its ``except`` block, so
+        # the original error, whose request body holds the client secret and
+        # the code, is neither the cause nor the context of the public error.
+        # Messages carry only allowlisted descriptors (error class name, HTTP
+        # status), never the raw error text, URL or body.
+        response: httpx.Response | None = None
+        failure = ""
         try:
             with httpx.Client(
                 transport=self._transport,
@@ -108,12 +153,25 @@ class WorkOSAuthClient:
                     },
                 )
         except httpx.HTTPError as error:
-            msg = "WorkOS authentication request failed"
-            raise WorkOSAuthError(msg) from error
+            failure = type(error).__name__
+        if response is None:
+            msg = f"WorkOS authentication request failed: {failure}"
+            raise WorkOSAuthError(msg)
         if response.status_code != httpx.codes.OK:
+            if _is_invalid_grant(response):
+                msg = "WorkOS rejected the authorization code (HTTP 400 invalid_grant)"
+                raise WorkOSInvalidCodeError(msg, token=_INVALID_CODE_TOKEN)
             msg = f"WorkOS code exchange rejected with HTTP {response.status_code}"
             raise WorkOSAuthError(msg)
-        payload = response.json()
+        payload: object = None
+        valid_json = True
+        try:
+            payload = response.json()
+        except ValueError:
+            valid_json = False
+        if not valid_json:
+            msg = "WorkOS response was not valid JSON"
+            raise WorkOSAuthError(msg)
         user = payload.get("user") if isinstance(payload, dict) else None
         if not isinstance(user, dict):
             msg = "WorkOS response did not include a user object"
@@ -197,6 +255,27 @@ def upsert_workos_account_user(
         user.last_name = profile.last_name
     db.flush()
     return user
+
+
+def _is_invalid_grant(response: httpx.Response) -> bool:
+    """Return whether a rejection is the OAuth ``invalid_grant`` error.
+
+    Only the ``error`` field is compared against a constant; the body is
+    never copied into a message.
+
+    Args:
+        response: A non-200 response from the authenticate endpoint.
+
+    Returns:
+        bool: True for HTTP 400 with ``{"error": "invalid_grant"}``.
+    """
+    if response.status_code != httpx.codes.BAD_REQUEST:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("error") == _INVALID_GRANT
 
 
 def _optional_name(value: object) -> str | None:

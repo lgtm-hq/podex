@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import RedirectResponse
 
 from podex.api.deps import AppSettings, DbSession
+from podex.api.v2.auth_rejection import SIGN_IN_FAILED, rejected_sign_in_code
 from podex.api.v2.auth_state import (
     WORKOS_CALLBACK_ROUTE_NAME,
     WORKOS_STATE_COOKIE,
@@ -107,12 +108,14 @@ from podex.services.redirect_paths import site_path
 from podex.services.workos_auth import (
     WorkOSAuthClient,
     WorkOSAuthError,
+    WorkOSInvalidCodeError,
     build_workos_auth_client,
     upsert_workos_account_user,
 )
 
 router = APIRouter(tags=["auth"])
 logger = get_logger(__name__)
+
 
 # The OAuth ``state`` value only needs to survive one round-trip through the
 # hosted sign-in screen, so its cookie stays deliberately short-lived.
@@ -362,9 +365,11 @@ def complete_workos_callback(
         profile = workos.exchange_code(code=code)
     except WorkOSAuthError as error:
         logger.warning("workos_code_exchange_failed: %s", error)
+        if isinstance(error, WorkOSInvalidCodeError):
+            raise rejected_sign_in_code() from error
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Unable to complete hosted sign-in",
+            detail=SIGN_IN_FAILED,
         ) from error
     user = upsert_workos_account_user(db=db, profile=profile)
     authenticated = issue_user_session(

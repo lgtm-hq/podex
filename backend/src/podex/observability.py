@@ -3,20 +3,71 @@
 ``init_sentry`` is called from both deployables — the FastAPI app factory
 (``podex.main.create_app``) and the scheduler runner process
 (``podex.scheduler_runner.main``) — so each process reports independently.
-Events pass through :func:`scrub_event` to strip email addresses before
-leaving the process.
+Events pass through :func:`scrub_event` to strip email addresses and request
+query strings before leaving the process.
+
+What the SDK sends, and how credentials are kept out of it:
+
+- Stack frames: source context only. Local-variable capture is off, because
+  frame locals hold OAuth codes, state values, settings with API keys and
+  outbound requests whose bodies carry client secrets.
+- Request data: method and URL (without query string or fragment) of the
+  failing request, plus only the headers in :data:`REPORTED_REQUEST_HEADERS`.
+  Every other header is dropped, so credential headers (``X-Ops-Key``,
+  ``Paddle-Signature``, ``Authorization``, ``Cookie``, and any added later)
+  never leave the process. Request bodies, cookies and the server
+  environment are not sent; ``send_default_pii`` is off, so no client IP or
+  user identity is attached.
+- Breadcrumbs: log records (after the application's logging filters) and
+  outbound HTTP requests. The access logger is excluded, because its records
+  carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
+  raw query, which carries provider API keys, so it is in the scrubber
+  denylist.
+- The provider's rejection of a bad sign-in code, and the callback's handled
+  ``502`` for it, are not sent: they are caller-triggerable, already logged,
+  and reporting them would let any caller spend the reporting quota. They
+  are recognised by two dedicated exception types, each constructible in
+  exactly one place. Any other error is sent, even if the rejection is in
+  its exception chain.
 """
 
 import re
 
 import sentry_sdk
+from sentry_sdk.integrations.logging import ignore_logger
+from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event, Hint
 
 from podex import __version__
+from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import Settings
+from podex.services.workos_auth import WorkOSInvalidCodeError
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _REDACTED = "[redacted-email]"
+_ACCESS_LOGGER = "podex.access"
+
+REPORTED_REQUEST_HEADERS = frozenset(
+    {"content-length", "content-type", "host", "user-agent"},
+)
+"""Request headers kept in error reports; every other header is dropped.
+
+The request id is not taken from the raw ``X-Request-ID`` header: the
+request-context middleware validates it and sets the ``request_id`` tag.
+"""
+
+
+# Keys the SDK's scrubber filters in addition to its defaults, wherever they
+# appear (request bodies and headers, extras, breadcrumb data), recursively.
+_EXTRA_DENYLIST = (
+    # Outbound-request breadcrumbs keep the raw query and fragment.
+    "http.query",
+    "http.fragment",
+    # OAuth parameters.
+    "code",
+    "state",
+    "client_secret",
+)
 
 
 def _scrub_text(value: str) -> str:
@@ -46,11 +97,69 @@ def _scrub_mapping(data: dict[str, object]) -> dict[str, object]:
     }
 
 
-def scrub_event(event: Event, hint: Hint) -> Event:
-    """``before_send`` hook that strips PII (emails) from an event.
+def _minimise_request(request: dict[str, object]) -> None:
+    """Reduce captured request data to what is safe and useful to report.
 
-    Scrubs email addresses from the event message and ``extra`` values, and
-    drops ``user.email`` entirely (scrubbing the remaining user fields).
+    Drops the query string, fragment, body, cookies and server environment,
+    and keeps only the allowlisted headers.
+
+    Args:
+        request: The event's ``request`` mapping, edited in place.
+    """
+    for key in ("query_string", "data", "cookies", "env"):
+        request.pop(key, None)
+    url = request.get("url")
+    if isinstance(url, str):
+        request["url"] = url.split("#", 1)[0].split("?", 1)[0]
+    headers = request.get("headers")
+    if isinstance(headers, dict):
+        request["headers"] = {
+            name: value
+            for name, value in headers.items()
+            if isinstance(name, str) and name.lower() in REPORTED_REQUEST_HEADERS
+        }
+    else:
+        request.pop("headers", None)
+
+
+def _is_unreported(hint: Hint) -> bool:
+    """Return whether the reported exception is the expected bad-code rejection.
+
+    Only two exception types, each constructible in exactly one place, are
+    dropped: :class:`WorkOSInvalidCodeError` (raised only by the WorkOS
+    exchange client for the provider's ``invalid_grant`` answer) and
+    :class:`RejectedSignInCodeError` (the 502 raised only by the sign-in
+    callback, explicitly from that rejection). Neither can be subclassed, so
+    ``isinstance`` matches exactly those types. Anything else is reported,
+    including any other exception whose cause or context holds the
+    rejection: a real server error raised while handling it must not be
+    hidden, and a caller cannot create a dropped type by sending a bad code.
+
+    Args:
+        hint: The SDK hint, carrying ``exc_info`` for exception events.
+
+    Returns:
+        bool: True when the event is for the expected rejection only.
+    """
+    exc_info = hint.get("exc_info")
+    if not isinstance(exc_info, tuple) or not isinstance(exc_info[1], BaseException):
+        return False
+    error = exc_info[1]
+    if isinstance(error, WorkOSInvalidCodeError):
+        return True
+    return isinstance(error, RejectedSignInCodeError) and isinstance(
+        error.__cause__,
+        WorkOSInvalidCodeError,
+    )
+
+
+def scrub_event(event: Event, hint: Hint) -> Event:
+    """Minimise an event's data before it is sent.
+
+    Scrubs email addresses from the event message and ``extra`` values, drops
+    ``user.email`` entirely (scrubbing the remaining user fields), and
+    reduces request data to the method, the URL without query string, and
+    the allowlisted headers.
 
     Args:
         event: Sentry event payload about to be sent.
@@ -70,7 +179,25 @@ def scrub_event(event: Event, hint: Hint) -> Event:
     if isinstance(user, dict):
         user.pop("email", None)
         event["user"] = _scrub_mapping(user)
+    request = event.get("request")
+    if isinstance(request, dict):
+        _minimise_request(request)
     return event
+
+
+def before_send(event: Event, hint: Hint) -> Event | None:
+    """``before_send`` hook: drop unreported errors, minimise the rest.
+
+    Args:
+        event: Sentry event payload about to be sent.
+        hint: SDK context; ``exc_info`` identifies the reported exception.
+
+    Returns:
+        The minimised event, or ``None`` to drop it.
+    """
+    if _is_unreported(hint):
+        return None
+    return scrub_event(event, hint)
 
 
 def init_sentry(settings: Settings) -> bool:
@@ -92,7 +219,15 @@ def init_sentry(settings: Settings) -> bool:
         dsn=settings.observability.sentry_dsn,
         environment=settings.observability.sentry_environment,
         release=f"podex@{__version__}",
-        before_send=scrub_event,
+        before_send=before_send,
         send_default_pii=False,
+        include_local_variables=False,
+        max_request_body_size="never",
+        event_scrubber=EventScrubber(
+            denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
+            recursive=True,
+        ),
     )
+    # Access records carry the client address; keep them out of breadcrumbs.
+    ignore_logger(_ACCESS_LOGGER)
     return True

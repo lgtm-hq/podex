@@ -101,6 +101,8 @@ EXPOSE 8000
 # start.sh optionally runs migrations (AUTO_MIGRATE=1) then exec's CMD.
 # Default CMD serves the API via uvicorn from the resolved venv (PATH-first);
 # the scheduler deployable overrides CMD with `python -m podex.scheduler_runner`
-# and shares the same entrypoint contract.
+# and shares the same entrypoint contract. Uvicorn's access log is off because
+# it prints full query strings (OAuth callback codes and state); the app's
+# `podex.access` logger records method, path, status and duration instead.
 ENTRYPOINT ["/app/scripts/start.sh"]
-CMD ["uvicorn", "podex.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "podex.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-access-log"]
