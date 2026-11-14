@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import string
 from collections.abc import Sequence
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -606,12 +606,9 @@ def persist_extracted_candidates(
 
     for item in items:
         if item.confidence < min_confidence:
-            summary = PersistedExtractionReviewData(
-                candidates_created=summary.candidates_created,
-                candidates_updated=summary.candidates_updated,
-                review_items_created=summary.review_items_created,
+            summary = replace(
+                summary,
                 skipped_low_confidence=summary.skipped_low_confidence + 1,
-                skipped_existing_mentions=summary.skipped_existing_mentions,
             )
             continue
 
@@ -626,11 +623,8 @@ def persist_extracted_candidates(
             incoming.media_id is not None
             and incoming.media_id in existing_media_mentions
         ):
-            summary = PersistedExtractionReviewData(
-                candidates_created=summary.candidates_created,
-                candidates_updated=summary.candidates_updated,
-                review_items_created=summary.review_items_created,
-                skipped_low_confidence=summary.skipped_low_confidence,
+            summary = replace(
+                summary,
                 skipped_existing_mentions=summary.skipped_existing_mentions + 1,
             )
             continue
@@ -645,12 +639,8 @@ def persist_extracted_candidates(
 
         if candidate is None:
             if len(existing_candidates) >= max_candidates_per_episode:
-                summary = PersistedExtractionReviewData(
-                    candidates_created=summary.candidates_created,
-                    candidates_updated=summary.candidates_updated,
-                    review_items_created=summary.review_items_created,
-                    skipped_low_confidence=summary.skipped_low_confidence,
-                    skipped_existing_mentions=summary.skipped_existing_mentions,
+                summary = replace(
+                    summary,
                     skipped_over_limit=summary.skipped_over_limit + 1,
                 )
                 continue
@@ -677,17 +667,15 @@ def persist_extracted_candidates(
                 changed_fields=[],
             )
             existing_candidates.append(candidate)
-            summary = PersistedExtractionReviewData(
+            summary = replace(
+                summary,
                 candidates_created=summary.candidates_created + 1,
-                candidates_updated=summary.candidates_updated,
                 review_items_created=summary.review_items_created
                 + int(
                     _ensure_review_item(
                         db=db, candidate=candidate, confidence=item.confidence
                     )
                 ),
-                skipped_low_confidence=summary.skipped_low_confidence,
-                skipped_existing_mentions=summary.skipped_existing_mentions,
             )
             continue
 
@@ -705,8 +693,8 @@ def persist_extracted_candidates(
                 change_summary=_build_change_summary(changed_fields=changed_fields),
                 changed_fields=changed_fields,
             )
-        summary = PersistedExtractionReviewData(
-            candidates_created=summary.candidates_created,
+        summary = replace(
+            summary,
             candidates_updated=summary.candidates_updated + int(bool(changed_fields)),
             review_items_created=(
                 summary.review_items_created
@@ -716,8 +704,6 @@ def persist_extracted_candidates(
                     )
                 )
             ),
-            skipped_low_confidence=summary.skipped_low_confidence,
-            skipped_existing_mentions=summary.skipped_existing_mentions,
         )
 
     return summary

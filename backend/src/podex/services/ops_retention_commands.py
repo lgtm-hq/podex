@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy.orm import Session
 
+from podex.config import RetentionSettings
 from podex.models import (
     MentionCandidate,
     Transcript,
@@ -27,6 +28,7 @@ from podex.services.transcript_retention import (
 from podex.services.transcript_retention_commands import (
     evaluate_transcript_retention,
     purge_transcript_if_eligible,
+    require_transcript_purge_enabled,
 )
 
 
@@ -173,8 +175,10 @@ def purge_ops_transcript(
     transcript_id: int,
     artifact_store: TranscriptArtifactStore | None = None,
     now: datetime | None = None,
+    retention: RetentionSettings | None = None,
 ) -> OpsTranscriptPurgeResultData | None:
     """Purge an eligible transcript after checking public derivative coverage."""
+    require_transcript_purge_enabled(retention)
     transcript = db.query(Transcript).filter(Transcript.id == transcript_id).first()
     if transcript is None:
         return None
@@ -186,6 +190,7 @@ def purge_ops_transcript(
         transcript=transcript,
         artifact_store=artifact_store,
         now=now,
+        retention=retention,
     ):
         raise ValueError("Transcript is not eligible for purge")
     digest = (

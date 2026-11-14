@@ -74,7 +74,9 @@ def run_tick(
     planned = plan_due_scheduled_work(db=db, now=effective_now)
     discovery = run_due_episode_discovery_work(db=db)
     digests = run_due_digest_work(db=db, sender=digest_sender, now=effective_now)
-    retention = run_due_retention_work(db=db, now=effective_now)
+    retention = run_due_retention_work(
+        db=db, now=effective_now, retention=settings.retention
+    )
     db.commit()
     return TickSummaryData(
         planned=len(planned),

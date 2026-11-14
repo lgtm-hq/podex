@@ -25,6 +25,7 @@ class TranscriptRetentionBlocker(StrEnum):
     DIGEST_REQUIRED = auto()
     LOW_CONFIDENCE = auto()
     MISSING_CONFIDENCE = auto()
+    PURGE_DISABLED = auto()
     RETENTION_EXEMPT_SAMPLE = auto()
 
 
