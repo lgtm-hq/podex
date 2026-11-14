@@ -66,6 +66,17 @@ class StatsCacheSettings(BaseModel):
     ttl_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
 
 
+class FeedHttpSettings(BaseModel):
+    """Public feed HTTP limits under ``PODEX_FEED_HTTP__<FIELD>``."""
+
+    connect_timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
+    read_timeout_seconds: float = Field(default=10.0, gt=0, allow_inf_nan=False)
+    total_timeout_seconds: float = Field(default=30.0, gt=0, allow_inf_nan=False)
+    max_redirects: int = Field(default=5, ge=0, le=20)
+    max_response_bytes: int = Field(default=5_242_880, gt=0)
+    max_decompressed_bytes: int = Field(default=10_485_760, gt=0)
+
+
 class TranscriptStorageSettings(BaseModel):
     """Encrypted raw transcript artifact storage (filesystem or S3/R2).
 
@@ -337,6 +348,7 @@ class Settings(BaseSettings):
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     rate_limit: RateLimitSettings = Field(default_factory=RateLimitSettings)
     stats_cache: StatsCacheSettings = Field(default_factory=StatsCacheSettings)
+    feed_http: FeedHttpSettings = Field(default_factory=FeedHttpSettings)
     transcripts: TranscriptStorageSettings = Field(
         default_factory=TranscriptStorageSettings,
     )

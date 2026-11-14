@@ -14,6 +14,7 @@ from podex.services.discovery_orchestrator import DiscoveryOrchestrator
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
+from podex.services.feed_http import FeedHttpClient
 from tests.conftest import persist_episode
 
 _FEED = """<?xml version="1.0"?>
@@ -78,9 +79,23 @@ class _BoomProvider(_StubProvider):
         raise RuntimeError("feed exploded")
 
 
+def _rss_with_feed() -> RSSDiscovery:
+    """Provide fixture bytes through the production HTTP boundary."""
+
+    async def resolve(host: str, port: int) -> list[str]:
+        """Return a public address without DNS traffic."""
+        del host, port
+        return ["93.184.216.34"]
+
+    transport = httpx.MockTransport(
+        lambda request: httpx.Response(200, stream=httpx.ByteStream(_FEED.encode()))
+    )
+    return RSSDiscovery(FeedHttpClient(resolver=resolve, transport=transport))
+
+
 def test_rss_discover_podcast_parses_channel_metadata() -> None:
     """Channel metadata maps onto DiscoveredPodcast fields."""
-    podcast = RSSDiscovery().discover_podcast(_FEED)
+    podcast = _rss_with_feed().discover_podcast("https://feeds.example/show")
 
     assert_that(podcast).is_not_none()
     parsed = cast(DiscoveredPodcast, podcast)
@@ -92,9 +107,11 @@ def test_rss_discover_podcast_parses_channel_metadata() -> None:
 def test_rss_discover_episodes_parses_entries(db_session: Session) -> None:
     """Feed entries parse duration, guid, date, and stripped description."""
     del db_session
-    stub = Podcast(name="Example Show", slug="example-show", rss_url=_FEED)
+    stub = Podcast(
+        name="Example Show", slug="example-show", rss_url="https://feeds.example/show"
+    )
 
-    episodes = RSSDiscovery().discover_episodes(stub)
+    episodes = _rss_with_feed().discover_episodes(stub)
 
     assert_that(episodes).is_length(2)
     pilot = episodes[0]

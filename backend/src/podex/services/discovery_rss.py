@@ -10,6 +10,7 @@ import logging
 import re
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
+from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
 import feedparser
@@ -19,6 +20,7 @@ from podex.services.discovery import (
     DiscoveredPodcast,
     slugify_podcast_name,
 )
+from podex.services.feed_http import FeedFetcher, FeedHttpClient
 
 if TYPE_CHECKING:
     from podex.models import Podcast
@@ -27,7 +29,13 @@ logger = logging.getLogger(__name__)
 
 
 class RSSDiscovery:
-    """Discover podcasts and episodes from RSS feeds."""
+    """Discover podcasts and episodes from RSS feeds.
+
+    Both entry points use the same injectable bounded byte fetcher.
+    """
+
+    def __init__(self, fetcher: FeedFetcher | None = None) -> None:
+        self.fetcher = fetcher if fetcher is not None else FeedHttpClient()
 
     @property
     def name(self) -> str:
@@ -48,10 +56,10 @@ class RSSDiscovery:
         Returns:
             DiscoveredPodcast with metadata, or None if feed is invalid
         """
-        feed = feedparser.parse(rss_url)
+        feed = feedparser.parse(BytesIO(self.fetcher.fetch(rss_url)))
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed: %s", rss_url)
+            logger.warning("Failed to parse RSS feed bytes")
             return None
 
         channel = feed.feed
@@ -95,10 +103,10 @@ class RSSDiscovery:
             logger.warning("Podcast %s has no rss_url", podcast.slug)
             return []
 
-        feed = feedparser.parse(podcast.rss_url)
+        feed = feedparser.parse(BytesIO(self.fetcher.fetch(podcast.rss_url)))
 
         if feed.bozo and not feed.entries:
-            logger.warning("Failed to parse RSS feed: %s", podcast.rss_url)
+            logger.warning("Failed to parse RSS feed bytes")
             return []
 
         episodes = []

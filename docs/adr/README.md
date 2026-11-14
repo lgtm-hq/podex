@@ -10,6 +10,7 @@ PRs, and the changelog record *what* changed.
 | --- | --- | --- | --- |
 | [0001](./0001-nested-settings-models.md) | Nested settings models with hard cutover | accepted | 2026-07-20 |
 | [0002](./0002-enrichment-provider-registry.md) | Enrichment provider registry | accepted | 2026-07-21 |
+| [0003](./0003-bounded-public-feed-http.md) | Bounded public feed HTTP boundary | proposed | 2026-11-14 |
 
 ## Format
 
