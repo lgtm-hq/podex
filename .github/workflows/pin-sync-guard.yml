@@ -1,0 +1,55 @@
+---
+name: Quality - Pin Sync Guard
+# Fails when lgtm-ci pins drift (#42): every lgtm-ci `uses:` and `tooling-ref:`
+# must name the same SHA and version comment, a `tooling-ref:` must repeat its
+# own job's `uses:` pin, and release-recovery callers keep an explicit one.
+# The rules live in .github/scripts/check-lgtm-ci-pin-sync.sh (BATS:
+# tests/bats/ci/test_pin_sync_guard.bats). Not a ruleset-required context.
+
+"on":
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/check-lgtm-ci-pin-sync.sh'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/**'
+      - '.github/scripts/check-lgtm-ci-pin-sync.sh'
+  merge_group:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: pin-sync-guard-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  pin-sync:
+    name: 🔗 lgtm-ci Pin Sync
+    runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Harden runner
+        # Pinned to SHA for supply chain security
+        # yamllint disable-line rule:line-length
+        uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+      - name: Checkout workflows and guard script
+        # Pinned to SHA for supply chain security
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          sparse-checkout: .github
+          persist-credentials: false
+      - name: Check lgtm-ci pin sync
+        run: bash .github/scripts/check-lgtm-ci-pin-sync.sh
