@@ -12,6 +12,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -98,7 +99,9 @@ class iTunesProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore]
             result: list[dict[str, Any]] = data.get("results", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning("iTunes search error for '%s': %s", query, e)
+            logger.warning(
+                "iTunes search error for '%s': %s", query, describe_http_error(e)
+            )
             return []
 
     def _find_best_match(

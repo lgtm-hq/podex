@@ -9,6 +9,7 @@ import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 from podex.api.deps import get_app_settings
 from podex.config import Settings
@@ -134,7 +135,7 @@ async def test_unencodable_configured_key_never_authenticates(
     """A configured key without a valid UTF-8 encoding yields 401, never 200 or 500."""
     # Settings now reject this at load. Deliberately bypass validation to retain
     # coverage of the verifier's defensive handling of an injected invalid key.
-    settings = Settings().model_copy(update={"ops_api_key": configured_key})
+    settings = Settings().model_copy(update={"ops_api_key": SecretStr(configured_key)})
     app = client.app
     if not isinstance(app, FastAPI):
         raise AssertionError("Expected the FastAPI test fixture")

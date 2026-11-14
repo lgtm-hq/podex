@@ -1,9 +1,15 @@
-"""Application configuration loaded from the environment."""
+"""Application configuration loaded from the environment.
+
+Credentials (API keys, passwords, signing and encryption keys, and URLs that
+can embed a password) are held as :class:`~pydantic.SecretStr`, so ``repr``,
+``str`` and serialisation of any settings model mask them. Each use reads the
+value explicitly with ``get_secret_value()``.
+"""
 
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -15,11 +21,11 @@ class SecretEncodingError(RuntimeError):
     """
 
 
-def _validate_secret_encoding(value: str, *, setting: str) -> str:
+def _validate_secret_encoding(value: SecretStr, *, setting: str) -> SecretStr:
     """Require strict UTF-8 without attaching encoding errors containing secrets."""
     valid = True
     try:
-        value.encode("utf-8")
+        value.get_secret_value().encode("utf-8")
     except UnicodeEncodeError:
         valid = False
     if not valid:
@@ -36,7 +42,8 @@ class DatabaseSettings(BaseModel):
     Flat names such as ``PODEX_DATABASE_URL`` are not recognized.
     """
 
-    url: str = "sqlite:///./podex.db"
+    # A server URL embeds the database password, so the whole URL is masked.
+    url: SecretStr = SecretStr("sqlite:///./podex.db")
 
     # Connection pooling for server-backed databases (Railway + Neon).
     # Applied only when ``url`` is not SQLite; the local SQLite default
@@ -66,7 +73,7 @@ class RateLimitSettings(BaseModel):
     max_requests: int = 120
     window_seconds: float = 60.0
     exempt_paths: list[str] = ["/health"]
-    redis_url: str = ""
+    redis_url: SecretStr = SecretStr("")
     redis_prefix: str = "podex:ratelimit"
 
 
@@ -112,12 +119,12 @@ class TranscriptStorageSettings(BaseModel):
     # from the deployment environment.
     storage_backend: str = "encrypted_filesystem"
     storage_path: Path = Path("./data/transcript-artifacts")
-    encryption_key: str = ""
+    encryption_key: SecretStr = SecretStr("")
     s3_bucket: str = ""
     s3_endpoint_url: str = ""
     s3_region_name: str = ""
-    s3_access_key_id: str = ""
-    s3_secret_access_key: str = ""
+    s3_access_key_id: SecretStr = SecretStr("")
+    s3_secret_access_key: SecretStr = SecretStr("")
 
 
 class AuthSettings(BaseModel):
@@ -137,7 +144,7 @@ class AuthSettings(BaseModel):
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
-    smtp_password: str = ""
+    smtp_password: SecretStr = SecretStr("")
     smtp_from_email: str = ""
     smtp_starttls: bool = True
 
@@ -145,14 +152,16 @@ class AuthSettings(BaseModel):
     # deployment environment; with any of them missing the feature stays
     # off and the SMTP magic-link flow remains the only sign-in path.
     workos_client_id: str = ""
-    workos_api_key: str = ""
+    workos_api_key: SecretStr = SecretStr("")
     workos_redirect_uri: str = ""
 
     @property
     def workos_enabled(self) -> bool:
         """Whether hosted WorkOS AuthKit sign-in is fully configured."""
         return bool(
-            self.workos_client_id and self.workos_api_key and self.workos_redirect_uri,
+            self.workos_client_id
+            and self.workos_api_key.get_secret_value()
+            and self.workos_redirect_uri,
         )
 
 
@@ -179,14 +188,14 @@ class BillingSettings(BaseModel):
     # string so the Paddle provider stays disabled until the deployment
     # environment configures it; the webhook route rejects requests until
     # the signing secret is set.
-    paddle_api_key: str = ""
-    paddle_webhook_secret: str = ""
+    paddle_api_key: SecretStr = SecretStr("")
+    paddle_webhook_secret: SecretStr = SecretStr("")
     paddle_price_id: str = ""
     paddle_checkout_url: str = ""
 
     @field_validator("paddle_webhook_secret")
     @classmethod
-    def validate_webhook_secret(cls, value: str) -> str:
+    def validate_webhook_secret(cls, value: SecretStr) -> SecretStr:
         """Reject webhook credentials that can never authenticate."""
         return _validate_secret_encoding(
             value,
@@ -227,7 +236,7 @@ class TmdbEnrichmentSettings(BaseModel):
 
     enabled: bool = True
     base_url: str = "https://api.themoviedb.org/3"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
 
 
 class OmdbEnrichmentSettings(BaseModel):
@@ -239,7 +248,7 @@ class OmdbEnrichmentSettings(BaseModel):
 
     enabled: bool = True
     base_url: str = "https://www.omdbapi.com"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
 
 
 class GoogleBooksEnrichmentSettings(BaseModel):
@@ -251,7 +260,7 @@ class GoogleBooksEnrichmentSettings(BaseModel):
 
     enabled: bool = True
     base_url: str = "https://www.googleapis.com/books/v1"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
 
 
 class OpenLibraryEnrichmentSettings(BaseModel):
@@ -295,7 +304,7 @@ class PubmedEnrichmentSettings(BaseModel):
 
     enabled: bool = True
     base_url: str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
 
 
 class SemanticScholarEnrichmentSettings(BaseModel):
@@ -306,7 +315,7 @@ class SemanticScholarEnrichmentSettings(BaseModel):
 
     enabled: bool = True
     base_url: str = "https://api.semanticscholar.org/graph/v1"
-    api_key: str = ""
+    api_key: SecretStr = SecretStr("")
 
 
 class CrossrefEnrichmentSettings(BaseModel):
@@ -399,7 +408,7 @@ class Settings(BaseSettings):
     # Ops console API. The ops surface stays disabled until a key is
     # configured by the deployment environment; requests must present it in
     # the X-Ops-Key header.
-    ops_api_key: str = ""
+    ops_api_key: SecretStr = SecretStr("")
     ops_review_pending_alert_threshold: int = 50
     ops_alert_delivery_pending_threshold: int = 25
 
@@ -411,7 +420,7 @@ class Settings(BaseSettings):
 
     @field_validator("ops_api_key")
     @classmethod
-    def validate_ops_key(cls, value: str) -> str:
+    def validate_ops_key(cls, value: SecretStr) -> SecretStr:
         """Reject ops credentials that can never authenticate."""
         return _validate_secret_encoding(value, setting="PODEX_OPS_API_KEY")
 

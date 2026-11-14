@@ -247,7 +247,8 @@ def build_transcript_artifact_store(
     settings: Settings,
 ) -> TranscriptArtifactStore | None:
     """Build the configured private artifact adapter when a key is supplied."""
-    if not settings.transcripts.encryption_key:
+    encryption_key = settings.transcripts.encryption_key.get_secret_value()
+    if not encryption_key:
         return None
     backend = TranscriptArtifactStorageBackend(
         settings.transcripts.storage_backend,
@@ -255,15 +256,17 @@ def build_transcript_artifact_store(
     if backend is TranscriptArtifactStorageBackend.ENCRYPTED_S3:
         return EncryptedS3TranscriptArtifactStore(
             bucket=settings.transcripts.s3_bucket,
-            encryption_key=settings.transcripts.encryption_key,
+            encryption_key=encryption_key,
             endpoint_url=settings.transcripts.s3_endpoint_url,
             region_name=settings.transcripts.s3_region_name,
-            access_key_id=settings.transcripts.s3_access_key_id,
-            secret_access_key=settings.transcripts.s3_secret_access_key,
+            access_key_id=settings.transcripts.s3_access_key_id.get_secret_value(),
+            secret_access_key=(
+                settings.transcripts.s3_secret_access_key.get_secret_value()
+            ),
         )
     return EncryptedFilesystemTranscriptArtifactStore(
         root_path=settings.transcripts.storage_path,
-        encryption_key=settings.transcripts.encryption_key,
+        encryption_key=encryption_key,
     )
 
 

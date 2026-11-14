@@ -205,12 +205,17 @@ class EnrichmentProvider(ABC):
         self.close()
 
     def _configure_http_client(
-        self, base_url: str | None, *, params: dict[str, str] | None = None
+        self,
+        base_url: str | None,
+        *,
+        params: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
     ) -> None:
         """Create the provider HTTP client with the shared finite timeout."""
         self.client = httpx.Client(
             base_url=base_url or self.BASE_URL,
             params=params,
+            headers=headers,
             timeout=30.0,
         )
 

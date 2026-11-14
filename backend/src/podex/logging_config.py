@@ -9,15 +9,21 @@ _CREDENTIAL_QUERY_PARAMS = ("api_key", "apikey", "key")
 
 
 def _safe_httpx_argument(value: object) -> object:
-    """Remove provider credentials from a logged URL without changing requests."""
+    """Remove credentials from a logged URL without changing requests.
+
+    Drops the userinfo (``user:password@``), the fragment and the provider
+    credential query fields; the scheme, host, path and other query fields
+    stay for diagnostics.
+    """
     if isinstance(value, httpx.URL):
+        value = value.copy_with(username=None, password=None, fragment=None)
         for name in _CREDENTIAL_QUERY_PARAMS:
             value = value.copy_remove_param(name)
     return value
 
 
 def _redact_httpx_credentials(record: logging.LogRecord) -> bool:
-    """Keep HTTPX request diagnostics while removing credential query fields."""
+    """Keep HTTPX request diagnostics while removing URL credentials."""
     if isinstance(record.args, tuple):
         record.args = tuple(_safe_httpx_argument(value) for value in record.args)
     return True

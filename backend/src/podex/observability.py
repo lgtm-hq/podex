@@ -23,6 +23,11 @@ What the SDK sends, and how credentials are kept out of it:
   carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
   raw query, which carries provider API keys, so it is in the scrubber
   denylist.
+- Free text (exception messages, log messages, breadcrumb text and data):
+  URL userinfo and the known secret values of the loaded settings are
+  replaced by :mod:`podex.redaction` in ``before_send`` and
+  ``before_breadcrumb``, whatever field holds the text. Breadcrumb data keeps
+  only the allowlisted headers, as request data does.
 - The provider's rejection of a bad sign-in code, and the callback's handled
   ``502`` for it, are not sent: they are caller-triggerable, already logged,
   and reporting them would let any caller spend the reporting quota. They
@@ -32,15 +37,17 @@ What the SDK sends, and how credentials are kept out of it:
 """
 
 import re
+from typing import Any
 
 import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
-from sentry_sdk.types import Event, Hint
+from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
 
 from podex import __version__
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import Settings
+from podex.redaction import SecretRedactor, redact_in_place, secret_values
 from podex.services.workos_auth import WorkOSInvalidCodeError
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -55,6 +62,11 @@ REPORTED_REQUEST_HEADERS = frozenset(
 The request id is not taken from the raw ``X-Request-ID`` header: the
 request-context middleware validates it and sets the ``request_id`` tag.
 """
+
+
+# Replaces URL userinfo and the secret values of the settings the reporter was
+# last initialised with; until then, URL userinfo only.
+_REDACTOR = SecretRedactor()
 
 
 # Keys the SDK's scrubber filters in addition to its defaults, wherever they
@@ -97,6 +109,22 @@ def _scrub_mapping(data: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _allowlisted_headers(headers: dict[Any, Any]) -> dict[Any, Any]:
+    """Return only the reported headers of a header mapping.
+
+    Args:
+        headers: Header names and values.
+
+    Returns:
+        dict: The entries whose name is in :data:`REPORTED_REQUEST_HEADERS`.
+    """
+    return {
+        name: value
+        for name, value in headers.items()
+        if isinstance(name, str) and name.lower() in REPORTED_REQUEST_HEADERS
+    }
+
+
 def _minimise_request(request: dict[str, object]) -> None:
     """Reduce captured request data to what is safe and useful to report.
 
@@ -113,11 +141,7 @@ def _minimise_request(request: dict[str, object]) -> None:
         request["url"] = url.split("#", 1)[0].split("?", 1)[0]
     headers = request.get("headers")
     if isinstance(headers, dict):
-        request["headers"] = {
-            name: value
-            for name, value in headers.items()
-            if isinstance(name, str) and name.lower() in REPORTED_REQUEST_HEADERS
-        }
+        request["headers"] = _allowlisted_headers(headers)
     else:
         request.pop("headers", None)
 
@@ -156,7 +180,9 @@ def _is_unreported(hint: Hint) -> bool:
 def scrub_event(event: Event, hint: Hint) -> Event:
     """Minimise an event's data before it is sent.
 
-    Scrubs email addresses from the event message and ``extra`` values, drops
+    Replaces URL userinfo and known secret values in every string of the
+    event (messages, exception values, breadcrumbs, extras), scrubs email
+    addresses from the event message and ``extra`` values, drops
     ``user.email`` entirely (scrubbing the remaining user fields), and
     reduces request data to the method, the URL without query string, and
     the allowlisted headers.
@@ -169,6 +195,7 @@ def scrub_event(event: Event, hint: Hint) -> Event:
         The scrubbed event.
     """
     del hint
+    redact_in_place(event, _REDACTOR.redact)
     message = event.get("message")
     if isinstance(message, str):
         event["message"] = _scrub_text(message)
@@ -200,6 +227,31 @@ def before_send(event: Event, hint: Hint) -> Event | None:
     return scrub_event(event, hint)
 
 
+def before_breadcrumb(crumb: Breadcrumb, hint: BreadcrumbHint) -> Breadcrumb:
+    """``before_breadcrumb`` hook: keep credentials out of breadcrumbs.
+
+    Header mappings in breadcrumb data keep only the allowlisted headers, and
+    URL userinfo and known secret values are replaced in every string.
+
+    Args:
+        crumb: The breadcrumb about to be recorded.
+        hint: SDK context (unused).
+
+    Returns:
+        The minimised breadcrumb.
+    """
+    del hint
+    data = crumb.get("data")
+    if isinstance(data, dict):
+        for key, value in data.items():
+            if isinstance(key, str) and key.lower() == "headers":
+                data[key] = (
+                    _allowlisted_headers(value) if isinstance(value, dict) else {}
+                )
+    redact_in_place(crumb, _REDACTOR.redact)
+    return crumb
+
+
 def init_sentry(settings: Settings) -> bool:
     """Initialize the Sentry SDK when a DSN is configured.
 
@@ -215,11 +267,13 @@ def init_sentry(settings: Settings) -> bool:
     """
     if not settings.observability.sentry_dsn:
         return False
+    _REDACTOR.configure(secret_values(settings))
     sentry_sdk.init(
         dsn=settings.observability.sentry_dsn,
         environment=settings.observability.sentry_environment,
         release=f"podex@{__version__}",
         before_send=before_send,
+        before_breadcrumb=before_breadcrumb,
         send_default_pii=False,
         include_local_variables=False,
         max_request_body_size="never",

@@ -18,6 +18,10 @@ def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
     settings-driven pool sizing so suspended or rotated backends are detected
     and idle connections are recycled.
 
+    Every engine hides statement parameters from its error messages and logs
+    (``hide_parameters``): bound values can be credentials or personal data,
+    and database errors are logged and reported.
+
     Args:
         settings: Application settings providing ``settings.database`` URL
             and pool tuning values.
@@ -25,9 +29,10 @@ def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
     Returns:
         Keyword arguments to splat into :func:`sqlalchemy.create_engine`.
     """
-    if settings.database.url.startswith("sqlite"):
-        return {"connect_args": {"check_same_thread": False}}
+    if settings.database.url.get_secret_value().startswith("sqlite"):
+        return {"connect_args": {"check_same_thread": False}, "hide_parameters": True}
     return {
+        "hide_parameters": True,
         "pool_pre_ping": True,
         "pool_size": settings.database.pool_size,
         "max_overflow": settings.database.max_overflow,
@@ -56,7 +61,10 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
 
 _settings = get_settings()
 
-engine = create_engine(_settings.database.url, **build_engine_kwargs(_settings))
+engine = create_engine(
+    _settings.database.url.get_secret_value(),
+    **build_engine_kwargs(_settings),
+)
 enable_sqlite_foreign_keys(engine)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 

@@ -1,7 +1,7 @@
 """Shared SMTP transport and configuration for account email adapters."""
 
 import smtplib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from email.message import EmailMessage
 from typing import Self
 
@@ -16,7 +16,8 @@ class SmtpDelivery:
     port: int
     from_email: str
     username: str
-    password: str
+    # Kept out of the generated repr so a logged adapter cannot expose it.
+    password: str = field(repr=False)
     starttls: bool
 
     @classmethod
@@ -27,7 +28,7 @@ class SmtpDelivery:
             port=settings.auth.smtp_port,
             from_email=settings.auth.smtp_from_email,
             username=settings.auth.smtp_username,
-            password=settings.auth.smtp_password,
+            password=settings.auth.smtp_password.get_secret_value(),
             starttls=settings.auth.smtp_starttls,
         )
 

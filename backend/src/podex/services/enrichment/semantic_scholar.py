@@ -13,6 +13,7 @@ from podex.services.enrichment.base import (
     EnrichmentResult,
     EnrichmentSource,
     canonicalize_doi,
+    describe_http_error,
 )
 
 if TYPE_CHECKING:
@@ -142,7 +143,11 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             result: dict[str, Any] = self._response_json(response)
             return result
         except httpx.HTTPError as e:
-            logger.warning("Semantic Scholar lookup error for %s: %s", paper_id, e)
+            logger.warning(
+                "Semantic Scholar lookup error for %s: %s",
+                paper_id,
+                describe_http_error(e),
+            )
             return None
 
     def _search(self, title: str) -> list[dict[str, Any]]:
@@ -167,7 +172,7 @@ class SemanticScholarProvider(EnrichmentProvider):  # type: ignore[misc, unused-
             result: list[dict[str, Any]] = data.get("data", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning("Semantic Scholar search error: %s", e)
+            logger.warning("Semantic Scholar search error: %s", describe_http_error(e))
             return []
 
     def _find_best_match(

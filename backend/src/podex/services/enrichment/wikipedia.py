@@ -20,6 +20,7 @@ from podex.services.enrichment.base import (
     EnrichmentProvider,
     EnrichmentResult,
     EnrichmentSource,
+    describe_http_error,
 )
 from podex.services.enrichment.data import (
     ALBUM_CATEGORY_PATTERNS,
@@ -284,7 +285,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
             result: list[dict[str, Any]] = data.get("query", {}).get("search", [])
             return result
         except httpx.HTTPError as e:
-            logger.warning("Wikipedia search error: %s", e)
+            logger.warning("Wikipedia search error: %s", describe_http_error(e))
             return []
 
     def _find_best_match_with_validation(
@@ -440,7 +441,7 @@ class WikipediaProvider(EnrichmentProvider):  # type: ignore[misc, unused-ignore
                 return result
             return None
         except httpx.HTTPError as e:
-            logger.warning("Wikipedia page fetch error: %s", e)
+            logger.warning("Wikipedia page fetch error: %s", describe_http_error(e))
             return None
 
     def _build_result(
