@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.21] - 2026-11-14
+
+### Changed
+
+- **ci**: pin Lintro image by tag@digest and guard lgtm-ci pins (#759) (228e8d3)
+
+### Fixed
+
+- **retention**: advance sweeps beyond the first transcript batch (#768) (4a3d23c)
+
 ## [0.41.20] - 2026-11-14
 
 ### Fixed
