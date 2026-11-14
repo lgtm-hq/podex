@@ -7,6 +7,11 @@ standards for changes to Podex.
 
 Backend (Python, managed with [`uv`](https://docs.astral.sh/uv/)):
 
+The backend requires Python **3.11.5 or newer**. Python 3.11.0–3.11.4 must be
+upgraded before installing this release: those patches select a vulnerable Soup
+Sieve dependency. The CI matrix continues to cover Python 3.11–3.15 using current
+patch releases; the Docker image uses Python 3.15.
+
 ```bash
 cd backend
 uv sync --extra dev
