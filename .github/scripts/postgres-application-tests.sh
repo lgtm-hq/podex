@@ -7,7 +7,8 @@
 # backend/tests/postgres/conftest.py). `--require-postgres` turns a missing
 # PostgreSQL into a test failure instead of a skip, and pytest exits non-zero
 # when no test is selected, so this lane cannot pass without running them.
-# PODEX_DATABASE__URL must point at the service; its role needs CREATEDB.
+# PODEX_DATABASE__URL must point at a disposable server (the fixture creates
+# and force-drops whole databases there) as a superuser (pgvector needs one).
 # =============================================================================
 set -euo pipefail
 

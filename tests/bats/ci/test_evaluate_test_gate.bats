@@ -4,6 +4,7 @@
 setup() {
   PROJECT_ROOT="$(cd "${BATS_TEST_DIRNAME}/../../.." && pwd)"
   SCRIPT="${PROJECT_ROOT}/.github/scripts/evaluate-test-gate.sh"
+  export IS_DRAFT=false
   export TEST_RESULT=success
   export COVERAGE_RESULT=success
   export MIGRATIONS_RESULT=success
@@ -23,21 +24,70 @@ assert_outputs() {
 @test "passes when every upstream job succeeds" {
   run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
-  [[ "${output}" == *"All upstream test jobs passed or were skipped"* ]]
+  [[ "${output}" == *"All upstream test jobs passed"* ]]
   assert_outputs success true
 }
 
-@test "passes when every upstream job is skipped (draft PR)" {
-  TEST_RESULT=skipped COVERAGE_RESULT=skipped MIGRATIONS_RESULT=skipped \
-    POSTGRES_RESULT=skipped SHELL_RESULT=skipped run bash "${SCRIPT}"
+@test "passes when every upstream job is skipped on a draft PR" {
+  IS_DRAFT=true TEST_RESULT=skipped COVERAGE_RESULT=skipped \
+    MIGRATIONS_RESULT=skipped POSTGRES_RESULT=skipped SHELL_RESULT=skipped \
+    run bash "${SCRIPT}"
+  [ "${status}" -eq 0 ]
+  [[ "${output}" == *"(draft pull request)"* ]]
+  assert_outputs success true
+}
+
+@test "passes on a mix of success and skipped on a draft PR" {
+  IS_DRAFT=true MIGRATIONS_RESULT=skipped POSTGRES_RESULT=skipped \
+    run bash "${SCRIPT}"
   [ "${status}" -eq 0 ]
   assert_outputs success true
 }
 
-@test "passes on a mix of success and skipped" {
-  MIGRATIONS_RESULT=skipped run bash "${SCRIPT}"
-  [ "${status}" -eq 0 ]
-  assert_outputs success true
+@test "fails when any single upstream job is skipped on a non-draft run" {
+  local var
+  for var in TEST_RESULT COVERAGE_RESULT MIGRATIONS_RESULT POSTGRES_RESULT \
+    SHELL_RESULT; do
+    : >"${GITHUB_OUTPUT}"
+    run env "${var}=skipped" bash "${SCRIPT}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"(skipped on a non-draft run)"* ]]
+    assert_outputs failure false
+  done
+}
+
+@test "names a skipped PostgreSQL lane on a non-draft run" {
+  MIGRATIONS_RESULT=skipped POSTGRES_RESULT=skipped run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"test-postgres-migrations (skipped on a non-draft run)"* ]]
+  [[ "${output}" == *"test-postgres-application (skipped on a non-draft run)"* ]]
+  assert_outputs failure false
+}
+
+@test "a draft PR still fails on a failed job" {
+  IS_DRAFT=true POSTGRES_RESULT=failure run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"test-postgres-application (failure)"* ]]
+  assert_outputs failure false
+}
+
+@test "fails closed when IS_DRAFT is unset" {
+  unset IS_DRAFT
+  run bash "${SCRIPT}"
+  [ "${status}" -eq 1 ]
+  [[ "${output}" == *"IS_DRAFT must be 'true' or 'false'"* ]]
+  assert_outputs failure false
+}
+
+@test "fails closed when IS_DRAFT is not a boolean" {
+  local value
+  for value in "" yes TRUE 1; do
+    : >"${GITHUB_OUTPUT}"
+    IS_DRAFT="${value}" run bash "${SCRIPT}"
+    [ "${status}" -eq 1 ]
+    [[ "${output}" == *"IS_DRAFT must be 'true' or 'false'"* ]]
+    assert_outputs failure false
+  done
 }
 
 @test "fails when any single upstream job fails" {
@@ -121,6 +171,7 @@ assert_outputs() {
   [[ "${output}" == *"Usage:"* ]]
   [[ "${output}" == *"MIGRATIONS_RESULT"* ]]
   [[ "${output}" == *"POSTGRES_RESULT"* ]]
+  [[ "${output}" == *"IS_DRAFT"* ]]
 }
 
 @test "rejects unexpected arguments" {

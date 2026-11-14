@@ -141,7 +141,8 @@ jobs:
         # yamllint disable-line rule:line-length
         image: pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
         env:
-          # Superuser by default, so the fixture can CREATE DATABASE per test.
+          # Superuser by default: the fixture creates a database per test and
+          # installs pgvector, which needs a superuser on this image.
           POSTGRES_USER: podex
           # Trust auth: throwaway CI service on localhost only; avoids a
           # placeholder password that secret scanners flag.
@@ -248,7 +249,7 @@ jobs:
   # Combined test gate (#550): one verdict over every test job, so a failure
   # in the Python matrix, coverage, Postgres replay, Postgres application
   # tests or shell tests fails the required context. Reads needs.*.result
-  # directly. Skipped jobs (draft PRs) pass.
+  # directly. Skipped jobs pass on draft PRs only.
   test-gate:
     name: 🚦 Test Gate
     needs:
@@ -276,6 +277,9 @@ jobs:
       - name: Evaluate upstream results
         id: gate
         env:
+          # Only a draft pull request may skip test jobs; the script fails a
+          # skip anywhere else (ready PRs, merge queue, pushes to main).
+          IS_DRAFT: ${{ github.event.pull_request.draft == true }}
           TEST_RESULT: ${{ needs.test.result }}
           COVERAGE_RESULT: ${{ needs.test-coverage.result }}
           MIGRATIONS_RESULT: ${{ needs.test-postgres-migrations.result }}

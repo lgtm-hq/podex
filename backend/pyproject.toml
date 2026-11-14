@@ -74,7 +74,8 @@ packages = ["src/podex"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = ["--strict-markers", "--strict-config"]
+# pytester runs inner sessions for the PostgreSQL suite guards.
+addopts = ["--strict-markers", "--strict-config", "-p", "pytester"]
 markers = [
   "postgres: needs PostgreSQL via PODEX_DATABASE__URL; skipped without it, failed with --require-postgres",
 ]

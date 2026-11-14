@@ -6,9 +6,13 @@
 # `test-suite / 🧪 Test Suite` context. Adapted from lgtm-hq/py-lintro
 # scripts/ci/evaluate-test-gate.sh.
 #
-# - "success" and "skipped" pass. Draft PRs skip every test job.
+# - "success" passes.
+# - "skipped" passes only on a draft pull request (IS_DRAFT=true), the one
+#   case where test jobs skip. On a ready pull request, the merge queue or a
+#   push to main a skipped job fails: nothing ran, so nothing was proven.
 # - "failure" and "cancelled" fail.
-# - Any other value, including an empty one, fails closed.
+# - Any other value, including an empty one, fails closed; so does an
+#   IS_DRAFT other than "true" or "false".
 #
 # When GITHUB_OUTPUT is set, writes `result` (success|failure) and `passed`
 # (true|false) for the downstream reusable-required-check caller.
@@ -19,15 +23,17 @@ usage() {
 	cat <<'EOF'
 Evaluate upstream test job results for the required test gate.
 
-Passes when every upstream job is "success" or "skipped". Fails when any
-job is "failure" or "cancelled", or reports an unexpected value.
+Passes when every upstream job is "success", or "skipped" on a draft pull
+request. Fails when any job is "failure" or "cancelled", is "skipped" on a
+non-draft run, or reports an unexpected value.
 
 Usage:
-  TEST_RESULT=success COVERAGE_RESULT=success MIGRATIONS_RESULT=success \
-    POSTGRES_RESULT=success SHELL_RESULT=success \
+  IS_DRAFT=false TEST_RESULT=success COVERAGE_RESULT=success \
+    MIGRATIONS_RESULT=success POSTGRES_RESULT=success SHELL_RESULT=success \
     .github/scripts/evaluate-test-gate.sh
 
 Required environment variables:
+  IS_DRAFT           "true" on a draft pull request, otherwise "false"
   TEST_RESULT        needs.test.result (Python compatibility matrix)
   COVERAGE_RESULT    needs.test-coverage.result
   MIGRATIONS_RESULT  needs.test-postgres-migrations.result
@@ -61,6 +67,15 @@ write_outputs() {
 	fi
 }
 
+case "${IS_DRAFT-}" in
+true | false) ;;
+*)
+	echo "::error::IS_DRAFT must be 'true' or 'false', got: '${IS_DRAFT-<unset>}'" >&2
+	write_outputs failure false
+	exit 1
+	;;
+esac
+
 jobs=(
 	"test:TEST_RESULT"
 	"test-coverage:COVERAGE_RESULT"
@@ -81,7 +96,12 @@ for entry in "${jobs[@]}"; do
 	result="${!var}"
 	printf '%-27s %s\n' "${name}:" "${result:-<empty>}"
 	case "${result}" in
-	success | skipped) ;;
+	success) ;;
+	skipped)
+		if [[ "${IS_DRAFT}" != "true" ]]; then
+			failed+=("${name} (skipped on a non-draft run)")
+		fi
+		;;
 	failure | cancelled) failed+=("${name} (${result})") ;;
 	*) failed+=("${name} (unexpected result: '${result}')") ;;
 	esac
@@ -93,5 +113,9 @@ if ((${#failed[@]} > 0)); then
 	exit 1
 fi
 
-echo "All upstream test jobs passed or were skipped"
+if [[ "${IS_DRAFT}" == "true" ]]; then
+	echo "All upstream test jobs passed or were skipped (draft pull request)"
+else
+	echo "All upstream test jobs passed"
+fi
 write_outputs success true
