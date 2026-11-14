@@ -86,18 +86,21 @@ def require_ops_access(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=unconfigured_detail,
         )
-    # An environment value with invalid UTF-8 bytes is read as lone surrogates;
-    # surrogateescape restores those bytes, so encoding cannot raise.
-    supplied_key = request.headers.get("X-Ops-Key", "").encode(
-        "utf-8",
-        "surrogateescape",
+    unauthorized = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Ops authentication required",
     )
-    expected_key = settings.ops_api_key.encode("utf-8", "surrogateescape")
+    # Header values are decoded as Latin-1, so this encode cannot raise.
+    supplied_key = request.headers.get("X-Ops-Key", "").encode("utf-8")
+    try:
+        expected_key = settings.ops_api_key.encode("utf-8")
+    except UnicodeEncodeError:
+        # A key holding lone surrogates (invalid bytes in the environment)
+        # has no valid encoding, so no header can match it. The cause is
+        # dropped because its message quotes part of the key.
+        raise unauthorized from None
     if not secrets.compare_digest(supplied_key, expected_key):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Ops authentication required",
-        )
+        raise unauthorized
 
 
 SettingsDep = AppSettings

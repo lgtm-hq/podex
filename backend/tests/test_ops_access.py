@@ -107,13 +107,27 @@ def test_invalid_ops_access_is_opaque(
 
 
 @pytest.mark.parametrize("path", _PATHS)
-def test_key_with_invalid_utf8_bytes_is_rejected_without_error(
+@pytest.mark.parametrize(
+    ("configured_key", "credential"),
+    [
+        ("k\udcff", "wrong"),
+        ("k\ud800", "wrong"),
+        ("k\udc00", "wrong"),
+        # Must not match the header whose UTF-8 bytes equal the escaped key.
+        ("k\udcc3\udcbf", "k\u00ff"),
+    ],
+    ids=["escaped-byte", "high-surrogate", "low-surrogate", "byte-collision"],
+)
+def test_unencodable_configured_key_never_authenticates(
     client: TestClient,
     path: str,
+    configured_key: str,
+    credential: str,
 ) -> None:
-    """A configured key read from invalid UTF-8 bytes still yields 401."""
-    enable_ops(client, api_key="k\udcff")
+    """A configured key without a valid UTF-8 encoding yields 401, never 200 or 500."""
+    enable_ops(client, api_key=configured_key)
 
-    response = client.get(path, headers={"X-Ops-Key": "wrong"})
+    response = client.get(path, headers=[(b"X-Ops-Key", credential.encode())])
 
     assert_that(response.status_code).is_equal_to(401)
+    assert_that(response.json()["detail"]).is_equal_to("Ops authentication required")
