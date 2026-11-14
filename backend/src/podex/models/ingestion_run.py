@@ -30,7 +30,13 @@ class IngestionRun(Base):
 
     id: "Mapped[int]" = mapped_column(primary_key=True)
     status: "Mapped[IngestionRunStatus]" = mapped_column(
-        SAEnum(IngestionRunStatus, native_enum=False, length=32),
+        SAEnum(
+            IngestionRunStatus,
+            native_enum=False,
+            length=32,
+            # Reject unknown strings on write; loading them would fail.
+            validate_strings=True,
+        ),
         index=True,
     )
     error_summary: "Mapped[str | None]" = mapped_column(Text, default=None)
