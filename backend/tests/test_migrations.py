@@ -8,7 +8,7 @@ from alembic.autogenerate import compare_metadata
 from alembic.config import Config
 from alembic.runtime.migration import MigrationContext
 from assertpy import assert_that
-from sqlalchemy import Engine, create_engine, inspect, select
+from sqlalchemy import Engine, create_engine, inspect, select, text
 from sqlalchemy.engine import Connection
 from sqlalchemy.engine.reflection import Inspector
 from sqlalchemy.sql.elements import ClauseElement
@@ -18,18 +18,19 @@ from podex.models import Base, Episode, Media, MediaType, Mention
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 
 
-def _upgraded_engine(db_url: str) -> Engine:
-    """Run Alembic migrations to head and return the resulting engine.
+def _upgraded_engine(db_url: str, revision: str = "head") -> Engine:
+    """Run Alembic migrations to a revision and return the resulting engine.
 
     Args:
         db_url: SQLAlchemy-compatible database URL for the target database.
+        revision: Alembic revision to upgrade to.
 
     Returns:
-        Engine connected to the fully migrated database.
+        Engine connected to the migrated database.
     """
     config = Config(str(_ALEMBIC_INI))
     config.set_main_option("sqlalchemy.url", db_url)
-    command.upgrade(config, "head")
+    command.upgrade(config, revision)
     return create_engine(db_url)
 
 
@@ -125,3 +126,33 @@ def test_hot_query_indexes_exist(tmp_path: Path) -> None:
         "ix_mentions_episode_id_timestamp_seconds",
     )
     assert_that(media_mentions_plan).contains("ix_mentions_media_id_episode_id")
+
+
+def test_in_progress_ingestion_runs_become_failed(tmp_path: Path) -> None:
+    """Revision 0020 repairs ``in_progress`` runs and leaves valid runs alone."""
+    db_url = f"sqlite:///{tmp_path / 'repair.db'}"
+    engine = _upgraded_engine(db_url, revision="0019")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO ingestion_runs (id, status, error_summary) VALUES"
+                " (1, 'in_progress', NULL),"
+                " (2, 'COMPLETED', NULL),"
+                " (3, 'FAILED', 'feed timeout')",
+            ),
+        )
+    engine.dispose()
+
+    engine = _upgraded_engine(db_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id, status, error_summary FROM ingestion_runs ORDER BY id"),
+        ).all()
+
+    assert_that([tuple(row) for row in rows]).is_equal_to(
+        [
+            (1, "FAILED", "interrupted before completion"),
+            (2, "COMPLETED", None),
+            (3, "FAILED", "feed timeout"),
+        ],
+    )

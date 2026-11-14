@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from podex.models import (
     IngestionRun,
+    IngestionRunStatus,
     Podcast,
     PodcastStatus,
     ScheduledWorkItemModel,
@@ -174,7 +175,7 @@ def run_due_episode_discovery_work(
             continue
 
         run = IngestionRun(
-            status="in_progress",
+            status=IngestionRunStatus.RUNNING,
             started_at=datetime.now(UTC),
         )
         db.add(run)
@@ -190,14 +191,18 @@ def run_due_episode_discovery_work(
         # Keep other providers and tasks running after this failure.
         # pylint: disable-next=broad-exception-caught
         except Exception as exc:
-            run.status = "failed"
+            run.status = IngestionRunStatus.FAILED
             run.error_summary = str(exc)
             run.completed_at = datetime.now(UTC)
             _mark_work_failed(work_item=work_item, error_message=str(exc))
             continue
 
         completed_at = datetime.now(UTC)
-        run.status = "completed" if not discovery_result.errors else "failed"
+        run.status = (
+            IngestionRunStatus.COMPLETED
+            if not discovery_result.errors
+            else IngestionRunStatus.FAILED
+        )
         run.error_summary = "; ".join(discovery_result.errors) or None
         run.completed_at = completed_at
         work_item.status = (

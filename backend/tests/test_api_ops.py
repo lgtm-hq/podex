@@ -4,7 +4,12 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from podex.models import IngestionRun, IngestionRunStatus, Transcript
+from podex.models import IngestionRun, IngestionRunStatus, Podcast, Transcript
+from podex.services.discovery import DiscoveryResult
+from podex.services.recurring_discovery import (
+    plan_recurring_discovery_work,
+    run_due_episode_discovery_work,
+)
 from tests.conftest import enable_ops, seed_catalog_graph
 
 _OPS_KEY = "test-ops-key"
@@ -101,6 +106,36 @@ def test_ops_pipelines_lists_recent_runs(
 
     response = client.get("/api/v2/ops/pipelines", headers=_HEADERS)
 
+    assert_that(response.status_code).is_equal_to(200)
+    assert_that(response.json()["runs"]).is_length(1)
+
+
+def test_pipelines_list_survives_interrupted_discovery(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Pipeline activity loads while discovery runs and after a failed tick."""
+    enable_ops(client, api_key=_OPS_KEY)
+    db_session.add(Podcast(name="Active", slug="active", status="active"))
+    db_session.commit()
+    plan_recurring_discovery_work(db=db_session, interval_minutes=60)
+    db_session.commit()
+    mid_run_statuses: list[int] = []
+
+    def committing_runner(db: Session, _podcast: Podcast) -> DiscoveryResult:
+        # The discovery orchestrator commits while upserting episodes.
+        db.commit()
+        mid_run = client.get("/api/v2/ops/pipelines", headers=_HEADERS)
+        mid_run_statuses.append(mid_run.status_code)
+        return DiscoveryResult(new_episodes=0, updated_episodes=0, total_discovered=0)
+
+    run_due_episode_discovery_work(db=db_session, runner=committing_runner)
+    # A later tick step fails, so the scheduler rolls back the final commit.
+    db_session.rollback()
+
+    response = client.get("/api/v2/ops/pipelines", headers=_HEADERS)
+
+    assert_that(mid_run_statuses).is_equal_to([200])
     assert_that(response.status_code).is_equal_to(200)
     assert_that(response.json()["runs"]).is_length(1)
 

@@ -2,8 +2,10 @@
 
 from datetime import datetime
 
+import pytest
 from assertpy import assert_that
 from sqlalchemy import select
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 
 from podex.models import IngestionRun, IngestionRunStatus
@@ -44,3 +46,11 @@ def test_failed_run_records_error_summary(db_session: Session) -> None:
     assert_that(stored.status).is_equal_to(IngestionRunStatus.FAILED)
     assert_that(stored.error_summary).is_equal_to("feed fetch timed out")
     assert_that(stored.completed_at).is_none()
+
+
+def test_unknown_status_string_is_rejected_at_flush(db_session: Session) -> None:
+    """A status outside ``IngestionRunStatus`` fails on write, not on read."""
+    db_session.add(IngestionRun(status="in_progress"))
+
+    with pytest.raises(StatementError, match="in_progress"):
+        db_session.flush()
