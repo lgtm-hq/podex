@@ -26,7 +26,6 @@ jobs:
       packages: read
     with:
       job-name: '🛠️ Lintro Code Quality'
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       working-directory: backend
       # Route semgrep to the repo-local #29 prompt-boundary rules (issue #236)
       # instead of the registry "auto" config, which egress-blocked CI cannot
@@ -78,7 +77,6 @@ jobs:
     permissions:
       contents: read
     with:
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       job-name: '🛠️ Lintro Code Quality'
       # quality's result/status unless it succeeded, then actionlint's
       # yamllint disable rule:line-length
@@ -108,7 +106,6 @@ jobs:
       pull-requests: write
     with:
       exit-code: ${{ needs.quality.outputs.exit-code }}
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: github-tooling
 
@@ -127,4 +124,3 @@ jobs:
     with:
       egress-policy: block
       workflow-key: quality-ci
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3

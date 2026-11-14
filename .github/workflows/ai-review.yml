@@ -46,6 +46,5 @@ jobs:
       CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
     with:
       egress-policy: block
-      tooling-ref: "808da537a4e346ac1ab3b9e1df10142909b96bc6" # v0.98.3
       model: ${{ vars.LINTRO_AI_MODEL }}
       max-cost-usd: ${{ vars.LINTRO_AI_MAX_COST_USD }}

@@ -19,7 +19,6 @@ jobs:
     with:
       job-name: '🔍 Dependency Review'
       fail-on-severity: high
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: scorecard
       # replace (not append): the reusable's first harden-runner step applies

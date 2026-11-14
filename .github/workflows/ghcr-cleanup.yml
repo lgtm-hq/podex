@@ -47,7 +47,6 @@ jobs:
       package-name: ${{ matrix.package }}
       min-age-days: ${{ inputs.min_age_days || 7 }}
       dry-run: ${{ inputs.dry_run == true }}
-      tooling-ref: '808da537a4e346ac1ab3b9e1df10142909b96bc6' # v0.98.3
       egress-policy: block
       egress-preset: github-tooling
     secrets:
