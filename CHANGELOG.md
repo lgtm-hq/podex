@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.18] - 2026-11-14
+
+### Fixed
+
+- **ci**: complete image build allowlists (#755) (90f6cd4)
+
 ## [0.41.17] - 2026-11-14
 
 ### Changed
