@@ -22,6 +22,16 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.42.0] - 2026-11-14
+
+### Added
+
+- **retention**: require opt-in for transcript purge (#769) (8c78ed4)
+
+### Fixed
+
+- **scheduler**: stop discovery for paused podcasts (#766) (cd40b2a)
+
 ## [0.41.19] - 2026-11-14
 
 ### Fixed
