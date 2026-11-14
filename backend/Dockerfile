@@ -93,16 +93,19 @@ COPY --from=builder --chown=podex:podex /app/src /app/src
 # Entrypoint comes from the build context (not the builder stage) — it is not
 # part of the installed package. The executable bit is tracked by git.
 COPY --chown=podex:podex scripts/start.sh /app/scripts/start.sh
+COPY --chown=podex:podex scripts/healthcheck.py /app/scripts/healthcheck.py
 
 USER 1001:1001
 
 EXPOSE 8000
 
 # /health is exact-path rate-limit exempt and deliberately independent of DB.
-# The scheduler shares this image but has no HTTP listener; recognize only its
-# exact module command. This does not assert scheduler progress or readiness.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-    CMD ["python", "-c", "import pathlib, sys, urllib.request; cmd = pathlib.Path('/proc/1/cmdline').read_bytes().split(b'\\0'); scheduler = cmd[1:3] == [b'-m', b'podex.scheduler_runner']; sys.exit(0 if scheduler or urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).status == 200 else 1)"]
+# This assumes port 8000 from the default CMD. A deployment that changes the
+# listening port must also override the healthcheck to probe that port.
+# The scheduler has no HTTP listener; recognize its module in /proc command
+# lines, including shell/init wrappers. This does not prove scheduler progress.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --start-interval=5s --retries=3 \
+    CMD ["python", "/app/scripts/healthcheck.py"]
 
 # start.sh optionally runs migrations (AUTO_MIGRATE=1) then exec's CMD.
 # Default CMD serves the API via uvicorn from the resolved venv (PATH-first);

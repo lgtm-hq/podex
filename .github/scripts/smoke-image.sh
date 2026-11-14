@@ -90,16 +90,20 @@ else
 	# loopback namespace; --network none forbids external backend/telemetry calls.
 	docker run -d --name "$container" "${platform_args[@]}" --network none "$IMAGE"
 	docker cp "$script_dir/frontend-smoke-stub.mjs" "$container:/tmp/podex-smoke-stub.mjs"
+	docker cp "$script_dir/../../frontend/src/test/fixtures/container-smoke-catalog.json" \
+		"$container:/tmp/frontend-smoke-catalog.json"
 	docker exec -d "$container" node /tmp/podex-smoke-stub.mjs
 	wait_healthy
 	docker exec "$container" node --input-type=module -e '
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const catalog = JSON.parse(await readFile("/tmp/frontend-smoke-catalog.json", "utf8"));
 const health = await fetch("http://127.0.0.1:4321/health", {signal: AbortSignal.timeout(3000)});
 assert.equal(health.status, 200);
 assert.deepEqual(await health.json(), {status: "ok"});
 const page = await fetch("http://127.0.0.1:4321/", {signal: AbortSignal.timeout(5000)});
 assert.equal(page.status, 200);
-assert.match(await page.text(), /No podcasts yet\./);
+assert.ok((await page.text()).includes(catalog.items[0].name), "SSR must render the stub podcast card");
 console.log("frontend: health and SSR catalog return HTTP 200 with expected bodies");
 '
 fi

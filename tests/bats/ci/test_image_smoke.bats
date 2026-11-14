@@ -114,3 +114,25 @@ run_smoke() {
   [ "$status" -eq 124 ]
   [ -f "$SMOKE_STATE/removed" ]
 }
+
+@test "both images use digest smoke on tags and health hooks only off tags" {
+  local image port key value expected setting
+  for image in backend frontend; do
+    if [[ "$image" == backend ]]; then port=8000; else port=4321; fi
+    for setting in \
+      "health-check-cmd|bash .github/scripts/smoke-${image}.sh" \
+      "health-check-port|${port}" \
+      "health-check-timeout|210s"; do
+      IFS='|' read -r key value <<<"$setting"
+      run yq -r ".jobs.${image}.with.\"${key}\"" \
+        "${PROJECT_ROOT}/.github/workflows/docker-ci.yml"
+      [ "$status" -eq 0 ]
+      expected="\${{ !startsWith(github.ref, 'refs/tags/v') && '${value}' || '' }}"
+      [ "$output" = "$expected" ]
+    done
+    run yq -r ".jobs.${image}.with.smoke-test-script" \
+      "${PROJECT_ROOT}/.github/workflows/docker-ci.yml"
+    [ "$status" -eq 0 ]
+    [ "$output" = ".github/scripts/smoke-${image}.sh" ]
+  done
+}

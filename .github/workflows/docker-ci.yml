@@ -63,11 +63,15 @@ jobs:
       validate-on-pr: >-
         ${{ github.event_name == 'pull_request' || github.event_name ==
         'merge_group' }}
-      # Single-platform: run the full smoke script from the health hook with
-      # IMAGE exported by lgtm-ci. Split publishes also smoke staging digests.
-      health-check-cmd: bash .github/scripts/smoke-backend.sh
-      health-check-port: "8000"
-      health-check-timeout: "210s"
+      # Single-platform builds have the caller checkout. On tags only the
+      # split verify job checks it out, so use its smoke input alone.
+      health-check-cmd: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && 'bash
+        .github/scripts/smoke-backend.sh' || '' }}
+      health-check-port: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && '8000' || '' }}
+      health-check-timeout: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && '210s' || '' }}
       smoke-test-script: .github/scripts/smoke-backend.sh
       # amd64 only for PR speed; publish multi-arch on tags.
       platforms: >-
@@ -146,9 +150,13 @@ jobs:
       validate-on-pr: >-
         ${{ github.event_name == 'pull_request' || github.event_name ==
         'merge_group' }}
-      health-check-cmd: bash .github/scripts/smoke-frontend.sh
-      health-check-port: "4321"
-      health-check-timeout: "210s"
+      health-check-cmd: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && 'bash
+        .github/scripts/smoke-frontend.sh' || '' }}
+      health-check-port: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && '4321' || '' }}
+      health-check-timeout: >-
+        ${{ !startsWith(github.ref, 'refs/tags/v') && '210s' || '' }}
       smoke-test-script: .github/scripts/smoke-frontend.sh
       platforms: >-
         ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64'
