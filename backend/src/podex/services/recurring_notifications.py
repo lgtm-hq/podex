@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -262,16 +263,31 @@ def _evaluate_next_retention_batch(
 
 def _retention_checkpoint(*, db: Session, now: datetime) -> SweepCheckpoint:
     """Load the retention sweep checkpoint for update, creating it if absent."""
-    checkpoint = (
+    checkpoint = _locked_retention_checkpoint(db=db)
+    if checkpoint is not None:
+        return checkpoint
+    try:
+        # A savepoint keeps a lost creation race from discarding the caller's
+        # transaction; the winner's row is then loaded and locked instead.
+        with db.begin_nested():
+            db.add(SweepCheckpoint(sweep_key=RETENTION_SCHEDULE_KEY, updated_at=now))
+    except IntegrityError:
+        pass
+    checkpoint = _locked_retention_checkpoint(db=db)
+    if checkpoint is None:
+        raise RuntimeError("Retention sweep checkpoint could not be created")
+    return checkpoint
+
+
+def _locked_retention_checkpoint(*, db: Session) -> SweepCheckpoint | None:
+    """Lock the retention checkpoint row and refresh any cached copy of it."""
+    return (
         db.query(SweepCheckpoint)
         .filter(SweepCheckpoint.sweep_key == RETENTION_SCHEDULE_KEY)
         .with_for_update()
+        .populate_existing()
         .one_or_none()
     )
-    if checkpoint is None:
-        checkpoint = SweepCheckpoint(sweep_key=RETENTION_SCHEDULE_KEY, updated_at=now)
-        db.add(checkpoint)
-    return checkpoint
 
 
 def _pending_items(

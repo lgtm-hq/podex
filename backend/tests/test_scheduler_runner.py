@@ -434,6 +434,28 @@ def test_retention_sweep_resumes_in_a_new_session(db_session: Session) -> None:
     assert_that(second).is_equal_to(ids[2:4])
 
 
+def test_retention_sweep_ignores_a_stale_cached_position(db_session: Session) -> None:
+    """A session holding an old checkpoint object continues from the stored one."""
+    ids = _seed_transcripts(db_session, count=8)
+    db_session.close()
+    bind = db_session.get_bind()
+    # Without expiry on commit the first session keeps its checkpoint object.
+    caching = Session(bind=bind, expire_on_commit=False)
+    other = Session(bind=bind)
+    try:
+        first = _run_retention_job(caching, job=0, batch_size=2)
+        second = _run_retention_job(other, job=1, batch_size=2)
+        third = _run_retention_job(other, job=2, batch_size=2)
+        fourth = _run_retention_job(caching, job=3, batch_size=2)
+    finally:
+        caching.close()
+        other.close()
+
+    assert_that([first, second, third, fourth]).is_equal_to(
+        [ids[0:2], ids[2:4], ids[4:6], ids[6:8]],
+    )
+
+
 def test_retention_sweep_retries_rolled_back_batch(db_session: Session) -> None:
     """A batch rolled back with its tick is evaluated again, nothing skipped."""
     ids = _seed_transcripts(db_session, count=5)

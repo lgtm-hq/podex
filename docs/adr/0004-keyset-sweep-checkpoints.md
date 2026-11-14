@@ -32,10 +32,11 @@ Store one row per sweep in `sweep_checkpoints`, keyed by `sweep_key`, holding
 
 The checkpoint is read with a row lock and written in the same transaction as
 the batch it describes. A rolled-back batch leaves the previous position, so its
-rows are evaluated again. Rows inserted during a cycle have IDs above the bound
-and wait for the next cycle, so arrivals cannot keep a cycle from finishing. The
-keyset compares IDs only, so deleting or purging the checkpoint row, the bound
-row or any other row cannot strand the position.
+rows are evaluated again. Rows whose IDs are above the bound wait for the next
+cycle, so arrivals cannot keep a cycle from finishing. A row that arrives with
+an ID at or below the bound (a reused ID, or a sequence value committed late)
+may join the current cycle. The keyset compares IDs only, so deleting or purging
+the checkpoint row, the bound row or any other row cannot strand the position.
 
 The table starts empty; a missing row starts a new cycle, so no backfill is
 needed. We did not keep the position in `pipeline_schedules.metadata_json`,
