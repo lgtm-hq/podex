@@ -91,7 +91,12 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            log_failure(logger, describe_failure("podscripts", e), e)
+            log_failure(
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                context=("podcast_fetch", slug),
+            )
             return None
 
         soup = BeautifulSoup(html, "html.parser")
@@ -191,7 +196,12 @@ class PodscriptsDiscovery:
                 retry_delay_seconds=self.delay,
             )
         except httpx.HTTPError as e:
-            log_failure(logger, describe_failure("podscripts", e), e)
+            log_failure(
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                context=("episode_page", slug, page),
+            )
             return []
 
         soup = BeautifulSoup(html, "html.parser")
@@ -259,7 +269,11 @@ class PodscriptsDiscovery:
             )
         except httpx.HTTPError as e:
             log_failure(
-                logger, describe_failure("podscripts", e), e, level=logging.ERROR
+                logger,
+                describe_failure("podscripts", e),
+                e,
+                level=logging.ERROR,
+                context=("catalog_fetch",),
             )
             return []
 

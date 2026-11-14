@@ -16,6 +16,7 @@ from typing import Any
 import anthropic
 
 from podex.models.media import MediaType
+from podex.services.failure_codes import FailureReason
 from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.llm_response import (
     MALFORMED_RESPONSE_ERRORS,
@@ -139,7 +140,11 @@ def _failed_extraction(
     message = describe_failure(
         "extraction",
         error,
-        reason="malformed_response" if malformed else "request_failed",
+        reason=(
+            FailureReason.MALFORMED_RESPONSE
+            if malformed
+            else FailureReason.REQUEST_FAILED
+        ),
     )
     log_failure(logger, message, error, level=logging.ERROR)
     return ExtractionResult(errors=[message])
@@ -262,12 +267,16 @@ class LLMExtractor:
         if isinstance(parsed, list):
             return parsed, errors
         if parsed is not None:
-            errors.append(describe_failure("extraction", reason="expected_json_array"))
+            errors.append(
+                describe_failure("extraction", reason=FailureReason.EXPECTED_JSON_ARRAY)
+            )
             return [], errors
 
         start = response_text.find("[")
         if start < 0:
-            error_msg = describe_failure("extraction", reason="missing_json_array")
+            error_msg = describe_failure(
+                "extraction", reason=FailureReason.MISSING_JSON_ARRAY
+            )
             logger.warning(error_msg)
             errors.append(error_msg)
             return [], errors
@@ -284,7 +293,9 @@ class LLMExtractor:
                     break
 
         if end <= start:
-            error_msg = describe_failure("extraction", reason="incomplete_json_array")
+            error_msg = describe_failure(
+                "extraction", reason=FailureReason.INCOMPLETE_JSON_ARRAY
+            )
             logger.warning(error_msg)
             errors.append(error_msg)
             return [], errors
@@ -292,7 +303,9 @@ class LLMExtractor:
         try:
             return json.loads(response_text[start:end]), errors
         except json.JSONDecodeError as exc:
-            error_msg = describe_failure("extraction", exc, reason="invalid_json")
+            error_msg = describe_failure(
+                "extraction", exc, reason=FailureReason.INVALID_JSON
+            )
             log_failure(logger, error_msg, exc)
             errors.append(error_msg)
             return [], errors

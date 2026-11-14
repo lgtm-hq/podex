@@ -124,7 +124,9 @@ def test_extractor_records_api_errors() -> None:
     r2 = net_err.extract_from_transcript([{"text": _LONG_TEXT}])
 
     assert_that(r1.errors[0]).contains("500")
-    assert_that(r2.errors[0]).contains("APIConnectionError", "request_failed")
+    assert_that(r2.errors[0]).is_equal_to(
+        "extraction: APIConnectionError; request_failed"
+    )
 
 
 def test_extractor_reports_unparsable_output() -> None:
@@ -134,7 +136,7 @@ def test_extractor_reports_unparsable_output() -> None:
     ).extract_from_transcript([{"text": _LONG_TEXT}])
 
     assert_that(result.success).is_false()
-    assert_that(result.errors[0]).contains("missing_json_array")
+    assert_that(result.errors[0]).is_equal_to("extraction: missing_json_array")
 
 
 def test_cleaner_applies_corrections_and_context() -> None:

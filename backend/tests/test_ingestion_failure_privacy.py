@@ -32,11 +32,12 @@ _PRIVATE_VALUE = "synthetic-private-value-812"
 def _failure(kind: str) -> Exception:
     """Construct real HTTP and database errors carrying untrusted diagnostics."""
     if kind == "database":
-        return IntegrityError(
+        database_failure: Exception = IntegrityError(
             f"INSERT {_PRIVATE_VALUE}",
             {"value": _PRIVATE_VALUE},
             psycopg.errors.UniqueViolation(f"row value {_PRIVATE_VALUE}"),
         )
+        return database_failure
     transport = httpx if kind == "httpx" else httpx2
     request = transport.Request(
         "GET", f"https://example.test/?api_key={_PRIVATE_VALUE}"

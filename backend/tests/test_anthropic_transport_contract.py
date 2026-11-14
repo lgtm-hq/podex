@@ -384,7 +384,9 @@ def test_rate_limit_is_retried_then_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).contains("HTTP 429")
+    assert_that(errors[0]).matches(
+        r"^(extraction|cleanup): RateLimitError \(HTTP 429\); request_failed$",
+    )
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(
         [request.headers["x-stainless-retry-count"] for request in provider.requests],
@@ -409,7 +411,10 @@ def test_server_errors_are_retried_then_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).contains(f"HTTP {status}")
+    expected_class = "InternalServerError" if status == 500 else "OverloadedError"
+    assert_that(errors[0]).matches(
+        rf"^(extraction|cleanup): {expected_class} \(HTTP {status}\); request_failed$",
+    )
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(sleeps).is_length(_SDK_MAX_RETRIES)
 
@@ -425,7 +430,9 @@ def test_client_errors_are_reported_without_retry(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).contains("HTTP 400")
+    assert_that(errors[0]).matches(
+        r"^(extraction|cleanup): BadRequestError \(HTTP 400\); request_failed$",
+    )
     assert_that(provider.requests).is_length(1)
     assert_that(sleeps).is_empty()
 
@@ -449,13 +456,15 @@ def test_transport_failures_are_retried_then_reported(
     failure: Handler,
     sleeps: list[float],
 ) -> None:
-    """Timeouts and connection failures become a network error result."""
+    """Transport failures retain their exact SDK timeout or connection class."""
     provider = _Provider(failure)
 
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).contains("API", "request_failed")
+    assert_that(errors[0]).matches(
+        r"^(extraction|cleanup): API(Timeout|Connection)Error; request_failed$",
+    )
     assert_that(provider.requests).is_length(_SDK_MAX_RETRIES + 1)
     assert_that(sleeps).is_length(_SDK_MAX_RETRIES)
 
@@ -519,7 +528,11 @@ def test_malformed_success_responses_are_reported(
     errors = run_service(_client(provider))
 
     assert_that(errors).is_length(1)
-    assert_that(errors[0]).ends_with("; malformed_response")
+    assert_that(errors[0]).matches(
+        r"^(extraction|cleanup): "
+        r"(APIResponseValidationError|JSONDecodeError|MalformedResponseError); "
+        r"malformed_response$",
+    )
     assert_that(provider.requests).is_length(1)
     assert_that(sleeps).is_empty()
 
@@ -565,3 +578,24 @@ def test_network_guard_blocks_a_real_sdk_request(
 
     assert_that(network_attempts).is_length(3)
     network_attempts.clear()
+
+
+@_SERVICES
+def test_transport_contract_rejects_a_misreported_status_failure(
+    run_service: Callable[[anthropic.Anthropic], list[str]],
+    sleeps: list[float],
+) -> None:
+    """A status failure must not satisfy the transport-error contract."""
+
+    def misreported(client: anthropic.Anthropic) -> list[str]:
+        """Exercise the transport, then simulate incorrect error classification."""
+        errors = run_service(client)
+        source = errors[0].split(":", maxsplit=1)[0]
+        return [f"{source}: APIStatusError (HTTP 503); request_failed"]
+
+    with pytest.raises(AssertionError):
+        test_transport_failures_are_retried_then_reported(
+            run_service=misreported,
+            failure=_raise_timeout,
+            sleeps=sleeps,
+        )

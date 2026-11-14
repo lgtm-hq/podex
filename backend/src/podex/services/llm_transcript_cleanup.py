@@ -15,6 +15,7 @@ from typing import Any
 
 import anthropic
 
+from podex.services.failure_codes import FailureReason
 from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.llm_response import (
     MALFORMED_RESPONSE_ERRORS,
@@ -174,7 +175,9 @@ class TranscriptCleaner:
 
         parsed = self._parse_json_response(response_text)
         if parsed is None:
-            result.errors.append(describe_failure("cleanup", reason="invalid_json"))
+            result.errors.append(
+                describe_failure("cleanup", reason=FailureReason.INVALID_JSON)
+            )
             return result
 
         result.cleaned_text = str(parsed.get("cleaned_text", transcript_text))
@@ -220,7 +223,9 @@ class TranscriptCleaner:
             log_failure(logger, error, exc)
             return "", error
         except MALFORMED_RESPONSE_ERRORS as exc:
-            error = describe_failure("cleanup", exc, reason="malformed_response")
+            error = describe_failure(
+                "cleanup", exc, reason=FailureReason.MALFORMED_RESPONSE
+            )
             log_failure(logger, error, exc)
             return "", error
 

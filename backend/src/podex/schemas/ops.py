@@ -99,7 +99,10 @@ class OpsIngestionRunRead(BaseModel):
     status: str
     error_summary: str | None = Field(
         description="Allowlisted failure descriptors (source, class, protocol code, "
-        "fixed reason). Historical runs may contain legacy diagnostic text.",
+        "fixed reason), known fixed historical reasons, or "
+        "'legacy failure text withheld' "
+        "when a stored value is unstructured. Exception names are limited to 64 "
+        "characters and each descriptor to 384 characters.",
     )
     started_at: datetime | None
     completed_at: datetime | None

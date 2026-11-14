@@ -170,7 +170,9 @@ def test_sync_semantic_chunks_marks_bad_embedding_output_failed(
     assert_that(chunk.embedding_status).is_equal_to(
         SemanticChunkEmbeddingStatus.FAILED.value,
     )
-    assert_that(chunk.embedding_error).contains("unexpected dimensions")
+    assert_that(chunk.embedding_error).is_equal_to(
+        "embedding: PipelineFailure; embedding_dimensions_mismatch"
+    )
 
 
 def test_sync_semantic_chunks_deletes_stale_replay_windows(

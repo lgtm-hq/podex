@@ -247,7 +247,7 @@ def run_due_episode_discovery_work(
         # pylint: disable-next=broad-exception-caught
         except Exception as exc:
             run.status = IngestionRunStatus.FAILED
-            run.error_summary = describe_failure("discovery", exc)
+            run.error_summary = persisted_failure(describe_failure("discovery", exc))
             log_failure(logger, run.error_summary, exc)
             run.completed_at = datetime.now(UTC)
             _mark_work_failed(work_item=work_item, error_message=run.error_summary)

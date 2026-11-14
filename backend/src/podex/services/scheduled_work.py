@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.orm import Session
 
 from podex.models import PipelineSchedule, ScheduledWorkItemModel, ScheduledWorkStatus
+from podex.services.failure_descriptors import readable_failure
 from podex.services.scheduler import (
     IntervalSchedule,
     ScheduledTaskKind,
@@ -304,7 +305,7 @@ def _to_work_item_summary(
         due_at=work_item.due_at,
         interval_minutes=work_item.interval_minutes,
         metadata_json=work_item.metadata_json,
-        error_message=work_item.error_message,
+        error_message=readable_failure(work_item.error_message),
         created_at=work_item.created_at,
         started_at=work_item.started_at,
         completed_at=work_item.completed_at,
