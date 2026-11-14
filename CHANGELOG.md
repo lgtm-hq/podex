@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Changed
 
+- **deps**: update dependency minimatch to 11.0.8 (patch) (#774) (5892b1d)
 - **ci**: pin Lintro image by tag@digest and guard lgtm-ci pins (#759) (228e8d3)
 
 ### Fixed
