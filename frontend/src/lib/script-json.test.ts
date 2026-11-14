@@ -1,8 +1,16 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { serializeScriptJson } from "./script-json";
 
 describe("serializeScriptJson", () => {
+  beforeEach(() => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("escapes HTML delimiters and separators without changing JSON values", () => {
     const value = {
       name: "</script><script>alert(1)</script>",
@@ -22,6 +30,7 @@ describe("serializeScriptJson", () => {
     "preserves JSON.stringify semantics for %j",
     (value) => {
       expect(JSON.parse(serializeScriptJson(value))).toEqual(JSON.parse(JSON.stringify(value)));
+      expect(console.warn).not.toHaveBeenCalled();
     },
   );
 
@@ -42,5 +51,8 @@ describe("serializeScriptJson", () => {
     },
   ])("returns valid null JSON for an unserializable value (%#)", (value) => {
     expect(serializeScriptJson(value)).toBe("null");
+    expect(console.warn).toHaveBeenCalledExactlyOnceWith(
+      "Unable to serialize JSON-LD entry; skipping structured data.",
+    );
   });
 });

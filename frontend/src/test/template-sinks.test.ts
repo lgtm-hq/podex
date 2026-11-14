@@ -1,5 +1,9 @@
+// This lexical guard requires review for raw-HTML operations in non-test Astro,
+// TSX, TS, JS and MJS source, and complete script elements in Astro templates.
+// It does not follow data flow or cover href/src values or computed sink names.
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 interface Sink {
@@ -15,7 +19,7 @@ const normalize = (source: string): string => source.replace(/\s+/g, " ").trim()
 const reviewedSinks: Sink[] = [
   {
     file: "layouts/Layout.astro",
-    source: "set:html={serializeScriptJson(entry)}",
+    source: "set:html={serialized}",
   },
   {
     file: "layouts/Layout.astro",
@@ -33,7 +37,7 @@ const reviewedSinks: Sink[] = [
     source: normalize(`<script
       is:inline
       type="application/ld+json"
-      set:html={serializeScriptJson(entry)}
+      set:html={serialized}
     />`),
   },
 ];
@@ -47,16 +51,19 @@ function collectSinks(directory: string, prefix = ""): Sink[] {
       if (entry.isDirectory()) {
         return collectSinks(path, `${file}/`);
       }
-      if (!entry.name.endsWith(".astro")) {
+      if (
+        !/\.(?:astro|tsx|ts|js|mjs)$/.test(entry.name) ||
+        /\.(?:test|spec)\.[^.]+$/.test(entry.name)
+      ) {
         return [];
       }
       const source = readFileSync(path, "utf8");
       const rawHtml =
-        /\bset\s*:\s*html\s*=\s*(?:\{[^}]*\}|"[^"]*"|'[^']*')|\bdangerouslySetInnerHTML\b|\binnerHTML\b/g;
+        /\bset\s*:\s*html\s*=\s*(?:\{[^}]*\}|"[^"]*"|'[^']*')|\b(?:dangerouslySetInnerHTML|innerHTML|outerHTML|insertAdjacentHTML|src[Dd]oc)\b|\bdocument\s*\.\s*write\b/g;
       // Frontmatter may document <script> in comments. Script elements live
       // below it; raw-HTML operations are checked in both sections.
-      const template = source.replace(/^---[\s\S]*?^---/m, "");
-      const scripts = /<script\b[^>]*(?:\/>|>[\s\S]*?<\/script\s*>)/gi;
+      const template = entry.name.endsWith(".astro") ? source.replace(/^---[\s\S]*?^---/m, "") : "";
+      const scripts = /<script\b[^>]*(?:\/>|>[\s\S]*?<\/script\b[^>]*>)/gi;
       return [
         ...Array.from(source.matchAll(rawHtml)),
         ...Array.from(template.matchAll(scripts)),
@@ -64,8 +71,8 @@ function collectSinks(directory: string, prefix = ""): Sink[] {
     });
 }
 
-function assertReviewedSinks(): void {
-  expect(collectSinks(sourceRoot)).toEqual(reviewedSinks);
+function assertReviewedSinks(directory = sourceRoot, reviewed = reviewedSinks): void {
+  expect(collectSinks(directory)).toEqual(reviewed);
 }
 
 describe("Astro template sinks", () => {
@@ -74,17 +81,50 @@ describe("Astro template sinks", () => {
   });
 
   it.each([
-    "<div set:html={catalogText} />",
-    "<div dangerouslySetInnerHTML={{ __html: catalogText }} />",
-    "---\ndocument.body.innerHTML = catalogText;\n---\n<div />",
-    '<script is:inline type="application/ld+json">{JSON.stringify(entry)}</script>',
-  ])("rejects an unreviewed temporary template (%#)", (source) => {
-    const fixture = mkdtempSync(join(sourceRoot, "test/unreviewed-"));
+    ["astro", "<div set:html={catalogText} />"],
+    ["astro", "<div dangerouslySetInnerHTML={{ __html: catalogText }} />"],
+    ["astro", "---\ndocument.body.innerHTML = catalogText;\n---\n<div />"],
+    ["astro", '<script is:inline type="application/ld+json">{JSON.stringify(entry)}</script>'],
+    [
+      "astro",
+      '<script is:inline type="application/ld+json">{JSON.stringify(entry)}</script data-x>',
+    ],
+    [
+      "astro",
+      '<script is:inline type="application/ld+json">{JSON.stringify(entry)}</script\t\n bar>',
+    ],
+    ["tsx", "<div dangerouslySetInnerHTML={{ __html: catalogText }} />"],
+    ["ts", "element.innerHTML = catalogText;"],
+    ["js", "element.outerHTML = catalogText;"],
+    ["mjs", 'element.insertAdjacentHTML("beforeend", catalogText);'],
+    ["astro", "---\ndocument.write(catalogText);\n---\n<div />"],
+    ["tsx", "<iframe srcdoc={catalogText} />"],
+    ["tsx", "<iframe srcDoc={catalogText} />"],
+  ])("rejects an unreviewed temporary source (%#)", (extension, source) => {
+    const fixture = mkdtempSync(join(tmpdir(), "podex-unreviewed-"));
     try {
-      writeFileSync(join(fixture, "Sink.astro"), source);
-      expect(() => assertReviewedSinks()).toThrow();
+      writeFileSync(join(fixture, `Sink.${extension}`), source);
+      expect(() => assertReviewedSinks(fixture, [])).toThrow();
     } finally {
       rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it.each(["ts", "tsx", "js", "mjs"])(
+    "omits %s test fixture literals from production scanning",
+    (extension) => {
+      const fixture = mkdtempSync(join(tmpdir(), "podex-test-source-"));
+      try {
+        for (const suffix of ["test", "spec"]) {
+          writeFileSync(
+            join(fixture, `Sink.${suffix}.${extension}`),
+            'const fixture = "element.innerHTML = value";',
+          );
+        }
+        assertReviewedSinks(fixture, []);
+      } finally {
+        rmSync(fixture, { recursive: true, force: true });
+      }
+    },
+  );
 });
