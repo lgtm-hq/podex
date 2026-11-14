@@ -2,10 +2,11 @@
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import TypedDict, Unpack
 
 from sqlalchemy.orm import Session
 
-from podex.config import get_settings
+from podex.config import RetentionSettings, get_settings
 from podex.models import (
     AccountPreference,
     AccountUser,
@@ -29,6 +30,12 @@ from podex.services.transcript_retention_commands import (
 
 DIGEST_SCHEDULE_KEY = "notifications:digest-delivery"
 RETENTION_SCHEDULE_KEY = "retention:policy-sweep"
+
+
+class RetentionWorkOptions(TypedDict, total=False):
+    """Optional environment authorization for the existing sweep inputs."""
+
+    retention: RetentionSettings | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +160,7 @@ def run_due_retention_work(
     limit: int = 5,
     batch_size: int = 200,
     now: datetime | None = None,
+    **options: Unpack[RetentionWorkOptions],
 ) -> list[RetentionWorkRunData]:
     """Run pending retention work: evaluate lifecycle policy over transcripts.
 
@@ -162,12 +170,18 @@ def run_due_retention_work(
         limit: Maximum pending work items to run.
         batch_size: Maximum transcripts evaluated per work item.
         now: Deterministic evaluation timestamp.
+        **options: Optional retention settings; omitted or None uses runtime settings.
 
     Returns:
         Execution summaries for the work items that ran.
     """
     effective_policy = policy or TranscriptRetentionPolicy()
-    purge_enabled = get_settings().retention.purge_enabled
+    if options.keys() - {"retention"}:
+        raise TypeError("Only retention is a supported retention work option")
+    retention = options.get("retention")
+    purge_enabled = (
+        retention if retention is not None else get_settings().retention
+    ).purge_enabled
     effective_now = now or datetime.now(UTC)
     pending = _pending_items(
         db=db,

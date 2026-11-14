@@ -27,16 +27,14 @@ from podex.services.graph_relations import GraphTripleInputData
 from podex.services.ops_retention_commands import purge_ops_transcript
 from podex.services.recurring_notifications import (
     RETENTION_SCHEDULE_KEY,
-    reconcile_notification_schedules,
     run_due_retention_work,
 )
-from podex.services.scheduled_work import plan_due_scheduled_work
 from podex.services.transcript_retention_commands import (
     PURGE_DISABLED_REASON,
     create_transcript_digest,
     purge_transcript_if_eligible,
 )
-from tests.conftest import seed_catalog_graph
+from tests.conftest import plan_notification_work, seed_catalog_graph
 from tests.test_derivative_generation import FakeSummaryProvider
 from tests.test_transcript_artifacts import RecordingArtifactStore
 
@@ -275,9 +273,55 @@ def test_retention_preview_reports_switch_without_changes(
     assert_that(response.json()["derivative_coverage_ready"]).is_true()
     assert_that(response.json()["decision"]["purge_eligible"]).is_equal_to(enabled)
     assert_that(response.json()["decision"]["purge_blockers"]).is_equal_to(
-        [] if enabled else [PURGE_DISABLED_REASON]
+        [] if enabled else ["purge_disabled"]
     )
     assert_that(_snapshot(db_session)).is_equal_to(before)
+
+
+@pytest.mark.parametrize(
+    ("enabled", "status_code", "detail"),
+    [
+        (True, 404, "Transcript not found"),
+        (False, 409, PURGE_DISABLED_REASON),
+    ],
+    ids=["enabled-not-found", "disabled-before-lookup"],
+)
+def test_purge_missing_transcript_checks_authorization_first(
+    client: TestClient, enabled: bool, status_code: int, detail: str
+) -> None:
+    """Only an enabled purge can reveal whether the requested transcript exists."""
+    _configure_api(client, enabled=enabled)
+
+    response = client.post("/api/v2/ops/retention/999999/purge", headers=_HEADERS)
+
+    assert_that(response.status_code).is_equal_to(status_code)
+    assert_that(response.json()["detail"]).is_equal_to(detail)
+
+
+def test_enabled_purge_api_refuses_ineligible_transcript(
+    client: TestClient,
+    db_session: Session,
+    purge_asset: tuple[Transcript, RecordingArtifactStore],
+) -> None:
+    """Passing coverage with explicit opt-in still requires retention eligibility."""
+    transcript, store = purge_asset
+    transcript.purge_eligible_at = None
+    db_session.commit()
+    before = _snapshot(db_session)
+    objects = deepcopy(store.objects)
+    _configure_api(client, enabled=True)
+
+    response = client.post(
+        f"/api/v2/ops/retention/{transcript.id}/purge", headers=_HEADERS
+    )
+
+    assert_that(response.status_code).is_equal_to(409)
+    assert_that(response.json()["detail"]).is_equal_to(
+        "Transcript is not eligible for purge"
+    )
+    assert_that(_snapshot(db_session)).is_equal_to(before)
+    assert_that(store.objects).is_equal_to(objects)
+    assert_that(store.deleted).is_empty()
 
 
 def test_enabled_ops_purge_preserves_existing_deletion_behavior(
@@ -341,13 +385,7 @@ def test_scheduled_retention_evaluates_without_purging(
     """Sweeps still evaluate, retain content, and record disabled authorization."""
     transcript, store = purge_asset
     monkeypatch.setattr(get_settings().retention, "purge_enabled", enabled)
-    reconcile_notification_schedules(
-        db=db_session,
-        digest_interval_minutes=60,
-        retention_interval_minutes=60,
-        now=_NOW,
-    )
-    plan_due_scheduled_work(db=db_session, now=_NOW)
+    plan_notification_work(db=db_session, now=_NOW)
     db_session.commit()
     before = _snapshot(db_session)
     objects = deepcopy(store.objects)

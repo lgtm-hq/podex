@@ -69,8 +69,10 @@ from podex.services.takedown_requests import (
     list_takedown_requests,
 )
 from podex.services.transcript_artifacts import build_transcript_artifact_store
-from podex.services.transcript_retention import TranscriptRetentionPolicy
-from podex.services.transcript_retention_commands import PURGE_DISABLED_REASON
+from podex.services.transcript_retention import (
+    TranscriptRetentionBlocker,
+    TranscriptRetentionPolicy,
+)
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -92,7 +94,7 @@ def _to_retention_preview_read(
     """Convert a retention preview service payload to its API schema."""
     blockers = [blocker.value for blocker in preview.decision.purge_blockers]
     if not retention.purge_enabled:
-        blockers.append(PURGE_DISABLED_REASON)
+        blockers.append(TranscriptRetentionBlocker.PURGE_DISABLED.value)
     return OpsRetentionPreviewRead(
         transcript=OpsTranscriptRetentionRead.model_validate(preview.transcript),
         decision={

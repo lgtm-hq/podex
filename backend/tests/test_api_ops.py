@@ -4,6 +4,7 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from podex.config import RetentionSettings
 from podex.models import IngestionRun, IngestionRunStatus, Podcast, Transcript
 from podex.services.discovery import DiscoveryResult
 from podex.services.recurring_discovery import (
@@ -145,7 +146,9 @@ def test_ops_retention_preview_apply_and_purge_gate(
     db_session: Session,
 ) -> None:
     """Retention endpoints preview, apply, and refuse unsafe purges."""
-    enable_ops(client, api_key=_OPS_KEY)
+    enable_ops(
+        client, api_key=_OPS_KEY, retention=RetentionSettings(purge_enabled=True)
+    )
     graph = seed_catalog_graph(db_session)
     transcript = Transcript(
         episode_id=graph.episode_id,
@@ -181,3 +184,6 @@ def test_ops_retention_preview_apply_and_purge_gate(
         headers=_HEADERS,
     )
     assert_that(refused.status_code).is_equal_to(409)
+    assert_that(refused.json()["detail"]).is_equal_to(
+        "Derivative coverage is incomplete for transcript purge"
+    )

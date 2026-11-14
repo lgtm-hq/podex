@@ -31,7 +31,10 @@ def require_transcript_purge_enabled(
     retention: RetentionSettings | None = None,
 ) -> None:
     """Refuse transcript deletion unless the environment explicitly opts in."""
-    if not (retention or get_settings().retention).purge_enabled:
+    effective_retention = (
+        retention if retention is not None else get_settings().retention
+    )
+    if not effective_retention.purge_enabled:
         raise ValueError(PURGE_DISABLED_REASON)
 
 

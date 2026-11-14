@@ -2,6 +2,7 @@
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -12,7 +13,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from podex.api.deps import get_app_settings
-from podex.config import RateLimitSettings, Settings
+from podex.config import RateLimitSettings, RetentionSettings, Settings
 from podex.database import enable_sqlite_foreign_keys, get_db
 from podex.main import create_app
 from podex.models import (
@@ -25,6 +26,8 @@ from podex.models import (
     Podcast,
 )
 from podex.services.account_alerts import create_alert_rule
+from podex.services.recurring_notifications import reconcile_notification_schedules
+from podex.services.scheduled_work import plan_due_scheduled_work
 
 
 @dataclass
@@ -134,12 +137,28 @@ def client_fixture(db_session: Session) -> Iterator[TestClient]:
         yield test_client
 
 
-def enable_ops(client: TestClient, *, api_key: str) -> None:
-    """Configure a test app's internal ops authentication key."""
+def enable_ops(
+    client: TestClient, *, api_key: str, retention: RetentionSettings | None = None
+) -> None:
+    """Configure ops authentication and an optional retention settings override."""
     app = client.app
     if not isinstance(app, FastAPI):
         raise AssertionError("Expected a FastAPI test app")
-    app.dependency_overrides[get_app_settings] = lambda: Settings(ops_api_key=api_key)
+    app.dependency_overrides[get_app_settings] = lambda: Settings(
+        ops_api_key=api_key,
+        retention=retention if retention is not None else RetentionSettings(),
+    )
+
+
+def plan_notification_work(db: Session, *, now: datetime) -> None:
+    """Plan due digest and retention work with the shared test cadence."""
+    reconcile_notification_schedules(
+        db=db,
+        digest_interval_minutes=60,
+        retention_interval_minutes=60,
+        now=now,
+    )
+    plan_due_scheduled_work(db=db, now=now)
 
 
 @pytest.fixture(name="failing_client")
