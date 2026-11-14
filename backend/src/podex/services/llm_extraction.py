@@ -16,7 +16,10 @@ from typing import Any
 import anthropic
 
 from podex.models.media import MediaType
-from podex.services.llm_response import first_response_text
+from podex.services.llm_response import (
+    MALFORMED_RESPONSE_ERRORS,
+    first_response_text,
+)
 from podex.services.prompts_default import DEFAULT_EXTRACTION_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -196,12 +199,14 @@ class LLMExtractor:
                     },
                 ],
             )
+            response_text = first_response_text(response)
         except anthropic.APIStatusError as exc:
             return _failed_extraction(f"API request failed: {exc.status_code}")
         except anthropic.APIConnectionError as exc:
             return _failed_extraction(f"Network error: {exc}")
+        except MALFORMED_RESPONSE_ERRORS as exc:
+            return _failed_extraction(f"Malformed API response: {exc}")
 
-        response_text = first_response_text(response)
         if not response_text:
             return result
 
