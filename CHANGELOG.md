@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.19] - 2026-11-14
+
+### Fixed
+
+- **extraction**: keep skipped_over_limit when the summary is rebuilt (#765) (0f8051b)
+
 ## [0.41.18] - 2026-11-14
 
 ### Fixed
