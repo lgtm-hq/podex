@@ -10,6 +10,17 @@ creation and deduplication: repeated failures comment on the open issue for the
 same workflow key and branch. Notifier jobs retain blocked egress and grant only
 `actions: read`, `contents: read` and `issues: write`.
 
+The issue text is shared with failed pushes: it tells the reader to disarm
+pending auto-merges. That convention does not apply to the maintenance keys
+`ghcr-cleanup`, `scorecards` and `vuln-suppression-check`, because their
+failures do not mean `main` itself is broken. Nothing closes the issue
+automatically. Close it by hand after the next green run of the affected
+workflow.
+
+Runs that fail at startup, before any jobs run, and cancelled runs are not
+reported. In particular, `scorecards.yml` cancels an in-progress run when a new
+run starts for the same ref.
+
 `tests/bats/ci/test_maintenance_failure_notifier.bats` checks all three callers,
 including their full dependencies, conditions, stable keys and permissions. It
 replays the conditions with mocked success/failure results, either failed
@@ -20,11 +31,32 @@ bats --recursive tests/bats
 ```
 
 PR CI validates these contracts, workflow syntax and pin consistency. These
-scheduled workflows do not execute on PRs. Actual issue creation, failure
-details and repeated-failure deduplication require a failed scheduled run or a
-controlled `workflow_dispatch` from `main` after merge, followed by a failed
-retry. Verify that the retry comments on the same open issue and that successful
-runs remain quiet. Do not change maintenance gates to force a failure.
+scheduled workflows do not execute on PRs.
+
+### Post-merge dispatch check
+
+Use the Actions page for **Maintenance - GHCR Registry Cleanup** after merge:
+
+1. Dispatch the workflow on `main` with `dry_run=true` and `min_age_days=-1`.
+   Expect both `prune` legs to fail and one issue titled
+   `fix(ci): main workflow failed: main (ghcr-cleanup)`.
+2. Dispatch it again with the same inputs. Expect a comment on the same open
+   issue, not a second issue.
+3. Dispatch it with the default inputs except `dry_run=true`. Expect a green run
+   with the notifier skipped.
+4. Close the issue by hand after that green run.
+
+The pinned cleanup script at `808da537a4e346ac1ab3b9e1df10142909b96bc6`
+(v0.98.3), `scripts/ci/actions/ghcr-cleanup.sh`, rejects `MIN_AGE_DAYS=-1`
+before sourcing helpers or making any API call. The reusable forwards
+`min-age-days` and `dry-run` directly to `MIN_AGE_DAYS` and `DRY_RUN`. With
+`DRY_RUN=true`, both deletion loops skip deletion and the deletion helper
+returns before either DELETE API call. Tagged pruning is disabled by default.
+Keep dry-run enabled for every dispatch in this recipe.
+
+This proves the dispatch path, including issue creation and deduplication. The
+schedule path is only proven by a real scheduled failure. Do not change
+maintenance gates to force a failure.
 
 ## Container smoke tests
 

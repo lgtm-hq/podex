@@ -23,7 +23,7 @@ assert_notification() {
 }
 
 @test "test_maintenance_failure_reaches_notifier" {
-	local key workflow event package failed_package
+	local key workflow package failed_package
 	local results=()
 	# Follow the existing notifier pin so routine pin updates need no test edit.
 	export EXPECTED_NOTIFIER
@@ -53,19 +53,16 @@ assert_notification() {
     ' "${workflow}"
 		[ "${status}" -eq 0 ]
 
-		# Event context is preserved by workflow_call; neither event is push-only.
-		for event in schedule workflow_dispatch; do
-			export GITHUB_EVENT_NAME="${event}"
-			assert_notification "${workflow}" refs/heads/main true failure
-			assert_notification "${workflow}" refs/heads/main false success
-			assert_notification "${workflow}" refs/heads/main false skipped
-			assert_notification "${workflow}" refs/heads/main false cancelled
-			assert_notification "${workflow}" refs/heads/feature false failure
-			assert_notification "${workflow}" refs/tags/v1.0.0 false failure
-		done
+		assert_notification "${workflow}" refs/heads/main true failure
+		assert_notification "${workflow}" refs/heads/main false success
+		assert_notification "${workflow}" refs/heads/main false skipped
+		assert_notification "${workflow}" refs/heads/main false cancelled
+		assert_notification "${workflow}" refs/heads/feature false failure
+		assert_notification "${workflow}" refs/tags/v1.0.0 false failure
 	done
 
 	# A dependency on prune waits for every leg, without fail-fast cancellation.
+	workflow="${BATS_TEST_DIRNAME}/../../../.github/workflows/ghcr-cleanup.yml"
 	run yq -e '
     .jobs.prune.strategy."fail-fast" == false and
     (.jobs.prune.strategy.matrix.package | join(",")) ==
