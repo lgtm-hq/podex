@@ -32,9 +32,13 @@
 	[ "${status}" -eq 0 ]
 
 	# There is no positive path allowlist. The existing omissions are confined
-	# to backend tests/migrations, leaving frontend and .github sources in scope.
+	# to backend tests/migrations, leaving frontend and .github sources in scope,
+	# and the default query suite is neither replaced nor filtered.
 	run yq -e '
     (has("paths") | not) and
+    (has("queries") | not) and
+    (has("query-filters") | not) and
+    (has("disable-default-queries") | not) and
     (."paths-ignore" | all_c(. | test("^backend/")))
   ' "${config}"
 	[ "${status}" -eq 0 ]
