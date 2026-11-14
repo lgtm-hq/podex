@@ -22,6 +22,18 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.16] - 2026-11-14
+
+### Changed
+
+- **deps**: update dependency lgtm-hq/lgtm-ci to v0.98.3 (minor) (#657) (03c27e9)
+
+### Fixed
+
+- **media**: preserve references when merging canonical media (#745) (2a67bf6)
+- **ingest**: bound outbound RSS requests (#748) (e8239f3)
+- **security**: share constant-time ops verification (#744) (8c7fe72)
+
 ## [0.41.15] - 2026-11-14
 
 ### Fixed
