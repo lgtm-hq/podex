@@ -3,6 +3,10 @@
 The checks use setting names only: a field counts as a nested settings group
 when its annotation is a Pydantic model, and every other field is one
 environment variable. Changing a field's value type does not affect them.
+
+The helper tests build their settings models with ``create_model`` instead of a
+class statement, so type checking does not depend on the third-party base
+classes being resolvable.
 """
 
 import re
@@ -11,9 +15,9 @@ from pathlib import Path
 
 import pytest
 from assertpy import assert_that
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, create_model
 from pydantic.fields import FieldInfo
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings
 
 from podex.config import Settings
 
@@ -21,12 +25,20 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 CONFIGURATION_DOC = REPO_ROOT / "docs" / "configuration.md"
 
-# A whole ``PODEX_*`` name: not preceded by a name character, ending in a
-# letter or digit, and not followed by a name character or a ``*`` wildcard.
-# This skips prose such as ``PODEX_*`` or ``PODEX_<GROUP>__<FIELD>`` and never
-# reports the prefix of a longer name.
-_DOC_NAME = re.compile(r"(?<![A-Za-z0-9_])PODEX_[A-Z0-9_]*[A-Z0-9](?![A-Za-z0-9_*])")
-_ENV_NAME = re.compile(r"PODEX_[A-Z0-9_]+")
+_NAME_START = r"(?<![A-Za-z0-9_])"
+# Not followed by a name character or a ``*`` wildcard, so prose such as
+# ``PODEX_*`` is skipped and a longer name is never reported as its prefix.
+_NAME_END = r"(?![A-Za-z0-9_*])"
+# A whole ``PODEX_*`` name ending in a letter or digit; placeholders such as
+# ``PODEX_<GROUP>__<FIELD>`` do not match.
+_DOC_NAME = re.compile(rf"{_NAME_START}PODEX_[A-Z0-9_]*[A-Z0-9]{_NAME_END}")
+# Markdown emphasis (``*``, ``**``, ``***``, ``_``, ``__``) wrapped directly
+# around a name, which would otherwise look like a wildcard or a name character.
+_EMPHASIS = re.compile(
+    r"(?<![A-Za-z0-9_*])(\*{1,3}|_{1,2})([A-Za-z][A-Za-z0-9_]*[A-Za-z0-9])\1"
+    r"(?![A-Za-z0-9_*])",
+)
+_ASSIGNED_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 _EXPORT = "export "
 
 
@@ -116,7 +128,7 @@ def _settings_variables(model: type[BaseSettings]) -> set[str]:
 
 
 def _env_assignments(text: str) -> set[str]:
-    """Return the ``PODEX_*`` names assigned in dotenv text.
+    """Return every variable name assigned in dotenv text.
 
     Accepts an optional ``export`` prefix and skips blank and comment lines.
     """
@@ -127,130 +139,203 @@ def _env_assignments(text: str) -> set[str]:
             line = line.removeprefix(_EXPORT).lstrip()
         name, separator, _value = line.partition("=")
         name = name.strip()
-        if separator and _ENV_NAME.fullmatch(name):
+        if separator and _ASSIGNED_NAME.fullmatch(name):
             names.add(name)
     return names
 
 
+def _strip_emphasis(text: str) -> str:
+    """Remove Markdown emphasis wrapped directly around a name."""
+    return _EMPHASIS.sub(r"\2", text)
+
+
 def _documented_names(text: str) -> set[str]:
     """Return every whole ``PODEX_*`` name mentioned in Markdown text."""
-    return set(_DOC_NAME.findall(text))
+    return set(_DOC_NAME.findall(_strip_emphasis(text)))
 
 
-class _AliasedGroup(BaseModel):
-    """Nested group with one renamed field."""
+def _mentioned(names: set[str], text: str) -> set[str]:
+    """Return the members of ``names`` mentioned as whole names in ``text``."""
+    plain = _strip_emphasis(text)
+    return {
+        name
+        for name in names
+        if re.search(f"{_NAME_START}{re.escape(name)}{_NAME_END}", plain)
+    }
 
-    renamed: str = Field(default="", validation_alias="OLD_NAME")
-    kept: str = ""
+
+def _env_gaps(expected: set[str], text: str) -> tuple[set[str], set[str]]:
+    """Return expected names missing from dotenv text, and unknown names in it."""
+    assigned = _env_assignments(text)
+    return expected - assigned, assigned - expected
 
 
-class _AliasedSettings(BaseSettings):
-    """Throwaway settings model exercising validation aliases."""
+def _doc_gaps(expected: set[str], text: str) -> tuple[set[str], set[str]]:
+    """Return expected names missing from a document, and unknown ``PODEX_*``."""
+    return expected - _mentioned(expected, text), _documented_names(text) - expected
 
-    model_config = SettingsConfigDict(env_prefix="PODEX_", env_nested_delimiter="__")
 
-    plain: str = ""
-    token: str = Field(default="", validation_alias="PODEX_LEGACY_TOKEN")
-    choice: str = Field(
-        default="",
-        validation_alias=AliasChoices("PODEX_CHOICE_A", "PODEX_CHOICE_B"),
+def _aliased_settings_model() -> type[BaseSettings]:
+    """Build a throwaway settings model whose fields exercise every alias form."""
+    group = create_model(
+        "AliasedGroup",
+        renamed=(str, Field(default="", validation_alias="OLD_NAME")),
+        kept=(str, ""),
     )
-    group: _AliasedGroup = Field(default_factory=_AliasedGroup)
-
-
-def test_settings_walk_reaches_nested_fields() -> None:
-    """The name walk descends into nested groups instead of stopping at them."""
-    variables = _settings_variables(Settings)
-
-    assert_that(Settings.model_config.get("env_prefix")).is_equal_to("PODEX_")
-    assert_that(Settings.model_config.get("env_nested_delimiter")).is_equal_to("__")
-    assert_that(variables).contains(
-        "PODEX_APP_NAME",
-        "PODEX_DATABASE__URL",
-        "PODEX_ENRICHMENT__TMDB__API_KEY",
+    model: type[BaseSettings] = create_model(
+        "AliasedSettings",
+        __base__=BaseSettings,
+        __cls_kwargs__={"env_prefix": "PODEX_", "env_nested_delimiter": "__"},
+        plain=(str, ""),
+        renamed=(str, Field(default="", validation_alias="PODEX_LEGACY_TOKEN")),
+        legacy=(str, Field(default="", validation_alias="LEGACY_NAME")),
+        choice=(
+            str,
+            Field(
+                default="",
+                validation_alias=AliasChoices("PODEX_CHOICE_A", "PODEX_CHOICE_B"),
+            ),
+        ),
+        group=(group, Field(default_factory=group)),
     )
-    assert_that(variables).does_not_contain(
-        "PODEX_DATABASE",
-        "PODEX_ENRICHMENT",
-        "PODEX_ENRICHMENT__TMDB",
-    )
+    return model
+
+
+_ALIASED_VARIABLES = {
+    "PODEX_PLAIN",
+    "PODEX_LEGACY_TOKEN",
+    "LEGACY_NAME",
+    "PODEX_CHOICE_A",
+    "PODEX_CHOICE_B",
+    "PODEX_GROUP__OLD_NAME",
+    "PODEX_GROUP__KEPT",
+}
 
 
 def test_settings_walk_uses_validation_aliases(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Aliased fields are named by their alias, as pydantic-settings reads them."""
-    variables = _settings_variables(_AliasedSettings)
+    """Fields are named as pydantic-settings reads them, including aliases."""
+    model = _aliased_settings_model()
 
-    assert_that(variables).is_equal_to(
-        {
-            "PODEX_PLAIN",
-            "PODEX_LEGACY_TOKEN",
-            "PODEX_CHOICE_A",
-            "PODEX_CHOICE_B",
-            "PODEX_GROUP__OLD_NAME",
-            "PODEX_GROUP__KEPT",
-        },
-    )
-    monkeypatch.setenv("PODEX_LEGACY_TOKEN", "token-value")
+    assert_that(_settings_variables(model)).is_equal_to(_ALIASED_VARIABLES)
+    monkeypatch.setenv("PODEX_PLAIN", "plain-value")
+    monkeypatch.setenv("PODEX_LEGACY_TOKEN", "renamed-top-value")
+    monkeypatch.setenv("LEGACY_NAME", "legacy-value")
     monkeypatch.setenv("PODEX_CHOICE_B", "choice-value")
     monkeypatch.setenv("PODEX_GROUP__OLD_NAME", "renamed-value")
-    loaded = _AliasedSettings()
-    assert_that(loaded.token).is_equal_to("token-value")
-    assert_that(loaded.choice).is_equal_to("choice-value")
-    assert_that(loaded.group.renamed).is_equal_to("renamed-value")
+    monkeypatch.setenv("PODEX_GROUP__KEPT", "kept-value")
+    assert_that(model().model_dump()).is_equal_to(
+        {
+            "plain": "plain-value",
+            "renamed": "renamed-top-value",
+            "legacy": "legacy-value",
+            "choice": "choice-value",
+            "group": {"renamed": "renamed-value", "kept": "kept-value"},
+        },
+    )
 
 
 def test_env_assignments_accept_export_prefix() -> None:
-    """``export`` lines count; comments, blanks and other names do not."""
+    """``export`` lines count; comments and blank lines do not."""
     text = (
-        "export PODEX_DEBUG=false\n"
-        "  PODEX_APP_NAME=podex\n"
+        "export PODEX_PLAIN=value\n"
+        "  PODEX_LEGACY_TOKEN=value\n"
+        "LEGACY_NAME=\n"
         "# PODEX_COMMENTED=1\n"
         "\n"
-        "OTHER_NAME=1\n"
     )
 
-    assert_that(_env_assignments(text)).is_equal_to({"PODEX_DEBUG", "PODEX_APP_NAME"})
+    assert_that(_env_assignments(text)).is_equal_to(
+        {"PODEX_PLAIN", "PODEX_LEGACY_TOKEN", "LEGACY_NAME"},
+    )
 
 
 def test_documented_names_ignore_backticks() -> None:
     """Names count with or without backticks, so an unformatted name is seen."""
-    text = "Set PODEX_DEBUG or `PODEX_APP_NAME`. PODEX_NOT_A_SETTING is unknown."
+    expected = _settings_variables(_aliased_settings_model())
+    text = "Set PODEX_PLAIN or `PODEX_LEGACY_TOKEN`. PODEX_NOT_A_SETTING is unknown."
 
-    found = _documented_names(text)
+    assert_that(_documented_names(text)).is_equal_to(
+        {"PODEX_PLAIN", "PODEX_LEGACY_TOKEN", "PODEX_NOT_A_SETTING"},
+    )
+    assert_that(_mentioned(expected, text)).is_equal_to(
+        {"PODEX_PLAIN", "PODEX_LEGACY_TOKEN"},
+    )
+    assert_that(_doc_gaps(expected, text)[1]).is_equal_to({"PODEX_NOT_A_SETTING"})
 
-    assert_that(found).is_equal_to(
-        {"PODEX_DEBUG", "PODEX_APP_NAME", "PODEX_NOT_A_SETTING"},
-    )
-    assert_that(found - _settings_variables(Settings)).is_equal_to(
-        {"PODEX_NOT_A_SETTING"},
-    )
+
+def test_documented_names_strip_emphasis() -> None:
+    """Emphasis around a name is Markdown, not a wildcard or name character."""
+    expected = _settings_variables(_aliased_settings_model())
+
+    for marker in ("**", "*", "***", "__", "_"):
+        text = f"Set {marker}PODEX_PLAIN{marker} and {marker}PODEX_UNKNOWN{marker}."
+
+        assert_that(_documented_names(text)).described_as(marker).is_equal_to(
+            {"PODEX_PLAIN", "PODEX_UNKNOWN"},
+        )
+        assert_that(_mentioned(expected, text)).described_as(marker).is_equal_to(
+            {"PODEX_PLAIN"},
+        )
+        assert_that(_doc_gaps(expected, text)[1]).described_as(marker).is_equal_to(
+            {"PODEX_UNKNOWN"},
+        )
 
 
 def test_documented_names_skip_wildcards_and_prefixes() -> None:
     """Wildcards and placeholders are prose, and a longer name stays whole."""
     text = (
-        "Every `PODEX_*` variable, PODEX_FEED_HTTP__* limits, "
-        "`PODEX_<GROUP>__<FIELD>`, and PODEX_DATABASE__URLS."
+        "Every `PODEX_*` variable, PODEX_FEED_HTTP__* limits, **PODEX_*** values, "
+        "`PODEX_<GROUP>__<FIELD>`, and PODEX_PLAIN_EXTRA."
     )
 
-    assert_that(_documented_names(text)).is_equal_to({"PODEX_DATABASE__URLS"})
+    assert_that(_documented_names(text)).is_equal_to({"PODEX_PLAIN_EXTRA"})
+    assert_that(_mentioned({"PODEX_PLAIN"}, text)).is_empty()
+
+
+def test_inventory_requires_unprefixed_aliases() -> None:
+    """An alias without the ``PODEX_`` prefix must still be listed and documented."""
+    expected = _settings_variables(_aliased_settings_model())
+    others = sorted(expected - {"LEGACY_NAME"})
+    env_without = "".join(f"{name}=\n" for name in others)
+    doc_without = " ".join(f"`{name}`" for name in others)
+
+    assert_that(_env_gaps(expected, env_without)).is_equal_to(
+        ({"LEGACY_NAME"}, set()),
+    )
+    assert_that(_doc_gaps(expected, doc_without)).is_equal_to(
+        ({"LEGACY_NAME"}, set()),
+    )
+    assert_that(_env_gaps(expected, f"{env_without}LEGACY_NAME=\n")).is_equal_to(
+        (set(), set()),
+    )
+    assert_that(_doc_gaps(expected, f"{doc_without} `LEGACY_NAME`")).is_equal_to(
+        (set(), set()),
+    )
+
+
+def test_settings_use_documented_prefix_and_delimiter() -> None:
+    """The documented ``PODEX_<GROUP>__<FIELD>`` grammar matches ``Settings``."""
+    assert_that(Settings.model_config.get("env_prefix")).is_equal_to("PODEX_")
+    assert_that(Settings.model_config.get("env_nested_delimiter")).is_equal_to("__")
 
 
 def test_env_example_lists_every_setting() -> None:
     """Every ``Settings`` field has a line in ``.env.example`` and vice versa."""
-    settings_variables = _settings_variables(Settings)
-    example_variables = _env_assignments(ENV_EXAMPLE.read_text(encoding="utf-8"))
+    missing, unknown = _env_gaps(
+        _settings_variables(Settings),
+        ENV_EXAMPLE.read_text(encoding="utf-8"),
+    )
 
-    assert_that(sorted(settings_variables - example_variables)).is_empty()
-    assert_that(sorted(example_variables - settings_variables)).is_empty()
+    assert_that(sorted(missing)).is_empty()
+    assert_that(sorted(unknown)).is_empty()
 
 
 def test_configuration_doc_lists_every_setting() -> None:
     """Every ``Settings`` field is documented, and no stale name is."""
-    settings_variables = _settings_variables(Settings)
-    documented_variables = _documented_names(
+    missing, unknown = _doc_gaps(
+        _settings_variables(Settings),
         CONFIGURATION_DOC.read_text(encoding="utf-8"),
     )
 
-    assert_that(sorted(settings_variables - documented_variables)).is_empty()
-    assert_that(sorted(documented_variables - settings_variables)).is_empty()
+    assert_that(sorted(missing)).is_empty()
+    assert_that(sorted(unknown)).is_empty()
