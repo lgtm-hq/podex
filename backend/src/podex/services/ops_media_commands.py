@@ -31,6 +31,7 @@ from podex.services.graph_relations import (
 )
 from podex.services.media_alias_repository import ensure_media_alias
 from podex.services.media_aliases import normalize_media_alias
+from podex.services.media_merge_references import move_media_references
 
 
 @dataclass(frozen=True, slots=True)
@@ -785,7 +786,7 @@ def merge_ops_media(
 
     Raises:
         RuntimeError: If the merged target cannot be reloaded.
-        ValueError: If the merge request is invalid.
+        ValueError: If the merge is invalid or account alert rules conflict.
     """
     if source_media_id == target_media_id:
         raise ValueError("Source and target media must differ")
@@ -797,6 +798,8 @@ def merge_ops_media(
 
     if source_media.type != target_media.type:
         raise ValueError("Media types must match for merge")
+
+    move_media_references(db=db, source_media=source_media, target_media=target_media)
 
     for field_name in _merge_scalar_field_names():
         if (
