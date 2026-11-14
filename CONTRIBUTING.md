@@ -5,6 +5,11 @@ standards for changes to Podex.
 
 ## Development setup
 
+Run every command block in this guide from the repository root. Commands that
+need an app directory change into it inside a subshell, `( ... )`, so the shell
+stays at the root afterwards. The API, the scheduler and the frontend dev server
+keep running until stopped; start each in its own terminal.
+
 Backend (Python, managed with [`uv`](https://docs.astral.sh/uv/)):
 
 The backend requires Python **3.11.5 or newer**. Python 3.11.0–3.11.4 must be
@@ -13,18 +18,45 @@ Sieve dependency. The CI matrix continues to cover Python 3.11–3.15 using
 current patch releases; the Docker image uses Python 3.15.
 
 ```bash
-cd backend
-uv sync --extra dev
-uv run pytest
+(cd backend && uv sync)                       # installs the dev dependency group by default
+(cd backend && uv run alembic upgrade head)   # creates or migrates the database
+(cd backend && uv run pytest)
 ```
+
+`uv run alembic upgrade head` migrates the database named by
+`PODEX_DATABASE__URL`, by default `podex.db` in the working directory, here
+`backend/`. Run the API and the scheduler as two processes, each in its own
+terminal:
+
+```bash
+(cd backend && uv run uvicorn podex.main:app --reload --port 8000 --no-access-log)
+```
+
+```bash
+(cd backend && uv run python -m podex.scheduler_runner)
+```
+
+The scheduler runs episode discovery, digest delivery and retention sweeps.
+Neither process needs an external service to start; see
+[docs/configuration.md](docs/configuration.md) for the settings that enable each
+provider and what happens without them.
 
 Frontend (Astro/React, managed with [`bun`](https://bun.sh/)):
 
 ```bash
-cd frontend
-bun install
-bun run test
+(cd frontend && bun install)
+(cd frontend && bun run test:run)   # one-shot Vitest run; `bun run test` starts watch mode
+(cd frontend && bun run check)      # astro check, then generated API type drift
 ```
+
+Run the dev server in its own terminal; it serves `http://localhost:4321`:
+
+```bash
+(cd frontend && bun run dev)
+```
+
+The frontend calls `http://localhost:8000/api/v2` unless `PUBLIC_API_URL` is
+set.
 
 Tests that need real PostgreSQL carry `@pytest.mark.postgres` and live under
 `backend/tests/postgres/`, where collection rejects any test without the marker
@@ -47,9 +79,8 @@ create this extension"). The image CI uses, started as below, provides both;
 docker run -d --rm --name podex-pg -p 5432:5432 -e POSTGRES_USER=podex \
   -e POSTGRES_HOST_AUTH_METHOD=trust -e POSTGRES_DB=podex \
   pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
-cd backend
-PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \
-  uv run pytest tests -m postgres --require-postgres
+(cd backend && PODEX_DATABASE__URL=postgresql+psycopg://podex@localhost:5432/podex \
+  uv run pytest tests -m postgres --require-postgres)
 docker rm -f podex-pg
 ```
 
@@ -97,11 +128,13 @@ bats --recursive tests/bats
 
 The frontend API types (`src/lib/types.gen.ts`) are generated from the backend
 OpenAPI schema (`frontend/openapi.json`). After changing an API route or schema,
-regenerate both and commit the result (`bun run check` fails on drift):
+regenerate both and commit the result. `backend/tests/test_openapi_schema.py`
+fails when `openapi.json` differs from the backend's schema, and `bun run check`
+fails when `types.gen.ts` differs from `openapi.json`:
 
 ```bash
-cd backend && uv run python -m podex.openapi ../frontend/openapi.json
-cd frontend && bun run generate:api
+(cd backend && uv run python -m podex.openapi ../frontend/openapi.json)
+(cd frontend && bun run generate:api)
 ```
 
 ## Linting and formatting
@@ -110,9 +143,8 @@ Podex uses [`lintro`](https://github.com/lgtm-hq/py-lintro) as the single entry
 point for linting and formatting. Run it before every commit:
 
 ```bash
-cd backend
-uv run lintro fmt   # auto-fix formatting
-uv run lintro chk   # verify, must be clean
+(cd backend && uv run lintro fmt)   # auto-fix formatting
+(cd backend && uv run lintro chk)   # verify, must be clean
 ```
 
 Do not invoke the underlying tools (ruff, black, mypy, eslint, etc.) directly.

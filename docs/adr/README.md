@@ -28,6 +28,13 @@ Use [template.md](./template.md). Fields:
 - **Decision** — what we chose (and deliberately did not choose).
 - **Consequences** — trade-offs and follow-on constraints.
 
+## Numbering
+
+Every ADR, including backfilled ones (#365 to #370), takes the next free number
+in the index above at merge time. If another ADR merges first and takes that
+number, rename the file, its heading and its index row to the next free number
+before merging. Issues that request an ADR do not put a number in their title.
+
 ## Lifecycle
 
 1. Draft an ADR as `proposed` in the same PR that implements the decision (or in
