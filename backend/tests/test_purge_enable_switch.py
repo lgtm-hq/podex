@@ -406,7 +406,8 @@ def test_scheduled_retention_evaluates_without_purging(
     assert_that(transcript.retention_evaluated_at).is_not_none()
     after = _snapshot(db_session)
     for table, rows in before.items():
-        if table not in {"transcripts", "scheduled_work_items"}:
+        # The sweep also records its own position in sweep_checkpoints.
+        if table not in {"transcripts", "scheduled_work_items", "sweep_checkpoints"}:
             assert_that(after[table]).is_equal_to(rows)
     for column in (
         "raw_text",

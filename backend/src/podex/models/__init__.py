@@ -51,6 +51,7 @@ from podex.models.semantic_chunk import (
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
 )
+from podex.models.sweep_checkpoint import SweepCheckpoint
 from podex.models.takedown_request import (
     TakedownRequest,
     TakedownRequesterType,
@@ -114,6 +115,7 @@ __all__ = [
     "ReviewItemStatus",
     "ReviewPriority",
     "ScheduledWorkItemModel",
+    "SweepCheckpoint",
     "TakedownRequest",
     "TakedownRequesterType",
     "TakedownRequestStatus",

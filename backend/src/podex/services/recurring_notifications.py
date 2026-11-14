@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TypedDict, Unpack
 
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from podex.config import RetentionSettings, get_settings
@@ -12,6 +14,7 @@ from podex.models import (
     AccountUser,
     ScheduledWorkItemModel,
     ScheduledWorkStatus,
+    SweepCheckpoint,
     Transcript,
 )
 from podex.services.account_alerts import evaluate_alert_rules
@@ -168,7 +171,8 @@ def run_due_retention_work(
         db: Database session.
         policy: Retention policy; defaults to the standard policy.
         limit: Maximum pending work items to run.
-        batch_size: Maximum transcripts evaluated per work item.
+        batch_size: Maximum transcripts evaluated per work item; successive
+            items resume after the last committed transcript.
         now: Deterministic evaluation timestamp.
         **options: Optional retention settings; omitted or None uses runtime settings.
 
@@ -193,22 +197,12 @@ def run_due_retention_work(
         item.status = ScheduledWorkStatus.RUNNING.value
         item.started_at = effective_now
         db.flush()
-        transcripts = (
-            db.query(Transcript)
-            .filter(Transcript.purged_at.is_(None))
-            .order_by(Transcript.id.asc())
-            .limit(batch_size)
-            .all()
+        evaluated = _evaluate_next_retention_batch(
+            db=db,
+            policy=effective_policy,
+            batch_size=batch_size,
+            now=effective_now,
         )
-        for transcript in transcripts:
-            evaluate_transcript_retention(
-                db=db,
-                transcript=transcript,
-                extraction_confidence=None,
-                source_retention_opt_out=transcript.source_retention_opt_out,
-                policy=effective_policy,
-                now=effective_now,
-            )
         if not purge_enabled:
             item.metadata_json = {
                 **(item.metadata_json or {}),
@@ -220,11 +214,107 @@ def run_due_retention_work(
         results.append(
             RetentionWorkRunData(
                 work_key=item.work_key,
-                transcripts_evaluated=len(transcripts),
+                transcripts_evaluated=evaluated,
                 purge_blocker=None if purge_enabled else PURGE_DISABLED_REASON,
             ),
         )
     return results
+
+
+def _evaluate_next_retention_batch(
+    *,
+    db: Session,
+    policy: TranscriptRetentionPolicy,
+    batch_size: int,
+    now: datetime,
+) -> int:
+    """Evaluate the next keyset batch of the current retention cycle.
+
+    A cycle covers every unpurged transcript whose ID is at most the largest
+    transcript ID present when the cycle started; later arrivals wait for the
+    next cycle, so continuous inserts cannot keep a cycle from finishing. The
+    checkpoint moves in the caller's transaction, so a rolled-back batch is
+    evaluated again on retry. The keyset never dereferences the checkpoint
+    row, so deleted or purged rows cannot strand it.
+
+    Args:
+        db: Database session.
+        policy: Retention policy applied to each transcript.
+        batch_size: Maximum transcripts evaluated by this call.
+        now: Evaluation timestamp.
+
+    Returns:
+        Number of transcripts evaluated.
+
+    Raises:
+        ValueError: If ``batch_size`` is less than one.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be at least 1")
+    checkpoint = _retention_checkpoint(db=db, now=now)
+    if checkpoint.cycle_upper_id is None:
+        checkpoint.last_id = None
+        checkpoint.cycle_upper_id = db.query(func.max(Transcript.id)).scalar()
+        if checkpoint.cycle_upper_id is None:
+            return 0
+    query = db.query(Transcript).filter(
+        Transcript.purged_at.is_(None),
+        Transcript.id <= checkpoint.cycle_upper_id,
+    )
+    if checkpoint.last_id is not None:
+        query = query.filter(Transcript.id > checkpoint.last_id)
+    transcripts = query.order_by(Transcript.id.asc()).limit(batch_size).all()
+    for transcript in transcripts:
+        evaluate_transcript_retention(
+            db=db,
+            transcript=transcript,
+            extraction_confidence=None,
+            source_retention_opt_out=transcript.source_retention_opt_out,
+            policy=policy,
+            now=now,
+        )
+    if len(transcripts) < batch_size or (
+        transcripts[-1].id >= checkpoint.cycle_upper_id
+    ):
+        checkpoint.last_id = None
+        checkpoint.cycle_upper_id = None
+    else:
+        checkpoint.last_id = transcripts[-1].id
+    checkpoint.updated_at = now
+    db.flush()
+    return len(transcripts)
+
+
+def _retention_checkpoint(*, db: Session, now: datetime) -> SweepCheckpoint:
+    """Load the retention sweep checkpoint for update, creating it if absent."""
+    checkpoint = _locked_retention_checkpoint(db=db)
+    if checkpoint is not None:
+        return checkpoint
+    # Flush first, so the handler below only ever sees the checkpoint insert
+    # and cannot hide an integrity error from another pending row.
+    db.flush()
+    try:
+        # A savepoint keeps a lost creation race from discarding the caller's
+        # transaction; the winner's row is then loaded and locked instead.
+        with db.begin_nested():
+            db.add(SweepCheckpoint(sweep_key=RETENTION_SCHEDULE_KEY, updated_at=now))
+    except IntegrityError:
+        pass
+    checkpoint = _locked_retention_checkpoint(db=db)
+    if checkpoint is None:
+        raise RuntimeError("Retention sweep checkpoint could not be created")
+    return checkpoint
+
+
+def _locked_retention_checkpoint(*, db: Session) -> SweepCheckpoint | None:
+    """Lock the retention checkpoint row and refresh any cached copy of it."""
+    return (
+        db.query(SweepCheckpoint)
+        .filter(SweepCheckpoint.sweep_key == RETENTION_SCHEDULE_KEY)
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+    )
 
 
 def _pending_items(
