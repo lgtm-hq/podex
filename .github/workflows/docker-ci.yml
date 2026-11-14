@@ -63,8 +63,13 @@ jobs:
       validate-on-pr: >-
         ${{ github.event_name == 'pull_request' || github.event_name ==
         'merge_group' }}
-      # Single-platform builds have the caller checkout. On tags only the
-      # split verify job checks it out, so use its smoke input alone.
+      # Single-platform builds have the caller checkout and smoke the image
+      # through the health hook. Tag builds take the split path, which has no
+      # usable smoke input today: its health job lacks the caller checkout
+      # (lgtm-hq/lgtm-ci#1572) and its verify job reads a staging digest that
+      # the two image jobs of one run overwrite (lgtm-hq/lgtm-ci#1579), which
+      # failed the backend publish of v0.41.26. So no smoke-test-script until
+      # that is fixed upstream (#822).
       health-check-cmd: >-
         ${{ !startsWith(github.ref, 'refs/tags/v') && 'bash
         .github/scripts/smoke-backend.sh' || '' }}
@@ -72,7 +77,6 @@ jobs:
         ${{ !startsWith(github.ref, 'refs/tags/v') && '8000' || '' }}
       health-check-timeout: >-
         ${{ !startsWith(github.ref, 'refs/tags/v') && '210s' || '' }}
-      smoke-test-script: .github/scripts/smoke-backend.sh
       # amd64 only for PR speed; publish multi-arch on tags.
       platforms: >-
         ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64'
@@ -157,7 +161,6 @@ jobs:
         ${{ !startsWith(github.ref, 'refs/tags/v') && '4321' || '' }}
       health-check-timeout: >-
         ${{ !startsWith(github.ref, 'refs/tags/v') && '210s' || '' }}
-      smoke-test-script: .github/scripts/smoke-frontend.sh
       platforms: >-
         ${{ startsWith(github.ref, 'refs/tags/v') && 'linux/amd64,linux/arm64'
         || 'linux/amd64' }}
