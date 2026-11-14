@@ -776,3 +776,58 @@ def test_failed_merge_rolls_back_reference_changes(
     assert_that(
         db_session.query(Mention).filter(Mention.media_id == source.id).count(),
     ).is_equal_to(1)
+
+
+@pytest.mark.parametrize(
+    ("rule_sides", "unseen_target_mention", "expected_events"),
+    [
+        (("source", "target"), True, [(1, 2)]),
+        (("source",), False, []),
+        (("target",), False, []),
+    ],
+    ids=["both", "source", "target"],
+)
+def test_merge_baseline_ignores_unpublished_seen_mentions(
+    db_session: Session,
+    rule_sides: tuple[str, ...],
+    unseen_target_mention: bool,
+    expected_events: list[tuple[int, int]],
+) -> None:
+    """A mention removed on one side never cancels unseen activity on the other."""
+    episode, source, target = _seed_merge_pair(db_session)
+    user = _create_saving_user(db_session, source, target)
+    media_by_side = {"source": source, "target": target}
+    for side in rule_sides:
+        _require_rule(
+            create_media_alert_rule(
+                db=db_session,
+                user_id=user.id,
+                media_id=media_by_side[side].id,
+            ),
+        )
+    unpublished = media_by_side[rule_sides[0]]
+    db_session.query(Mention).filter(Mention.media_id == unpublished.id).delete()
+    if unseen_target_mention:
+        db_session.add(Mention(episode_id=episode.id, media_id=target.id))
+    db_session.commit()
+
+    merge_ops_media(
+        db=db_session,
+        source_media_id=source.id,
+        target_media_id=target.id,
+    )
+    db_session.commit()
+
+    rule = db_session.query(AccountAlertRule).one()
+    assert_that((rule.target_id, rule.baseline_count)).is_equal_to((target.id, 1))
+    generated = evaluate_alert_rules(db=db_session, user_id=user.id)
+    assert_that(
+        [(item.event.previous_count, item.event.observed_count) for item in generated],
+    ).is_equal_to(expected_events)
+    observed = db_session.query(Mention).count()
+    db_session.add(Mention(episode_id=episode.id, media_id=target.id))
+    db_session.flush()
+    generated = evaluate_alert_rules(db=db_session, user_id=user.id)
+    assert_that(
+        [(item.event.previous_count, item.event.observed_count) for item in generated],
+    ).is_equal_to([(observed, observed + 1)])

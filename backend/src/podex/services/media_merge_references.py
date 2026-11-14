@@ -12,9 +12,12 @@ source is deleted:
 
 Alert baselines count activity an account has already seen. After a merge the
 survivor's mention count includes both records, so each surviving rule's
-baseline becomes the sum of what the account had seen on each side: the rule's
-own baseline where a rule existed, otherwise that side's full mention count.
-Merging identities therefore never reports historical mentions as new.
+baseline becomes the sum of what the account has seen on each side. A side with
+a rule contributes ``min(baseline, current count)``, so mentions removed since
+the rule was last evaluated never cancel unseen activity on the other side; a
+side without a rule counts as fully seen. Merging identities therefore never
+reports historical mentions as new and never hides unseen ones.
+
 """
 
 from dataclasses import dataclass
@@ -191,6 +194,23 @@ def _mention_count(*, db: Session, media_id: int) -> int:
     return int(db.query(Mention).filter(Mention.media_id == media_id).count())
 
 
+def _seen_count(*, rule: AccountAlertRule | None, mention_count: int) -> int:
+    """Count one side's mentions that the rule's account has already seen.
+
+    Args:
+        rule: Rule watching this side, or ``None`` when the account has none.
+        mention_count: Current published mention count on this side.
+
+    Returns:
+        The rule baseline capped at the current count, or the full count when
+        no rule watches this side.
+    """
+    if rule is None:
+        return mention_count
+    seen: int = rule.baseline_count
+    return min(seen, mention_count)
+
+
 def _move_media_alert_rules(
     *,
     db: Session,
@@ -207,12 +227,16 @@ def _move_media_alert_rules(
     for pair in rule_plan.pairs:
         source_rule = pair.source_rule
         target_rule = pair.target_rule
+        source_seen = _seen_count(rule=source_rule, mention_count=source_count)
         if target_rule is None:
             source_rule.target_id = target_media_id
-            source_rule.baseline_count += target_count
+            source_rule.baseline_count = source_seen + target_count
             continue
         paired_target_rule_ids.add(target_rule.id)
-        target_rule.baseline_count += source_rule.baseline_count
+        target_rule.baseline_count = source_seen + _seen_count(
+            rule=target_rule,
+            mention_count=target_count,
+        )
         if target_rule.last_evaluated_at is None:
             target_rule.last_evaluated_at = source_rule.last_evaluated_at
         db.query(AccountAlertEvent).filter(
@@ -225,7 +249,10 @@ def _move_media_alert_rules(
 
     for target_rule in rule_plan.target_rules:
         if target_rule.id not in paired_target_rule_ids:
-            target_rule.baseline_count += source_count
+            target_rule.baseline_count = source_count + _seen_count(
+                rule=target_rule,
+                mention_count=target_count,
+            )
 
     for source_rule in collapsed_rules:
         db.delete(source_rule)
