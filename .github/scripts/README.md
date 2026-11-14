@@ -96,11 +96,53 @@ exact path. It does **not** query the database. Frontend `/health` is uncached
 SSR HTTP liveness and does **not** fetch the backend. These probes distinguish
 serving HTTP from a process that is alive but stalled; they do not prove
 dependency readiness. The backend scheduler command
-(`python -m podex.scheduler_runner`) shares the image but has no HTTP listener.
-The probe searches Linux `/proc` command lines for `podex.scheduler_runner`,
-including PID 1 and children under shell or init wrappers and Python options
-such as `-u`. This exemption does not prove scheduler progress or database
-readiness. Other command overrides retain the API probe. The backend probe
+(`python -m podex.scheduler_runner`) shares the image but has no HTTP listener,
+so the backend probe decides the container's role before probing:
+
+1. `PODEX_PROCESS_ROLE`, read from the probe's own environment (Docker gives the
+   probe the container's environment): `api` always performs the HTTP check,
+   `scheduler` never does, and any other nonempty value is unhealthy.
+2. When it is unset or empty, PID 1's argument vector, with a closed rule. Shell
+   scripts are never interpreted. Up to four launchers are removed from the
+   front: the image entrypoint (`/app/scripts/start.sh`, also as
+   `/bin/sh /app/scripts/start.sh` before it execs), `tini` or `docker-init`
+   (options `-s`, `-g`, `-w`, `-v`, `-vv`, `-vvv`, `-p SIGNAL`, `-e CODE`, then
+   an optional `--`), `dumb-init` (`-c`, `--single-child`, `-v`, `--verbose`,
+   `-r`/`--rewrite FROM:TO`, then an optional `--`) and `env` followed only by
+   `NAME=value` assignments. The container is the scheduler only when what
+   remains is one of:
+
+   - `python [-u|-B|-O|-OO ...] -m podex.scheduler_runner [arguments]`, where
+     the interpreter's file name is `python`, `python3` or `python3.N`;
+   - `sh`, `bash`, `dash` or `ash`, then `-c`, then a script that, without
+     surrounding whitespace, is exactly that invocation, optionally preceded by
+     `exec`, and contains none of ``; & | < > ( ) $ ` " ' \ # * ? [ ] { } ~ !``
+     or a newline. No other shell option and no argument after the script is
+     accepted.
+
+Everything else gets the HTTP check, including compound scripts
+(`sh -c 'python -m podex.scheduler_runner & wait'`), script files, `bash -lc`,
+`uv run` or `poetry run`, `env` with options, combined Python flags such as
+`-um`, and shared PID namespaces (`--pid=host`, pods). Those scheduler
+deployments must set `PODEX_PROCESS_ROLE=scheduler`. Deployments that start the
+scheduler in exec form, through the entrypoint, an init process or a
+single-command `-c` script as above stay healthy without it.
+
+No other process is read. A scheduler started with `docker exec` in an API
+container, a `grep` or `pgrep -f` for the module name, a scheduler re-parented
+to PID 1 after the process that started it exited, or a scheduler elsewhere in a
+shared PID namespace leaves the API's HTTP check in force. Reading is bounded:
+at most 16 KiB of command line, 64 arguments and four launchers; anything
+larger, an unreadable or empty PID 1 command line, or any error while deciding
+keeps the HTTP check. Any unexpected error in the probe exits 1 with one line on
+stderr. The scheduler role does not prove scheduler progress or database
+readiness.
+
+Probe requests to `/health` stay in the `podex.access` log: one line per probe
+(every 30 seconds, every 5 seconds during start-up) shows when probes ran, their
+status and latency, which is the evidence needed when a container turns
+unhealthy, and it is the same record an external load-balancer check leaves.
+Filtering by path would also hide those external checks. The backend probe
 assumes port **8000**, matching the default CMD. If an operator changes the
 listening port, they must also override the image healthcheck to request exact
 `/health` on the new port; changing only the server command is insufficient.
@@ -108,10 +150,26 @@ listening port, they must also override the image healthcheck to request exact
 Backend smoke starts from a writable, empty SQLite database in tmpfs, enables
 `AUTO_MIGRATE=1`, then reads `/api/v2/podcasts` and asserts an empty page. This
 tests the supported default database, Alembic chain, entrypoint, routing and ORM
-read; it does not test PostgreSQL or external providers. A second container uses
-an inaccessible SQLite path and must exit nonzero with a migration failure
-before the server starts. Its log must name the failure by error class and
-SQLite error name
+read; it does not test PostgreSQL or external providers. Three scheduler
+containers start the same way: `python -m podex.scheduler_runner` (exec form)
+and `sh -c 'exec python -u -m podex.scheduler_runner'`, both detected without
+configuration, and the compound
+`sh -c 'python -u -m podex.scheduler_runner & wait'` with
+`PODEX_PROCESS_ROLE=scheduler`, so the shell stays PID 1. Each must become
+Docker healthy, have exec'd past the entrypoint, and have a scheduler module
+process running. Two API-shaped containers that never listen on port 8000 prove
+the negative. In the first, PID 1 is a Python process that starts a real
+scheduler as its child, and the smoke starts another with `docker exec`. The
+second runs the same compound `sh -c` without the role setting. With health
+timing overridden on `docker run`
+(`--health-start-period=1s --health-interval=2s --health-retries=1`; the image's
+5-second start interval still applies to the first probe), Docker must report
+both unhealthy within seconds rather than after the 300-second start period.
+Every recorded probe must have exited 1 without output, showing the HTTP check
+ran rather than the probe crashing, and their scheduler processes must still be
+running afterwards. Another container uses an inaccessible SQLite path and must
+exit nonzero with a migration failure before the server starts. Its log must
+name the failure by error class and SQLite error name
 (`OperationalError (OperationalError, SQLITE_CANTOPEN) [driver message withheld]`)
 and must not contain the driver's own message, which the application withholds
 because it can carry row values. Production auto-migration remains opt-in.

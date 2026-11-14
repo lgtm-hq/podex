@@ -102,10 +102,17 @@ EXPOSE 8000
 # /health is exact-path rate-limit exempt and deliberately independent of DB.
 # This assumes port 8000 from the default CMD. A deployment that changes the
 # listening port must also override the healthcheck to probe that port.
-# The scheduler has no HTTP listener; recognize its module in /proc command
-# lines, including shell/init wrappers. This does not prove scheduler progress.
-# Any visible process counts: a scheduler exec'd into an API container, or one
-# sharing its PID namespace, makes the probe skip the HTTP check.
+# The scheduler has no HTTP listener, so the probe decides the container's role
+# first: PODEX_PROCESS_ROLE=api|scheduler when set, otherwise PID 1's argument
+# vector alone, with a closed rule that never interprets shell. After at most
+# four launchers (this entrypoint, tini/docker-init/dumb-init with their
+# documented options, `env NAME=value ...`), only these forms are the scheduler:
+#   python [-u|-B|-O|-OO ...] -m podex.scheduler_runner [args]
+#   sh|bash|dash|ash -c '[exec] python [-u|-B|-O|-OO ...] -m podex.scheduler_runner'
+# with no shell metacharacter in the script. Everything else, including compound
+# scripts, script files, uv run and shared PID namespaces, gets the HTTP check;
+# such scheduler deployments must set PODEX_PROCESS_ROLE=scheduler. Other
+# processes are never read. The scheduler role does not prove its progress.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --start-interval=5s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
 
