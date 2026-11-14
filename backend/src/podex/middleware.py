@@ -37,6 +37,37 @@ def _request_path(request: Request) -> str:
     return str(request.scope.get("path", ""))
 
 
+def _log_safe(value: str) -> str:
+    """Escape a caller-controlled value for a single-line access record.
+
+    Backslash, space and every character Python does not consider printable
+    (C0 and C1 controls including CR, LF and tab, Unicode line and paragraph
+    separators, format characters) are written as ``\\xNN``, ``\\uNNNN`` or
+    ``\\UNNNNNNNN`` escapes, and a literal backslash as ``\\\\``, so the
+    original value can be read back unambiguously and cannot start a new
+    line or field.
+
+    Args:
+        value: Decoded text taken from the request.
+
+    Returns:
+        str: The escaped text.
+    """
+    escaped: list[str] = []
+    for char in value:
+        if char == "\\":
+            escaped.append("\\\\")
+        elif char.isprintable() and char != " ":
+            escaped.append(char)
+        elif ord(char) <= 0xFF:
+            escaped.append(f"\\x{ord(char):02x}")
+        elif ord(char) <= 0xFFFF:
+            escaped.append(f"\\u{ord(char):04x}")
+        else:
+            escaped.append(f"\\U{ord(char):08x}")
+    return "".join(escaped)
+
+
 def _client_address(request: Request) -> str:
     """Return the peer address as the server resolved it, or ``-``.
 
@@ -113,24 +144,28 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
             request_id: The request id associated with this request.
         """
         duration_ms = (time.perf_counter() - start) * 1000.0
-        path = _request_path(request)
-        client_addr = _client_address(request)
-        http_version = str(request.scope.get("http_version", "-"))
+        # The path is percent-decoded and the request id comes from a
+        # header, so both are escaped before they reach the log.
+        method = _log_safe(request.method)
+        path = _log_safe(_request_path(request))
+        safe_request_id = _log_safe(request_id)
+        client_addr = _log_safe(_client_address(request))
+        http_version = _log_safe(str(request.scope.get("http_version", "-")))
         _access_logger.info(
             "%s %s %s %.2fms request_id=%s client=%s http_version=%s",
-            request.method,
+            method,
             path,
             status_code,
             duration_ms,
-            request_id,
+            safe_request_id,
             client_addr,
             http_version,
             extra={
-                "method": request.method,
+                "method": method,
                 "path": path,
                 "status_code": status_code,
                 "duration_ms": round(duration_ms, 2),
-                "request_id": request_id,
+                "request_id": safe_request_id,
                 "client_addr": client_addr,
                 "http_version": http_version,
             },

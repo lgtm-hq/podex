@@ -1,7 +1,7 @@
 """Tests for hosted WorkOS AuthKit sign-in."""
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import fields
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urlparse
@@ -19,12 +19,8 @@ from podex.api.deps import get_app_settings
 from podex.api.v2 import auth as v2_auth_api
 from podex.config import (
     AuthSettings,
-    ObservabilitySettings,
-    RateLimitSettings,
     Settings,
 )
-from podex.database import get_db
-from podex.main import create_app
 from podex.models import AccountUser, UserSession
 from podex.services.workos_auth import (
     WORKOS_AUTHENTICATE_URL,
@@ -34,7 +30,7 @@ from podex.services.workos_auth import (
     build_workos_auth_client,
     upsert_workos_account_user,
 )
-from tests.conftest import CapturingSentryTransport
+from tests.conftest import CapturingSentryTransport, create_reporting_app
 
 _PROFILE = WorkOSUserData(
     workos_user_id="user_01ABC",
@@ -285,6 +281,11 @@ def _texts_reachable_from(error: BaseException) -> list[str]:
     return texts
 
 
+_INVALID_CODE_MESSAGE = (
+    "WorkOS rejected the authorization code (HTTP 400 invalid_grant)"
+)
+
+
 def _refuse(request: httpx.Request) -> httpx.Response:
     """Fail like an unreachable WorkOS endpoint."""
     raise httpx.ConnectError("connection refused by api.workos.com", request=request)
@@ -295,9 +296,38 @@ def _time_out(request: httpx.Request) -> httpx.Response:
     raise httpx.ReadTimeout("read timed out", request=request)
 
 
-def _reject(_request: httpx.Request) -> httpx.Response:
-    """Reject the code, echoing it back in the error body."""
-    return httpx.Response(401, json={"error": "invalid_grant", "code": _CHAIN_CODE})
+def _invalid_code(_request: httpx.Request) -> httpx.Response:
+    """Reject the code as invalid or expired (OAuth ``invalid_grant``)."""
+    return httpx.Response(
+        400,
+        json={
+            "error": "invalid_grant",
+            "error_description": f"The code '{_CHAIN_CODE}' has expired or is invalid.",
+        },
+    )
+
+
+def _invalid_client(_request: httpx.Request) -> httpx.Response:
+    """Reject our credentials (invalid API key), echoing the code."""
+    return httpx.Response(
+        401,
+        json={"error": "invalid_client", "error_description": _CHAIN_CODE},
+    )
+
+
+def _bad_request(_request: httpx.Request) -> httpx.Response:
+    """Reject the request for a reason other than the code itself."""
+    return httpx.Response(400, json={"error": "invalid_request", "code": _CHAIN_CODE})
+
+
+def _bad_request_not_json(_request: httpx.Request) -> httpx.Response:
+    """Reject with HTTP 400 and a body that is not JSON."""
+    return httpx.Response(400, content=f"<html>{_CHAIN_CODE}</html>".encode())
+
+
+def _unavailable(_request: httpx.Request) -> httpx.Response:
+    """Fail like a WorkOS server error."""
+    return httpx.Response(503, content=f"upstream {_CHAIN_CODE}".encode())
 
 
 def _malformed(_request: httpx.Request) -> httpx.Response:
@@ -316,7 +346,31 @@ _FAILURE_MODES = [
         "WorkOS authentication request failed: ReadTimeout",
         id="timeout",
     ),
-    pytest.param(_reject, "WorkOS code exchange rejected with HTTP 401", id="http-401"),
+    pytest.param(
+        _invalid_code,
+        _INVALID_CODE_MESSAGE,
+        id="invalid-code",
+    ),
+    pytest.param(
+        _invalid_client,
+        "WorkOS code exchange rejected with HTTP 401",
+        id="invalid-client",
+    ),
+    pytest.param(
+        _bad_request,
+        "WorkOS code exchange rejected with HTTP 400",
+        id="other-400",
+    ),
+    pytest.param(
+        _bad_request_not_json,
+        "WorkOS code exchange rejected with HTTP 400",
+        id="400-not-json",
+    ),
+    pytest.param(
+        _unavailable,
+        "WorkOS code exchange rejected with HTTP 503",
+        id="http-503",
+    ),
     pytest.param(_malformed, "WorkOS response was not valid JSON", id="malformed-json"),
 ]
 
@@ -392,9 +446,13 @@ def test_callback_logs_no_oauth_credentials(
     ]
     assert_that(access).is_length(1)
     assert_that(access[0].__dict__["status_code"]).is_equal_to(502)
-    assert_that(caplog.messages).contains(
-        f"workos_code_exchange_failed: {expected_message}",
-    )
+    warnings = [
+        record
+        for record in caplog.records
+        if record.getMessage() == f"workos_code_exchange_failed: {expected_message}"
+    ]
+    assert_that(warnings).is_length(1)
+    assert_that(warnings[0].levelno).is_equal_to(logging.WARNING)
     formatter = logging.Formatter()
     # ``httpx2`` is the test client logging its own outgoing request line;
     # every other record was emitted while the server handled the request.
@@ -422,18 +480,7 @@ def _reported_failed_callback(
     Returns:
         The callback response and the state value it carried.
     """
-    app = create_app(
-        Settings(
-            rate_limit=RateLimitSettings(enabled=False),
-            observability=ObservabilitySettings(sentry_dsn=_TEST_DSN),
-        ),
-    )
-
-    def override_get_db() -> Iterator[Session]:
-        """Yield the test database session in place of the real one."""
-        yield db_session
-
-    app.dependency_overrides[get_db] = override_get_db
+    app = create_reporting_app(db_session)
     with TestClient(app) as reporting_client:
         _override(reporting_client, _failing_workos(handler))
         login = reporting_client.get("/api/v2/auth/login", follow_redirects=False)
@@ -453,11 +500,22 @@ def test_failed_callback_reports_no_credentials(
     handler: Callable[[httpx.Request], httpx.Response],
     expected_message: str,
 ) -> None:
-    """The error report for a failed callback is useful and credential-free."""
+    """Failures are reported usefully without credentials, except bad codes.
+
+    A rejected authorization code is caller-triggerable (anyone can replay
+    or forge one), so it is only logged; every other failure is reported
+    exactly once.
+    """
     response, state = _reported_failed_callback(db_session, handler)
 
     assert_that(response.status_code).is_equal_to(502)
+    wire = sentry_transport.serialized()
+    for leaked in (_CHAIN_API_KEY, "sk_test_456", _CHAIN_CODE, state):
+        assert_that(wire).does_not_contain(leaked)
     events = sentry_transport.events()
+    if expected_message == _INVALID_CODE_MESSAGE:
+        assert_that(events).is_empty()
+        return
     assert_that(events).is_length(1)
     event = events[0]
     exceptions = {value["type"]: value for value in event["exception"]["values"]}
@@ -474,9 +532,18 @@ def test_failed_callback_reports_no_credentials(
         "http://testserver/api/v2/auth/callback",
     )
     assert_that(event["request"]).does_not_contain_key("query_string")
-    wire = sentry_transport.serialized()
-    for leaked in (_CHAIN_API_KEY, "sk_test_456", _CHAIN_CODE, state):
-        assert_that(wire).does_not_contain(leaked)
+
+
+def test_replayed_invalid_codes_send_no_reports(
+    db_session: Session,
+    sentry_transport: CapturingSentryTransport,
+) -> None:
+    """Repeated bad-code callbacks never spend reporting quota."""
+    for _ in range(5):
+        response, _state = _reported_failed_callback(db_session, _invalid_code)
+        assert_that(response.status_code).is_equal_to(502)
+
+    assert_that(sentry_transport.events()).is_empty()
 
 
 def test_upsert_creates_new_account(db_session: Session) -> None:

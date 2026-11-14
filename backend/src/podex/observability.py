@@ -11,19 +11,27 @@ What the SDK sends, and how credentials are kept out of it:
 - Stack frames: source context only. Local-variable capture is off, because
   frame locals hold OAuth codes, state values, settings with API keys and
   outbound requests whose bodies carry client secrets.
-- Request data: method, URL and headers of the failing request. Query
-  strings are dropped by :func:`scrub_event` on every route (the OAuth
-  callback carries ``code`` and ``state`` there); cookies and credential
-  headers are filtered by the SDK's event scrubber; ``send_default_pii`` is
-  off, so no client IP or user identity is attached.
+- Request data: method and URL (without query string or fragment) of the
+  failing request, plus only the headers in :data:`REPORTED_REQUEST_HEADERS`.
+  Every other header is dropped, so credential headers (``X-Ops-Key``,
+  ``Paddle-Signature``, ``Authorization``, ``Cookie``, and any added later)
+  never leave the process. Request bodies, cookies and the server
+  environment are not sent; ``send_default_pii`` is off, so no client IP or
+  user identity is attached.
 - Breadcrumbs: log records (after the application's logging filters) and
-  outbound HTTP requests. The HTTP breadcrumb's ``http.query`` keeps the raw
-  query, which carries provider API keys, so it is in the scrubber denylist.
+  outbound HTTP requests. The access logger is excluded, because its records
+  carry the client address. The HTTP breadcrumb's ``http.query`` keeps the
+  raw query, which carries provider API keys, so it is in the scrubber
+  denylist.
+- Errors whose class sets ``reportable = False``, anywhere in the exception
+  chain, are not sent: they are caller-triggerable rejections, already
+  logged, and reporting them would let any caller spend the reporting quota.
 """
 
 import re
 
 import sentry_sdk
+from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Event, Hint
 
@@ -32,6 +40,15 @@ from podex.config import Settings
 
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 _REDACTED = "[redacted-email]"
+_ACCESS_LOGGER = "podex.access"
+
+REPORTED_REQUEST_HEADERS = frozenset(
+    {"content-length", "content-type", "host", "user-agent", "x-request-id"},
+)
+"""Request headers kept in error reports; every other header is dropped."""
+
+_REPORTABLE_ATTRIBUTE = "reportable"
+
 
 # Keys the SDK's scrubber filters in addition to its defaults, wherever they
 # appear (request bodies and headers, extras, breadcrumb data), recursively.
@@ -73,24 +90,70 @@ def _scrub_mapping(data: dict[str, object]) -> dict[str, object]:
     }
 
 
-def _drop_query(request: dict[str, object]) -> None:
-    """Remove the query string and fragment from captured request data.
+def _minimise_request(request: dict[str, object]) -> None:
+    """Reduce captured request data to what is safe and useful to report.
+
+    Drops the query string, fragment, body, cookies and server environment,
+    and keeps only the allowlisted headers.
 
     Args:
         request: The event's ``request`` mapping, edited in place.
     """
-    request.pop("query_string", None)
+    for key in ("query_string", "data", "cookies", "env"):
+        request.pop(key, None)
     url = request.get("url")
     if isinstance(url, str):
         request["url"] = url.split("#", 1)[0].split("?", 1)[0]
+    headers = request.get("headers")
+    if isinstance(headers, dict):
+        request["headers"] = {
+            name: value
+            for name, value in headers.items()
+            if isinstance(name, str) and name.lower() in REPORTED_REQUEST_HEADERS
+        }
+    else:
+        request.pop("headers", None)
+
+
+def _is_unreported(hint: Hint) -> bool:
+    """Return whether the reported exception's chain marks it unreported.
+
+    An exception class opts out of reporting with ``reportable = False``;
+    the code handling it still logs it.
+
+    Args:
+        hint: The SDK hint, carrying ``exc_info`` for exception events.
+
+    Returns:
+        bool: True when any exception in the chain sets ``reportable`` false.
+    """
+    exc_info = hint.get("exc_info")
+    pending: list[BaseException] = []
+    if isinstance(exc_info, tuple) and isinstance(exc_info[1], BaseException):
+        pending.append(exc_info[1])
+    seen: set[int] = set()
+    while pending:
+        current = pending.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if getattr(current, _REPORTABLE_ATTRIBUTE, True) is False:
+            return True
+        pending.extend(
+            linked
+            for linked in (current.__cause__, current.__context__)
+            if linked is not None
+        )
+    return False
 
 
 def scrub_event(event: Event, hint: Hint) -> Event:
-    """``before_send`` hook that strips PII and query strings from an event.
+    """Minimise an event's data before it is sent.
 
     Scrubs email addresses from the event message and ``extra`` values, drops
-    ``user.email`` entirely (scrubbing the remaining user fields), and removes
-    the request query string, which can carry OAuth codes or other secrets.
+    ``user.email`` entirely (scrubbing the remaining user fields), and
+    reduces request data to the method, the URL without query string, and
+    the allowlisted headers.
 
     Args:
         event: Sentry event payload about to be sent.
@@ -112,8 +175,23 @@ def scrub_event(event: Event, hint: Hint) -> Event:
         event["user"] = _scrub_mapping(user)
     request = event.get("request")
     if isinstance(request, dict):
-        _drop_query(request)
+        _minimise_request(request)
     return event
+
+
+def before_send(event: Event, hint: Hint) -> Event | None:
+    """``before_send`` hook: drop unreported errors, minimise the rest.
+
+    Args:
+        event: Sentry event payload about to be sent.
+        hint: SDK context; ``exc_info`` identifies the reported exception.
+
+    Returns:
+        The minimised event, or ``None`` to drop it.
+    """
+    if _is_unreported(hint):
+        return None
+    return scrub_event(event, hint)
 
 
 def init_sentry(settings: Settings) -> bool:
@@ -135,12 +213,15 @@ def init_sentry(settings: Settings) -> bool:
         dsn=settings.observability.sentry_dsn,
         environment=settings.observability.sentry_environment,
         release=f"podex@{__version__}",
-        before_send=scrub_event,
+        before_send=before_send,
         send_default_pii=False,
         include_local_variables=False,
+        max_request_body_size="never",
         event_scrubber=EventScrubber(
             denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
             recursive=True,
         ),
     )
+    # Access records carry the client address; keep them out of breadcrumbs.
+    ignore_logger(_ACCESS_LOGGER)
     return True

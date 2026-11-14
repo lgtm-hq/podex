@@ -17,7 +17,12 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from podex.api.deps import get_app_settings
-from podex.config import RateLimitSettings, RetentionSettings, Settings
+from podex.config import (
+    ObservabilitySettings,
+    RateLimitSettings,
+    RetentionSettings,
+    Settings,
+)
 from podex.database import enable_sqlite_foreign_keys, get_db
 from podex.main import create_app
 from podex.models import (
@@ -280,3 +285,32 @@ def sentry_transport_fixture(
     sentry_sdk.get_client().close()
     sentry_sdk.get_global_scope().set_client(None)
     sentry_sdk.get_isolation_scope().clear()
+
+
+def create_reporting_app(db_session: Session) -> FastAPI:
+    """Build an app that reports errors, with the test database session.
+
+    Use together with the ``sentry_transport`` fixture so reports stay in
+    memory.
+
+    Args:
+        db_session: Database session the app should use.
+
+    Returns:
+        FastAPI: The configured application.
+    """
+    app: FastAPI = create_app(
+        Settings(
+            rate_limit=RateLimitSettings(enabled=False),
+            observability=ObservabilitySettings(
+                sentry_dsn="https://public@sentry.invalid/1",
+            ),
+        ),
+    )
+
+    def override_get_db() -> Iterator[Session]:
+        """Yield the test database session in place of the real one."""
+        yield db_session
+
+    app.dependency_overrides[get_db] = override_get_db
+    return app

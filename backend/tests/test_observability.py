@@ -12,7 +12,7 @@ from podex import __version__
 from podex.config import ObservabilitySettings, RateLimitSettings, Settings
 from podex.logging_config import configure_logging
 from podex.main import create_app
-from podex.observability import init_sentry, scrub_event
+from podex.observability import before_send, init_sentry, scrub_event
 from podex.scheduler_runner import main as scheduler_main
 from tests.conftest import CapturingSentryTransport
 
@@ -47,9 +47,10 @@ def test_init_sentry_initializes_with_dsn() -> None:
             "dsn": "https://key@sentry.example/1",
             "environment": "staging",
             "release": f"podex@{__version__}",
-            "before_send": scrub_event,
+            "before_send": before_send,
             "send_default_pii": False,
             "include_local_variables": False,
+            "max_request_body_size": "never",
         },
     )
     assert_that(scrubber).is_instance_of(EventScrubber)
@@ -182,3 +183,55 @@ def test_outbound_request_breadcrumbs_keep_provider_keys_out(
     assert_that(http_crumbs).is_length(1)
     assert_that(http_crumbs[0]["data"]["url"]).is_equal_to("https://www.omdbapi.com/")
     assert_that(sentry_transport.serialized()).does_not_contain(provider_key)
+
+
+class _ExpectedRejection(Exception):
+    """A caller-triggerable failure used to exercise the drop rule."""
+
+    reportable = False
+
+
+def _raised_from(cause: BaseException) -> BaseException:
+    """Return a RuntimeError raised from ``cause`` with its chain attached."""
+    try:
+        raise RuntimeError("wrapped") from cause
+    except RuntimeError as error:
+        return error
+
+
+def test_before_send_drops_events_marked_unreported_anywhere_in_chain() -> None:
+    """An unreported error, even as the cause of another, sends nothing."""
+    wrapped = _raised_from(_ExpectedRejection("bad code"))
+    hint = {"exc_info": (type(wrapped), wrapped, wrapped.__traceback__)}
+
+    assert_that(before_send({"level": "error"}, hint)).is_none()
+
+
+def test_before_send_keeps_and_minimises_other_events() -> None:
+    """Other errors are sent, with request headers reduced to the allowlist."""
+    wrapped = _raised_from(ValueError("provider down"))
+    hint = {"exc_info": (type(wrapped), wrapped, wrapped.__traceback__)}
+    event: Event = {
+        "request": {
+            "url": "http://testserver/api/v2/ops/metrics",
+            "headers": {
+                "User-Agent": "agent/1",
+                "X-Ops-Key": "ops-secret",
+                "Paddle-Signature": "ts=1;h1=abc",
+                "X-Request-ID": "req-1",
+            },
+            "data": {"body": "payload"},
+            "cookies": {"podex_session": "cookie"},
+        },
+    }
+
+    sent = before_send(event, hint)
+
+    if sent is None:
+        raise AssertionError("expected the event to be sent")
+    assert_that(sent["request"]).is_equal_to(
+        {
+            "url": "http://testserver/api/v2/ops/metrics",
+            "headers": {"User-Agent": "agent/1", "X-Request-ID": "req-1"},
+        },
+    )

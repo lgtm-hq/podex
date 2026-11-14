@@ -9,6 +9,7 @@ referencing our own opaque session ids.
 """
 
 from dataclasses import dataclass
+from typing import ClassVar
 from urllib.parse import urlencode
 
 import httpx
@@ -23,8 +24,24 @@ WORKOS_AUTHENTICATE_URL = "https://api.workos.com/user_management/authenticate"
 _EXCHANGE_TIMEOUT_SECONDS = 10.0
 
 
+_INVALID_GRANT = "invalid_grant"
+
+
 class WorkOSAuthError(RuntimeError):
     """Raised when the WorkOS code exchange fails or yields no usable user."""
+
+
+class WorkOSInvalidCodeError(WorkOSAuthError):
+    """The provider rejected the authorization code itself.
+
+    Raised for HTTP 400 with the OAuth 2.0 ``invalid_grant`` error (RFC 6749
+    section 5.2: the code is invalid, expired, revoked or already used). Any
+    caller can trigger it by replaying or forging a code, so it is logged
+    but not sent to the error reporter. Every other rejection, including
+    401 for an invalid API key and other 400 errors, stays reportable.
+    """
+
+    reportable: ClassVar[bool] = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +137,9 @@ class WorkOSAuthClient:
             msg = f"WorkOS authentication request failed: {failure}"
             raise WorkOSAuthError(msg)
         if response.status_code != httpx.codes.OK:
+            if _is_invalid_grant(response):
+                msg = "WorkOS rejected the authorization code (HTTP 400 invalid_grant)"
+                raise WorkOSInvalidCodeError(msg)
             msg = f"WorkOS code exchange rejected with HTTP {response.status_code}"
             raise WorkOSAuthError(msg)
         payload: object = None
@@ -214,6 +234,27 @@ def upsert_workos_account_user(
         user.last_name = profile.last_name
     db.flush()
     return user
+
+
+def _is_invalid_grant(response: httpx.Response) -> bool:
+    """Return whether a rejection is the OAuth ``invalid_grant`` error.
+
+    Only the ``error`` field is compared against a constant; the body is
+    never copied into a message.
+
+    Args:
+        response: A non-200 response from the authenticate endpoint.
+
+    Returns:
+        bool: True for HTTP 400 with ``{"error": "invalid_grant"}``.
+    """
+    if response.status_code != httpx.codes.BAD_REQUEST:
+        return False
+    try:
+        body = response.json()
+    except ValueError:
+        return False
+    return isinstance(body, dict) and body.get("error") == _INVALID_GRANT
 
 
 def _optional_name(value: object) -> str | None:

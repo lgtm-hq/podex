@@ -451,3 +451,75 @@ def test_access_log_marks_unknown_client(
     records = _access_records(caplog)
     assert_that(records).is_length(1)
     assert_that(records[0].__dict__["client_addr"]).is_equal_to("-")
+
+
+_LOG_LINE = logging.Formatter("%(name)s %(message)s")
+
+
+@pytest.mark.parametrize(
+    ("raw_path", "escaped"),
+    [
+        ("/api/v2/bad%0aFAKE-LOG", "/api/v2/bad\\x0aFAKE-LOG"),
+        ("/api/v2/bad%0d%0aFAKE-LOG", "/api/v2/bad\\x0d\\x0aFAKE-LOG"),
+        ("/api/v2/bad%09tab", "/api/v2/bad\\x09tab"),
+        ("/api/v2/bad%E2%80%A8sep", "/api/v2/bad\\u2028sep"),
+        ("/api/v2/bad%C2%85nel", "/api/v2/bad\\x85nel"),
+        ("/api/v2/back%5Cx0aslash", "/api/v2/back\\\\x0aslash"),
+        ("/api/v2/two%20words", "/api/v2/two\\x20words"),
+    ],
+    ids=["lf", "crlf", "tab", "line-separator", "c1-nel", "backslash", "space"],
+)
+def test_access_log_escapes_control_characters_in_path(
+    tight_client: TestClient,
+    caplog: pytest.LogCaptureFixture,
+    raw_path: str,
+    escaped: str,
+) -> None:
+    """A percent-encoded control character cannot forge an access-log line."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        tight_client.get(raw_path)
+
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    line = _LOG_LINE.format(records[0])
+    for control in ("\n", "\r", "\t", " ", " ", "\x85"):
+        assert_that(line).does_not_contain(control)
+    assert_that(line).starts_with(f"podex.access GET {escaped} 404 ")
+    assert_that(records[0].__dict__["path"]).is_equal_to(escaped)
+
+
+def test_access_log_escapes_control_characters_in_request_id(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A caller-supplied request id cannot carry a line break into the log."""
+    with caplog.at_level(logging.INFO, logger="podex.access"):
+        _raw_asgi_request(
+            method="GET",
+            path="/api/v2/status",
+            query_string=b"",
+            headers=(("x-request-id", "id\x85FAKE\x0bLOG"),),
+        )
+
+    records = _access_records(caplog)
+    assert_that(records).is_length(1)
+    line = _LOG_LINE.format(records[0])
+    assert_that(line).contains("request_id=id\\x85FAKE\\x0bLOG ")
+    assert_that(records[0].__dict__["request_id"]).is_equal_to("id\\x85FAKE\\x0bLOG")
+
+
+def test_rate_limit_exemption_requires_the_exact_path(
+    tight_client: TestClient,
+) -> None:
+    """Only the exact exempt path skips the limiter; ``/health%0a`` does not."""
+    for _ in range(3):
+        exempt = tight_client.get("/health")
+        assert_that(exempt.status_code).is_equal_to(200)
+        assert_that(exempt.headers).does_not_contain_key("X-RateLimit-Limit")
+
+    first = tight_client.get("/health%0a")
+    tight_client.get("/health%0a")
+    third = tight_client.get("/health%0a")
+
+    assert_that(first.headers["X-RateLimit-Limit"]).is_equal_to("2")
+    assert_that(third.status_code).is_equal_to(429)
+    assert_that(tight_client.get("/health").status_code).is_equal_to(200)
