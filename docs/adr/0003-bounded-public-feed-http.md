@@ -19,7 +19,9 @@ Fetch bytes before parsing through `FeedHttpClient`, injected through the
 `Content-Type`. Pass an in-memory byte stream to feedparser so it cannot
 reinterpret a response body as a local filename. Supply `content-type` and
 `content-location` response headers to preserve HTTP charset handling and
-resolve relative links and images against the final URL after redirects.
+resolve relative links, permalink GUIDs and channel images against the final URL
+after redirects, with its query and fragment removed so an access token in the
+feed URL cannot reach stored values.
 
 Accept only HTTP(S) URLs without user information and public unicast IPv4/IPv6
 destinations. Validate every DNS answer and redirect before connecting. Try

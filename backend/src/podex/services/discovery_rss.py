@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 import feedparser
 
@@ -130,11 +131,14 @@ class RSSDiscovery:
     def _fetch_feed(self, url: str) -> Any:
         """Parse bounded bytes with their final base URL and HTTP charset."""
         response = self.fetcher.fetch(url)
+        # Relative values inherit the base URL, so its query (which may hold
+        # an access token) must not become part of stored links or GUIDs.
+        base_url = urlsplit(response.final_url)._replace(query="", fragment="")
         return feedparser.parse(
             BytesIO(response.body),
             response_headers={
                 "content-type": response.content_type,
-                "content-location": response.final_url,
+                "content-location": base_url.geturl(),
             },
         )
 

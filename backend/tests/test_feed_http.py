@@ -489,7 +489,7 @@ def test_feed_settings_use_nested_environment(monkeypatch: pytest.MonkeyPatch) -
     [
         (503, {}, "HTTP status 503"),
         (302, {}, "missing its location"),
-        (302, {"location": "http://[invalid"}, "public unicast addresses"),
+        (302, {"location": "http://[invalid"}, "valid HTTP(S) URL"),
         (302, {"location": "file:///etc/passwd"}, "HTTP(S)"),
         (200, {"content-encoding": "br"}, "unsupported content encoding"),
     ],

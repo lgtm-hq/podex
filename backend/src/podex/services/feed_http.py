@@ -97,7 +97,15 @@ def feed_url(value: str) -> httpx.URL:
         if url.userinfo:
             raise FeedFetchError("Feed URL credentials are not supported")
         if "%" in url.host:
-            raise FeedFetchError("Feed destination must use public unicast addresses")
+            # A zone identifier marks a scoped IPv6 literal; any other percent
+            # sign is a host that failed to parse.
+            if ":" in url.host:
+                raise FeedFetchError(
+                    "Feed destination must use public unicast addresses"
+                )
+            raise FeedFetchError(
+                "Feed URL must be a valid HTTP(S) URL without credentials"
+            )
     except FeedFetchError:
         raise
     except (httpx.InvalidURL, ValueError):

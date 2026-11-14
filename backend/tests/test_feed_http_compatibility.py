@@ -132,13 +132,13 @@ def test_address_fallback_shares_total_deadline(make_client: Mock) -> None:
     calls = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        """Spend most of the deadline connecting, then stall the second address."""
+        """Fail the first address at once, then stall the second past the deadline."""
         nonlocal calls
         del request
         calls += 1
-        await asyncio.sleep(0.03)
         if calls == 1:
             raise httpx.ConnectError("unreachable")
+        await asyncio.sleep(5)
         return httpx.Response(200, stream=httpx.ByteStream(b"feed"))
 
     with pytest.raises(FeedFetchError, match="total deadline"):
@@ -175,6 +175,25 @@ def test_relative_links_and_images_use_final_redirect_url(make_client: Mock) -> 
     assert_that(episodes[0].episode_url).is_equal_to(
         "https://other.example/shows/episode/1"
     )
+
+
+def test_base_url_query_does_not_reach_stored_links(make_client: Mock) -> None:
+    """Fragment-only links resolve against the feed URL without its query."""
+    feed = b"""<rss version="2.0"><channel><title>Show</title>
+<item><title>Pilot</title><link>#ep1</link><guid>#g1</guid></item>
+</channel></rss>"""
+    discovery = RSSDiscovery(
+        make_client(
+            lambda request: httpx.Response(200, stream=httpx.ByteStream(feed)),
+        )
+    )
+
+    episodes = discovery.discover_episodes(
+        Podcast(name="Cafe", slug="cafe", rss_url=_URL)
+    )
+
+    assert_that(episodes[0].episode_url).is_equal_to("https://feeds.example/start#ep1")
+    assert_that(episodes[0].rss_guid).does_not_contain("token", "secret")
 
 
 def test_http_charset_reaches_feedparser_without_bozo(
