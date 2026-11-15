@@ -178,9 +178,8 @@ if [[ "$kind" == backend ]]; then
 	# script is healthy only through the explicit role setting.
 	run_scheduler "$scheduler_exec" '' python -m podex.scheduler_runner
 	run_scheduler "$scheduler_shell" '' sh -c 'exec python -u -m podex.scheduler_runner'
-	# Without `exec`. Debian's dash (the image's sh) execs the last command of
-	# a -c script itself, so PID 1 becomes Python here too; the -c script rule
-	# is therefore proven by unit tests, and this case proves the form healthy.
+	# Without `exec`. The image's sh keeps running as PID 1 here, so this case
+	# exercises the -c script rule against the built image.
 	run_scheduler "$scheduler_plain_shell" '' sh -c 'python -u -m podex.scheduler_runner'
 	run_scheduler "$scheduler_configured" --env=PODEX_PROCESS_ROLE=scheduler \
 		sh -c 'python -u -m podex.scheduler_runner & wait'
