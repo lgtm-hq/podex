@@ -239,7 +239,7 @@ print("backend: health and migrated catalog return HTTP 200 with expected bodies
 	assert_scheduler_process "$scheduler_shell" "backend scheduler (sh -c 'exec ...')" python
 	wait_health "$scheduler_plain_shell" 'backend scheduler (sh -c single command)'
 	assert_scheduler_process "$scheduler_plain_shell" \
-		'backend scheduler (sh -c single command)' python
+		'backend scheduler (sh -c single command)' sh
 	wait_health "$scheduler_configured" 'backend scheduler (compound sh -c, role set)'
 	assert_scheduler_process "$scheduler_configured" \
 		'backend scheduler (compound sh -c, role set)' sh

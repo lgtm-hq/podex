@@ -181,17 +181,17 @@ containers start the same way: `python -m podex.scheduler_runner` (exec form),
 `sh -c 'python -u -m podex.scheduler_runner'`, all detected without
 configuration, and the compound
 `sh -c 'python -u -m podex.scheduler_runner & wait'` with
-`PODEX_PROCESS_ROLE=scheduler`, so the shell stays PID 1. Each must become
-Docker healthy, have exec'd past the entrypoint, and have a scheduler module
-process running; the smoke prints the PID 1 command line it observed. The
-image's `sh` is Debian's dash, which execs the last command of a `-c` script
-itself, so in both single-command shell forms PID 1 ends up as Python and the
-smoke asserts that. The `-c` script rule is therefore proven by unit tests, not
-by the smoke. The healthy scheduler cases also prove against real Docker that
-the HEALTHCHECK process shares PID 1's cgroup. Two API-shaped containers that
-never listen on port 8000 prove the negative. In the first, PID 1 is a Python
-process that starts a real scheduler as its child, and the smoke starts another
-with `docker exec`. The second runs the same compound `sh -c` without the role
+`PODEX_PROCESS_ROLE=scheduler`. Each must become Docker healthy, have exec'd
+past the entrypoint, and have a scheduler module process running; the smoke
+prints the PID 1 command line it observed. With `exec`, PID 1 ends up as Python.
+In the single-command form without `exec` the image's `sh` stays PID 1, and the
+smoke asserts that, so the `-c` script rule is proven against the built image as
+well as by unit tests. In the compound form the shell also stays PID 1. The
+healthy scheduler cases also prove against real Docker that the HEALTHCHECK
+process shares PID 1's cgroup. Two API-shaped containers that never listen on
+port 8000 prove the negative. In the first, PID 1 is a Python process that
+starts a real scheduler as its child, and the smoke starts another with
+`docker exec`. The second runs the same compound `sh -c` without the role
 setting. With health timing overridden on `docker run`
 (`--health-start-period=1s --health-interval=2s --health-retries=1`; the image's
 5-second start interval still applies to the first probe), Docker must report

@@ -121,7 +121,7 @@ runs_are_isolated() {
   [[ "$output" == *"backend scheduler (sh -c 'exec ...'): Docker health is healthy"* ]]
   [[ "$output" == *"backend scheduler (sh -c 'exec ...'): PID 1 is python and the scheduler module is running"* ]]
   [[ "$output" == *'backend scheduler (sh -c single command): Docker health is healthy'* ]]
-  [[ "$output" == *'backend scheduler (sh -c single command): PID 1 is python and the scheduler module is running'* ]]
+  [[ "$output" == *'backend scheduler (sh -c single command): PID 1 is sh and the scheduler module is running'* ]]
   [[ "$output" == *'backend scheduler (compound sh -c, role set): Docker health is healthy'* ]]
   [[ "$output" == *'backend scheduler (compound sh -c, role set): PID 1 is sh and the scheduler module is running'* ]]
   [[ "$output" == *'backend API with visible schedulers: Docker health is unhealthy'* ]]
