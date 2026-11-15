@@ -120,23 +120,27 @@ runs_are_isolated() {
   [[ "$output" == *'backend scheduler (exec form): PID 1 is python and the scheduler module is running'* ]]
   [[ "$output" == *"backend scheduler (sh -c 'exec ...'): Docker health is healthy"* ]]
   [[ "$output" == *"backend scheduler (sh -c 'exec ...'): PID 1 is python and the scheduler module is running"* ]]
+  [[ "$output" == *'backend scheduler (sh -c single command): Docker health is healthy'* ]]
+  [[ "$output" == *'backend scheduler (sh -c single command): PID 1 is python and the scheduler module is running'* ]]
   [[ "$output" == *'backend scheduler (compound sh -c, role set): Docker health is healthy'* ]]
   [[ "$output" == *'backend scheduler (compound sh -c, role set): PID 1 is sh and the scheduler module is running'* ]]
   [[ "$output" == *'backend API with visible schedulers: Docker health is unhealthy'* ]]
   [[ "$output" == *'backend API with visible schedulers: 2 visible scheduler process(es) did not exempt the HTTP check'* ]]
   [[ "$output" == *'backend compound sh -c without role: Docker health is unhealthy'* ]]
   [[ "$output" == *'backend compound sh -c without role: 1 visible scheduler process(es) did not exempt the HTTP check'* ]]
-  [ "$(wc -l < "$SMOKE_STATE/started")" -eq 7 ]
-  [ "$(sort -u "$SMOKE_STATE/started" | wc -l)" -eq 7 ]
+  [ "$(wc -l < "$SMOKE_STATE/started")" -eq 8 ]
+  [ "$(sort -u "$SMOKE_STATE/started" | wc -l)" -eq 8 ]
   # Scheduler containers migrate a fresh tmpfs database through the entrypoint.
-  run grep -cE -- '^run .*-scheduler-(exec|shell|configured) .*--tmpfs /data:rw,uid=1001,gid=1001 -e AUTO_MIGRATE=1 -e PODEX_DATABASE__URL=sqlite:////data/smoke.db ' "$SMOKE_STATE/commands"
-  [ "$output" = 3 ]
+  run grep -cE -- '^run .*-scheduler-(exec|shell|plain-shell|configured) .*--tmpfs /data:rw,uid=1001,gid=1001 -e AUTO_MIGRATE=1 -e PODEX_DATABASE__URL=sqlite:////data/smoke.db ' "$SMOKE_STATE/commands"
+  [ "$output" = 4 ]
   run grep -E -- '-scheduler-exec .*smoke.db podex-test:local python -m podex.scheduler_runner$' "$SMOKE_STATE/commands"
   [ "$status" -eq 0 ]
-  # The single-command shell form is detected without configuration.
+  # The single-command shell forms are detected without configuration.
   run grep -E -- '-scheduler-shell .*smoke.db podex-test:local sh -c exec python -u -m podex.scheduler_runner$' "$SMOKE_STATE/commands"
   [ "$status" -eq 0 ]
-  run grep -E -- '-scheduler-(exec|shell) .*PODEX_PROCESS_ROLE' "$SMOKE_STATE/commands"
+  run grep -E -- '-scheduler-plain-shell .*smoke.db podex-test:local sh -c python -u -m podex.scheduler_runner$' "$SMOKE_STATE/commands"
+  [ "$status" -eq 0 ]
+  run grep -E -- '-scheduler-(exec|shell|plain-shell) .*PODEX_PROCESS_ROLE' "$SMOKE_STATE/commands"
   [ "$status" -ne 0 ]
   # The compound shell form is healthy only through the explicit role.
   run grep -E -- '-scheduler-configured .*smoke.db --env=PODEX_PROCESS_ROLE=scheduler podex-test:local sh -c python -u -m podex.scheduler_runner & wait$' "$SMOKE_STATE/commands"
@@ -155,17 +159,17 @@ runs_are_isolated() {
   runs_are_isolated
 }
 
-@test "digest image with a platform reaches every container start" {
+@test "PLATFORM and a digest reference reach every container start" {
   export IMAGE='ghcr.io/lgtm-hq/podex-backend@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
   export PLATFORM=linux/arm64
   run_smoke
   [ "$status" -eq 0 ]
   run grep -c '^run ' "$SMOKE_STATE/commands"
-  [ "$output" = 7 ]
+  [ "$output" = 8 ]
   run grep -cF -- "--platform linux/arm64 --network none" "$SMOKE_STATE/commands"
-  [ "$output" = 7 ]
+  [ "$output" = 8 ]
   run grep -cF -- " ${IMAGE}" "$SMOKE_STATE/commands"
-  [ "$output" = 7 ]
+  [ "$output" = 8 ]
   all_started_removed
 }
 

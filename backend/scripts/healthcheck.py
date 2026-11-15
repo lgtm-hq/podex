@@ -12,15 +12,19 @@ assignments only), the container is the scheduler only when what remains is::
 
 or ``sh``/``bash``/``dash``/``ash`` ``-c`` with a script that is exactly that
 invocation, optionally preceded by ``exec``, without any shell metacharacter.
-Anything else, including compound scripts, script files, ``uv run`` and
-shared PID namespaces, gets the API's HTTP check; such scheduler deployments
-set ``PODEX_PROCESS_ROLE=scheduler``. Other processes are never read, so a
-scheduler started with ``docker exec`` cannot exempt an API container.
+PID 1 grants this only when its cgroup membership is identical to the probe's
+own, so a PID 1 that belongs to another container in a shared PID namespace
+cannot. Anything else, including compound scripts, script files, ``uv run``
+and an unestablished PID 1, gets the API's HTTP check; such scheduler
+deployments set ``PODEX_PROCESS_ROLE=scheduler``. Other processes are never
+read, so a scheduler started with ``docker exec`` cannot exempt an API
+container.
 
 The API role passes only when exact ``/health`` on port 8000 returns HTTP 200.
 The scheduler role passes without a network request; it does not prove
-scheduler progress. Reading is bounded, an undecidable command line gets the
-HTTP check, and any unexpected error exits with status 1.
+scheduler progress. Reading is bounded, a command line that cannot be read or
+decided gets the HTTP check, and any exception raised inside the probe exits
+with status 1.
 """
 
 import os
@@ -41,6 +45,9 @@ ENTRYPOINT_SHELL = "/bin/sh"
 MAX_CMDLINE_BYTES = 16 * 1024
 MAX_ARGUMENTS = 64
 MAX_LAUNCHERS = 4
+MAX_CGROUP_BYTES = 8 * 1024
+# `hierarchy-ID:controller-list:cgroup-path`, as in cgroups(7); v2 is `0::/...`.
+_CGROUP_LINE = re.compile(r"\d+:[^:\n]*:/[^\n]*")
 
 _PYTHON = re.compile(r"python(?:3(?:\.\d+)?)?")
 _SAFE_PYTHON_FLAGS = frozenset({"-u", "-B", "-O", "-OO"})
@@ -238,6 +245,47 @@ def _read_pid1(proc_root: Path) -> list[str] | None:
     return argv
 
 
+def _cgroup_membership(path: Path) -> tuple[str, ...] | None:
+    """Read a process's cgroup membership, bounded and validated.
+
+    Args:
+        path: A ``/proc/<pid>/cgroup`` file.
+
+    Returns:
+        Its lines (one for cgroup v2, one per hierarchy for v1), or None when
+        unreadable, too large, empty or not ``ID:controllers:/path`` lines.
+    """
+    try:
+        with path.open("rb") as cgroup:
+            raw = cgroup.read(MAX_CGROUP_BYTES + 1)
+    except OSError:
+        return None
+    if len(raw) > MAX_CGROUP_BYTES:
+        return None
+    lines = tuple(raw.decode("utf-8", "surrogateescape").splitlines())
+    if not lines or not all(_CGROUP_LINE.fullmatch(line) for line in lines):
+        return None
+    return lines
+
+
+def pid1_is_ours(proc_root: Path) -> bool:
+    """Tell whether PID 1 belongs to the probe's own container.
+
+    Docker runs the HEALTHCHECK command inside the container's cgroup, the one
+    PID 1 is in. In a PID namespace shared with another container, PID 1 is a
+    process of that container and sits in its cgroup, which this namespace
+    shows as a different (or ``/..``-relative) path.
+
+    Args:
+        proc_root: Linux process filesystem of the container.
+
+    Returns:
+        Whether both cgroup files are readable, well formed and identical.
+    """
+    own = _cgroup_membership(proc_root / "self" / "cgroup")
+    return own is not None and own == _cgroup_membership(proc_root / "1" / "cgroup")
+
+
 def _decide(proc_root: Path) -> Role:
     """Decide the role from PID 1, translating any failure.
 
@@ -252,7 +300,11 @@ def _decide(proc_root: Path) -> Role:
     """
     try:
         argv = _read_pid1(proc_root)
-        if argv is not None and command_runs_scheduler(argv):
+        if (
+            argv is not None
+            and command_runs_scheduler(argv)
+            and pid1_is_ours(proc_root)
+        ):
             return Role.SCHEDULER
     except Exception as error:
         raise RoleUndecidedError from error
@@ -340,17 +392,22 @@ def is_healthy(
 
 
 def main() -> int:
-    """Run the probe; no exception escapes it.
+    """Run the probe; only its own exit status leaves it.
 
     Returns:
         0 when healthy, otherwise 1.
 
     Raises:
-        SystemExit: Status 1 after an unexpected error, reported on one line.
+        SystemExit: Status 1, after one line on stderr, for any exception the
+            probe raises, including an inner ``SystemExit``.
+        KeyboardInterrupt: Re-raised, so an interrupt still ends the process
+            with a non-zero status.
     """
     try:
         healthy = is_healthy()
-    except Exception as error:
+    except BaseException as error:
+        if isinstance(error, KeyboardInterrupt):
+            raise
         print(f"health probe error: {type(error).__name__}", file=sys.stderr)
         raise SystemExit(1) from error
     return 0 if healthy else 1

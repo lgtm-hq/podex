@@ -16,6 +16,7 @@ container="podex-smoke-${kind}-${BASHPID}-${RANDOM}"
 bad_migration="${container}-migration-failure"
 scheduler_exec="${container}-scheduler-exec"
 scheduler_shell="${container}-scheduler-shell"
+scheduler_plain_shell="${container}-scheduler-plain-shell"
 scheduler_configured="${container}-scheduler-configured"
 api_decoy="${container}-api-decoy"
 shell_decoy="${container}-shell-decoy"
@@ -28,7 +29,8 @@ cleanup() {
 	local result=$?
 	trap - EXIT
 	for candidate in "$container" "$bad_migration" "$scheduler_exec" \
-		"$scheduler_shell" "$scheduler_configured" "$api_decoy" "$shell_decoy"; do
+		"$scheduler_shell" "$scheduler_plain_shell" "$scheduler_configured" \
+		"$api_decoy" "$shell_decoy"; do
 		if docker container inspect "$candidate" >/dev/null 2>&1; then
 			if ! docker rm -f "$candidate" >/dev/null; then
 				echo "Container cleanup failed" >&2
@@ -133,12 +135,14 @@ sys.exit(0 if schedulers >= int(sys.argv[1]) else 1)
 }
 
 # Within 20 seconds, PID 1 must be the given program (the entrypoint has
-# exec'd) and a scheduler module process must be running.
+# exec'd) and a scheduler module process must be running. The PID 1 command
+# line last observed is printed either way.
 assert_scheduler_process() {
 	local name="$1" label="$2" pid1_program="$3"
 	if ! docker exec "$name" python -c '
 import pathlib, sys, time
-expected = sys.argv[1]
+expected, label = sys.argv[1:3]
+found = False
 for _ in range(40):
     pid1 = pathlib.Path("/proc/1/cmdline").read_bytes().split(b"\0")
     running = []
@@ -150,10 +154,13 @@ for _ in range(40):
     if pid1[0].rsplit(b"/", 1)[-1] == expected.encode() and any(
         b"-m\0podex.scheduler_runner\0" in command for command in running
     ):
-        sys.exit(0)
+        found = True
+        break
     time.sleep(0.5)
-sys.exit(1)
-' "$pid1_program"; then
+shown = " ".join(part.decode(errors="replace") for part in pid1[:-1])
+print(f"{label}: observed PID 1: {shown}")
+sys.exit(0 if found else 1)
+' "$pid1_program" "$label"; then
 		echo "${label}: PID 1 is not ${pid1_program} with a running scheduler" >&2
 		return 1
 	fi
@@ -171,6 +178,10 @@ if [[ "$kind" == backend ]]; then
 	# script is healthy only through the explicit role setting.
 	run_scheduler "$scheduler_exec" '' python -m podex.scheduler_runner
 	run_scheduler "$scheduler_shell" '' sh -c 'exec python -u -m podex.scheduler_runner'
+	# Without `exec`. Debian's dash (the image's sh) execs the last command of
+	# a -c script itself, so PID 1 becomes Python here too; the -c script rule
+	# is therefore proven by unit tests, and this case proves the form healthy.
+	run_scheduler "$scheduler_plain_shell" '' sh -c 'python -u -m podex.scheduler_runner'
 	run_scheduler "$scheduler_configured" --env=PODEX_PROCESS_ROLE=scheduler \
 		sh -c 'python -u -m podex.scheduler_runner & wait'
 	# Negative cases. PID 1 stays alive without listening, a scheduler it
@@ -226,6 +237,9 @@ print("backend: health and migrated catalog return HTTP 200 with expected bodies
 	assert_scheduler_process "$scheduler_exec" 'backend scheduler (exec form)' python
 	wait_health "$scheduler_shell" "backend scheduler (sh -c 'exec ...')"
 	assert_scheduler_process "$scheduler_shell" "backend scheduler (sh -c 'exec ...')" python
+	wait_health "$scheduler_plain_shell" 'backend scheduler (sh -c single command)'
+	assert_scheduler_process "$scheduler_plain_shell" \
+		'backend scheduler (sh -c single command)' python
 	wait_health "$scheduler_configured" 'backend scheduler (compound sh -c, role set)'
 	assert_scheduler_process "$scheduler_configured" \
 		'backend scheduler (compound sh -c, role set)' sh

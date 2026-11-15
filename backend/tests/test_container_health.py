@@ -1,5 +1,6 @@
 """Exercise the container probe's role decision and API liveness check."""
 
+import runpy
 import time
 from http.client import HTTPConnection, HTTPException
 from pathlib import Path
@@ -20,12 +21,29 @@ def _cmdline(argv: list[str]) -> bytes:
     return b"".join(argument.encode() + b"\0" for argument in argv)
 
 
-def _process_table(root: Path, commands: dict[int, bytes]) -> Path:
-    """Write a fake ``/proc`` holding one command line per process id."""
+OWN_CGROUP = b"0::/\n"
+
+
+def _process_table(
+    root: Path,
+    commands: dict[int, bytes],
+    *,
+    pid1_cgroup: bytes | None = OWN_CGROUP,
+    own_cgroup: bytes | None = OWN_CGROUP,
+) -> Path:
+    """Write a fake ``/proc``: command lines, PID 1's and the probe's cgroup.
+
+    By default PID 1 and the probe share the container's cgroup (cgroup v2 in
+    a private cgroup namespace); None leaves that file out.
+    """
     for process_id, command in commands.items():
         process = root / str(process_id)
         process.mkdir()
         (process / "cmdline").write_bytes(command)
+    for entry, cgroup in (("1", pid1_cgroup), ("self", own_cgroup)):
+        if cgroup is not None:
+            (root / entry).mkdir(exist_ok=True)
+            (root / entry / "cgroup").write_bytes(cgroup)
     return root
 
 
@@ -328,7 +346,9 @@ def test_missing_process_table_uses_http(tmp_path: Path, http: MagicMock) -> Non
     [["sh", "-c", f"python -u -m {MODULE} & wait"], ["/sbin/init"]],
     ids=["compound-shell", "host-pid-namespace"],
 )
-@pytest.mark.parametrize("value", ["scheduler", " Scheduler "])
+@pytest.mark.parametrize(
+    "value", ["scheduler", " Scheduler ", "SCHEDULER", "\tscheduler\n"]
+)
 def test_scheduler_setting_overrides_detection(
     value: str, pid1: list[str], tmp_path: Path, http: MagicMock
 ) -> None:
@@ -341,24 +361,28 @@ def test_scheduler_setting_overrides_detection(
     assert_that(http.called).is_false()
 
 
+@pytest.mark.parametrize("value", ["api", "API", " Api\t"])
 def test_api_setting_overrides_scheduler_detection(
-    tmp_path: Path, http: MagicMock
+    value: str, tmp_path: Path, http: MagicMock
 ) -> None:
     """The explicit API role probes HTTP even when PID 1 is the scheduler."""
     proc = _process_table(tmp_path, {1: _cmdline(SCHEDULER)})
 
     assert_that(
-        healthcheck.is_healthy(proc_root=proc, environ={"PODEX_PROCESS_ROLE": "api"})
+        healthcheck.is_healthy(proc_root=proc, environ={"PODEX_PROCESS_ROLE": value})
     ).is_false()
     assert_that(http.call_count).is_equal_to(1)
 
 
-def test_empty_setting_falls_back_to_detection(tmp_path: Path, http: MagicMock) -> None:
-    """An empty role setting behaves as if it were unset."""
+@pytest.mark.parametrize("value", ["", " ", "\t\n"])
+def test_empty_setting_falls_back_to_detection(
+    value: str, tmp_path: Path, http: MagicMock
+) -> None:
+    """An empty or whitespace-only role setting behaves as if it were unset."""
     proc = _process_table(tmp_path, {1: _cmdline(SCHEDULER)})
 
     assert_that(
-        healthcheck.is_healthy(proc_root=proc, environ={"PODEX_PROCESS_ROLE": " "})
+        healthcheck.is_healthy(proc_root=proc, environ={"PODEX_PROCESS_ROLE": value})
     ).is_true()
     assert_that(http.called).is_false()
 
@@ -460,3 +484,155 @@ def test_main_contains_unexpected_errors(
     assert_that(capsys.readouterr().err).is_equal_to(
         f"health probe error: {type(error).__name__}\n"
     )
+
+
+V1_CGROUP = (
+    b"12:memory:/docker/0123abcd\n"
+    b"11:cpu,cpuacct:/docker/0123abcd\n"
+    b"1:name=systemd:/docker/0123abcd\n"
+    b"0::/system.slice/containerd.service\n"
+)
+
+
+@pytest.mark.parametrize(
+    "cgroup",
+    [OWN_CGROUP, b"0::/system.slice/docker-0123abcd.scope\n", V1_CGROUP],
+    ids=["v2-private-namespace", "v2-host-namespace", "v1-multi-line"],
+)
+def test_pid1_in_probe_cgroup_grants_exemption(
+    cgroup: bytes, tmp_path: Path, http: MagicMock
+) -> None:
+    """A scheduler PID 1 in the probe's own cgroup needs no HTTP listener."""
+    proc = _process_table(
+        tmp_path, {1: _cmdline(SCHEDULER)}, pid1_cgroup=cgroup, own_cgroup=cgroup
+    )
+
+    assert_that(healthcheck.pid1_is_ours(proc)).is_true()
+    assert_that(healthcheck.is_healthy(proc_root=proc, environ={})).is_true()
+    assert_that(http.called).is_false()
+
+
+@pytest.mark.parametrize(
+    ("pid1_cgroup", "own_cgroup"),
+    [
+        (b"0::/../docker-other.scope\n", OWN_CGROUP),
+        (
+            b"0::/system.slice/docker-other.scope\n",
+            b"0::/system.slice/docker-0123abcd.scope\n",
+        ),
+        (
+            V1_CGROUP.replace(b"12:memory:/docker/0123abcd", b"12:memory:/docker/ff"),
+            V1_CGROUP,
+        ),
+        (b"0::/init.scope\n", OWN_CGROUP),
+        (None, OWN_CGROUP),
+        (OWN_CGROUP, None),
+        (None, None),
+        (b"", b""),
+        (b"garbage\n", b"garbage\n"),
+        (b"0::relative\n", b"0::relative\n"),
+        (b"0::/" + b"x" * 9000 + b"\n", b"0::/" + b"x" * 9000 + b"\n"),
+    ],
+    ids=[
+        "v2-other-container-private-namespace",
+        "v2-other-container-host-namespace",
+        "v1-one-hierarchy-differs",
+        "host-pid-namespace",
+        "pid1-cgroup-missing",
+        "own-cgroup-missing",
+        "both-missing",
+        "empty",
+        "malformed",
+        "relative-path",
+        "oversized",
+    ],
+)
+def test_pid1_not_established_as_ours_uses_http(
+    pid1_cgroup: bytes | None,
+    own_cgroup: bytes | None,
+    tmp_path: Path,
+    http: MagicMock,
+) -> None:
+    """A scheduler PID 1 of another container (or unknown) keeps the HTTP check."""
+    proc = _process_table(
+        tmp_path,
+        {1: _cmdline(SCHEDULER)},
+        pid1_cgroup=pid1_cgroup,
+        own_cgroup=own_cgroup,
+    )
+
+    assert_that(healthcheck.pid1_is_ours(proc)).is_false()
+    assert_that(healthcheck.detected_role(proc)).is_equal_to(healthcheck.Role.API)
+    assert_that(healthcheck.is_healthy(proc_root=proc, environ={})).is_false()
+    assert_that(http.call_count).is_equal_to(1)
+
+
+def test_unreadable_cgroup_uses_http(tmp_path: Path, http: MagicMock) -> None:
+    """A cgroup file that cannot be read keeps the HTTP check."""
+    proc = _process_table(tmp_path, {1: _cmdline(SCHEDULER)}, pid1_cgroup=None)
+    (proc / "1" / "cgroup").mkdir()
+
+    assert_that(healthcheck.is_healthy(proc_root=proc, environ={})).is_false()
+    assert_that(http.call_count).is_equal_to(1)
+
+
+def test_shared_namespace_scheduler_role_is_explicit(
+    tmp_path: Path, http: MagicMock
+) -> None:
+    """In a shared PID namespace the documented explicit role still applies."""
+    proc = _process_table(
+        tmp_path,
+        {1: _cmdline(["/pause"])},
+        pid1_cgroup=b"0::/../pause.scope\n",
+    )
+    role = {"PODEX_PROCESS_ROLE": "scheduler"}
+
+    assert_that(healthcheck.is_healthy(proc_root=proc, environ=role)).is_true()
+    assert_that(http.called).is_false()
+
+
+def test_inner_system_exit_is_unhealthy(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A SystemExit raised inside the probe cannot pass for healthy."""
+    monkeypatch.setattr(healthcheck, "is_healthy", MagicMock(side_effect=SystemExit(0)))
+
+    with pytest.raises(SystemExit) as exited:
+        healthcheck.main()
+
+    assert_that(exited.value.code).is_equal_to(1)
+    assert_that(capsys.readouterr().err).is_equal_to("health probe error: SystemExit\n")
+
+
+def test_keyboard_interrupt_is_not_converted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An interrupt propagates, so the process ends with a non-zero status."""
+    monkeypatch.setattr(
+        healthcheck, "is_healthy", MagicMock(side_effect=KeyboardInterrupt)
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        healthcheck.main()
+
+
+@pytest.mark.parametrize(
+    ("role", "status", "stderr"),
+    [
+        ("scheduler", 0, ""),
+        ("worker", 1, "PODEX_PROCESS_ROLE must be one of: api, scheduler\n"),
+    ],
+)
+def test_script_exit_status(
+    role: str,
+    status: int,
+    stderr: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Run as a program, the probe exits with main()'s own status."""
+    monkeypatch.setenv("PODEX_PROCESS_ROLE", role)
+
+    with pytest.raises(SystemExit) as exited:
+        runpy.run_path(healthcheck.__file__, run_name="__main__")
+
+    assert_that(exited.value.code).is_equal_to(status)
+    assert_that(capsys.readouterr().err).is_equal_to(stderr)

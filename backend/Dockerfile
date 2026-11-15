@@ -109,10 +109,16 @@ EXPOSE 8000
 # documented options, `env NAME=value ...`), only these forms are the scheduler:
 #   python [-u|-B|-O|-OO ...] -m podex.scheduler_runner [args]
 #   sh|bash|dash|ash -c '[exec] python [-u|-B|-O|-OO ...] -m podex.scheduler_runner'
-# with no shell metacharacter in the script. Everything else, including compound
-# scripts, script files, uv run and shared PID namespaces, gets the HTTP check;
-# such scheduler deployments must set PODEX_PROCESS_ROLE=scheduler. Other
-# processes are never read. The scheduler role does not prove its progress.
+# with no shell metacharacter in the script. PID 1 grants this only when its
+# /proc/1/cgroup is identical to the probe's /proc/self/cgroup (Docker runs the
+# healthcheck in the container's cgroup); if ownership cannot be established,
+# the probe performs the HTTP check. Everything else, including compound
+# scripts, script files and uv run, gets the HTTP check; such scheduler
+# deployments must set PODEX_PROCESS_ROLE=scheduler. In a shared PID namespace
+# (--pid=container:..., --pid=host, pods) set PODEX_PROCESS_ROLE=api or
+# =scheduler explicitly. The value ignores case and surrounding whitespace;
+# empty means unset. Other processes are never read. The scheduler role does
+# not prove its progress.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --start-interval=5s --retries=3 \
     CMD ["python", "/app/scripts/healthcheck.py"]
 

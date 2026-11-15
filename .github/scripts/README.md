@@ -100,11 +100,14 @@ dependency readiness. The backend scheduler command
 so the backend probe decides the container's role before probing:
 
 1. `PODEX_PROCESS_ROLE`, read from the probe's own environment (Docker gives the
-   probe the container's environment): `api` always performs the HTTP check,
-   `scheduler` never does, and any other nonempty value is unhealthy.
-2. When it is unset or empty, PID 1's argument vector, with a closed rule. Shell
-   scripts are never interpreted. Up to four launchers are removed from the
-   front: the image entrypoint (`/app/scripts/start.sh`, also as
+   probe the container's environment). Accepted values are `api` (always perform
+   the HTTP check) and `scheduler` (never), compared after removing surrounding
+   whitespace and ignoring case, so `Scheduler` is `scheduler`. An empty or
+   whitespace-only value is treated as unset. Any other value is unhealthy, with
+   one line naming the accepted values.
+2. When it is unset, PID 1's argument vector, with a closed rule. Shell scripts
+   are never interpreted. Up to four launchers are removed from the front: the
+   image entrypoint (`/app/scripts/start.sh`, also as
    `/bin/sh /app/scripts/start.sh` before it execs), `tini` or `docker-init`
    (options `-s`, `-g`, `-w`, `-v`, `-vv`, `-vvv`, `-p SIGNAL`, `-e CODE`, then
    an optional `--`), `dumb-init` (`-c`, `--single-child`, `-v`, `--verbose`,
@@ -120,23 +123,45 @@ so the backend probe decides the container's role before probing:
      or a newline. No other shell option and no argument after the script is
      accepted.
 
+   Arguments after the module name are not examined, whatever their bytes.
+
+3. PID 1 grants this exemption only when it belongs to the probe's own
+   container: the probe's `/proc/self/cgroup` and PID 1's `/proc/1/cgroup` must
+   both be readable, at most 8 KiB, made of well-formed
+   `hierarchy-ID:controllers:/path` lines (one `0::/path` line on cgroup v2, one
+   line per hierarchy on v1) and identical. Docker runs the HEALTHCHECK command
+   inside the container's cgroup, the one its PID 1 is in, with either cgroup
+   version and with a private or host cgroup namespace. In a PID namespace
+   shared with another container (`--pid=container:<name>`, a pod), PID 1 is
+   that container's process and its cgroup differs: it shows as another absolute
+   path, or as a `/..`-relative one from a private cgroup namespace. With
+   `--pid=host` PID 1 is the host's init. When ownership cannot be established
+   (a difference, an unreadable, oversized or malformed file), the probe
+   performs the HTTP check.
+
 Everything else gets the HTTP check, including compound scripts
 (`sh -c 'python -m podex.scheduler_runner & wait'`), script files, `bash -lc`,
-`uv run` or `poetry run`, `env` with options, combined Python flags such as
-`-um`, and shared PID namespaces (`--pid=host`, pods). Those scheduler
-deployments must set `PODEX_PROCESS_ROLE=scheduler`. Deployments that start the
-scheduler in exec form, through the entrypoint, an init process or a
-single-command `-c` script as above stay healthy without it.
+`uv run` or `poetry run`, `env` with options and combined Python flags such as
+`-um`. Those scheduler deployments must set `PODEX_PROCESS_ROLE=scheduler`.
+Containers in a shared PID namespace (`--pid=container:<name>`, `--pid=host`,
+pods) should always set the role explicitly, `PODEX_PROCESS_ROLE=api` or
+`PODEX_PROCESS_ROLE=scheduler`: detection cannot establish that PID 1 is theirs,
+so without the setting a scheduler there is reported unhealthy. Deployments that
+start the scheduler in exec form, through the entrypoint, an init process or a
+single-command `-c` script as above, in their own PID namespace, stay healthy
+without it.
 
 No other process is read. A scheduler started with `docker exec` in an API
 container, a `grep` or `pgrep -f` for the module name, a scheduler re-parented
-to PID 1 after the process that started it exited, or a scheduler elsewhere in a
-shared PID namespace leaves the API's HTTP check in force. Reading is bounded:
-at most 16 KiB of command line, 64 arguments and four launchers; anything
-larger, an unreadable or empty PID 1 command line, or any error while deciding
-keeps the HTTP check. Any unexpected error in the probe exits 1 with one line on
-stderr. The scheduler role does not prove scheduler progress or database
-readiness.
+to PID 1 after the process that started it exited, or a scheduler that is PID 1
+of another container sharing the PID namespace leaves the API's HTTP check in
+force. Reading is bounded: at most 16 KiB of command line, 64 arguments, four
+launchers and 8 KiB per cgroup file; anything larger, an unreadable or empty PID
+1 command line, or any error while deciding keeps the HTTP check. Any exception
+raised inside the probe, including an inner `SystemExit`, exits 1 with one line
+on stderr; an interrupt (`KeyboardInterrupt`) is not converted and still ends
+the probe with a non-zero status. The scheduler role does not prove scheduler
+progress or database readiness.
 
 Probe requests to `/health` stay in the `podex.access` log: one line per probe
 (every 30 seconds, every 5 seconds during start-up) shows when probes ran, their
@@ -150,18 +175,24 @@ listening port, they must also override the image healthcheck to request exact
 Backend smoke starts from a writable, empty SQLite database in tmpfs, enables
 `AUTO_MIGRATE=1`, then reads `/api/v2/podcasts` and asserts an empty page. This
 tests the supported default database, Alembic chain, entrypoint, routing and ORM
-read; it does not test PostgreSQL or external providers. Three scheduler
-containers start the same way: `python -m podex.scheduler_runner` (exec form)
-and `sh -c 'exec python -u -m podex.scheduler_runner'`, both detected without
+read; it does not test PostgreSQL or external providers. Four scheduler
+containers start the same way: `python -m podex.scheduler_runner` (exec form),
+`sh -c 'exec python -u -m podex.scheduler_runner'` and
+`sh -c 'python -u -m podex.scheduler_runner'`, all detected without
 configuration, and the compound
 `sh -c 'python -u -m podex.scheduler_runner & wait'` with
 `PODEX_PROCESS_ROLE=scheduler`, so the shell stays PID 1. Each must become
 Docker healthy, have exec'd past the entrypoint, and have a scheduler module
-process running. Two API-shaped containers that never listen on port 8000 prove
-the negative. In the first, PID 1 is a Python process that starts a real
-scheduler as its child, and the smoke starts another with `docker exec`. The
-second runs the same compound `sh -c` without the role setting. With health
-timing overridden on `docker run`
+process running; the smoke prints the PID 1 command line it observed. The
+image's `sh` is Debian's dash, which execs the last command of a `-c` script
+itself, so in both single-command shell forms PID 1 ends up as Python and the
+smoke asserts that. The `-c` script rule is therefore proven by unit tests, not
+by the smoke. The healthy scheduler cases also prove against real Docker that
+the HEALTHCHECK process shares PID 1's cgroup. Two API-shaped containers that
+never listen on port 8000 prove the negative. In the first, PID 1 is a Python
+process that starts a real scheduler as its child, and the smoke starts another
+with `docker exec`. The second runs the same compound `sh -c` without the role
+setting. With health timing overridden on `docker run`
 (`--health-start-period=1s --health-interval=2s --health-retries=1`; the image's
 5-second start interval still applies to the first probe), Docker must report
 both unhealthy within seconds rather than after the 300-second start period.
