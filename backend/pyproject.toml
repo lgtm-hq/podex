@@ -55,10 +55,10 @@ dev = [
   "assertpy>=1.1",
   "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.180.33",
+  "lintro==0.180.34",
   "mypy>=1.14",
   # Match CI and local framework inference to the same Pylint/Astroid release.
-  "pylint==4.1.3",
+  "pylint==4.1.4",
   "pytest>=8.0",
   "pytest-cov>=6.0",
   "types-assertpy>=1.1.0.20260518",
