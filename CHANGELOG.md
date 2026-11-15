@@ -22,6 +22,21 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.28] - 2026-11-15
+
+### Changed
+
+- correct AGENTS.md, CONTRIBUTING.md and README to match main (#814) (01c4299)
+- **deps**: update dependency glob to 14.0.6 (patch) (#829) (857ee3d)
+- **deps-dev**: update dependency pylint to 4.1.4 (patch) (#828) (4a374f6)
+- **deps**: update dependency glob to 14.0.5 (patch) (#826) (6567564)
+- **deps**: update lintro to 0.180.34 (patch) (#827) (6c603c7)
+
+### Fixed
+
+- **docker**: decide the health probe's role explicitly and smoke a scheduler container
+  (#820) (694c0a1)
+
 ## [0.41.27] - 2026-11-14
 
 ### Changed
