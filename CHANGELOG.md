@@ -22,6 +22,30 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.27] - 2026-11-14
+
+### Changed
+
+- **release**: version 0.41.26 (#817) (0d35ec3)
+
+### Fixed
+
+- **ci**: stop passing the per-platform smoke script on the split path (#823) (478f6b9)
+
+## [0.41.26] - 2026-11-14
+
+### Changed
+
+- **ci**: report scheduled maintenance failures (#815) (f67ef7c)
+- **backend**: run PostgreSQL application tests in CI (#796) (5ef8892)
+- **docker**: add healthchecks and image smoke tests (#795) (e36fe68)
+- **auth**: compare failed-exchange responses independently of the clock (#813)
+  (178a6d2)
+
+### Fixed
+
+- **security**: mask secret settings and redact free-text credentials (#797) (4da6a43)
+
 ## [0.41.25] - 2026-11-14
 
 ### Changed

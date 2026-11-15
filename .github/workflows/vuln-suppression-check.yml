@@ -7,7 +7,7 @@ name: Security - Vulnerability Suppression Check
 "on":
   schedule:
     # Weekly on Monday at 04:00 UTC
-    - cron: '0 4 * * 1'
+    - cron: "0 4 * * 1"
   workflow_dispatch: {}
 
 permissions: {}
@@ -21,7 +21,7 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-vuln-suppression-check.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      job-name: '🔍 Check Vulnerability Suppressions'
+      job-name: "🔍 Check Vulnerability Suppressions"
       workflow-file: vuln-suppression-check.yml
       egress-policy: block
       egress-preset: osv-scanner
@@ -32,3 +32,17 @@ jobs:
       contents: write
       # write: open cleanup pull requests
       pull-requests: write
+
+  # One issue per workflow key; repeated failures update the open issue.
+  notify-failure:
+    needs: [check-suppressions]
+    if: failure() && github.ref == 'refs/heads/main'
+    # yamllint disable-line rule:line-length
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+    with:
+      egress-policy: block
+      workflow-key: vuln-suppression-check
