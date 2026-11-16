@@ -21,8 +21,10 @@ Design notes:
   client with finite connect/socket timeouts (configured by the factory) and
   is guarded by a fail-open ``try``/``except redis.RedisError``: on error the
   request is admitted so a broken cache never turns into a hard 5xx. The
-  failure is logged by its class only, because the client's connection errors
-  quote the configured host or socket path.
+  failure is logged by its class (and its operating-system cause's class and
+  ``errno``) only, because the client's connection errors quote the configured
+  host or socket path. Any other error the client raises still fails the
+  request, as :class:`RateLimitStoreError` naming its class only.
 """
 
 from __future__ import annotations
@@ -41,6 +43,49 @@ if TYPE_CHECKING:
 
 
 _logger = logging.getLogger(__name__)
+
+# What the client raises, other than a Redis error, when it first uses a
+# connection option it accepted but cannot apply: an unknown encoding
+# (LookupError), a TLS version (ValueError), or an option of the wrong type
+# (TypeError, AttributeError). Their messages can quote the option.
+_CLIENT_FAULTS: tuple[type[Exception], ...] = (
+    AttributeError,
+    LookupError,
+    TypeError,
+    ValueError,
+)
+
+
+class RateLimitStoreError(RuntimeError):
+    """The shared store's client failed; reported by the error class only."""
+
+
+def describe_store_failure(error: BaseException) -> str:
+    """Describe a store failure without any of its text.
+
+    Names the error's validated class and, when it was raised while handling
+    another error (the operating system's error for a failed connection),
+    that error's class and numeric ``errno``, which tell an unknown host from
+    a missing socket without the host or the path.
+
+    Args:
+        error: The failure.
+
+    Returns:
+        str: For example ``redis.exceptions.ConnectionError (cause
+        socket.gaierror, errno 8)``.
+    """
+    described: str = class_name(error)
+    cause = error.__cause__ or error.__context__
+    if cause is None:
+        return described
+    detail = f"cause {class_name(cause)}"
+    code: object = getattr(cause, "errno", None)
+    if isinstance(code, int) and not isinstance(code, bool):
+        # Converted, so a subclass cannot print anything but the number.
+        detail += f", errno {int(code)}"
+    return f"{described} ({detail})"
+
 
 _LUA_SLIDING_WINDOW = """
 local zkey = KEYS[1]
@@ -170,28 +215,23 @@ class RedisSlidingWindowRateLimiter:
             RateLimitDecision: The evaluation result including remaining quota
             and retry hints. If Redis is unreachable the limiter fails open
             (see :meth:`_fail_open_decision`).
+
+        Raises:
+            RateLimitStoreError: When the client fails with an error other than
+                a Redis error; it names the error's class only, because such
+                errors can quote a connection option.
         """
         now_arg = "" if now is None else str(now)
-        member = uuid.uuid4().hex
 
         try:
-            raw = self._client.eval(
-                _LUA_SLIDING_WINDOW,
-                1,
-                self._redis_key(key),
-                now_arg,
-                self._window_seconds,
-                self._max_requests,
-                self._ttl_seconds,
-                member,
-            )
+            raw = self._run_window_script(key=key, now_arg=now_arg)
         except redis.RedisError as error:
             # By class only: the client's connection errors quote the
             # configured host or socket path.
             _logger.warning(
                 "rate limiter redis check failed; failing open for key=%s: %s",
                 key,
-                class_name(error),
+                describe_store_failure(error),
             )
             return self._fail_open_decision()
 
@@ -213,6 +253,35 @@ class RedisSlidingWindowRateLimiter:
             limit=self._max_requests, remaining=remaining, reset_after=reset_after
         )
 
+    def _run_window_script(self, *, key: str, now_arg: str) -> object:
+        """Run the sliding-window script once for ``key``.
+
+        Raises:
+            redis.RedisError: Unchanged, for the caller's fail-open path.
+            RateLimitStoreError: For any other client fault, by class only.
+        """
+        failure = ""
+        try:
+            raw: object = self._client.eval(
+                _LUA_SLIDING_WINDOW,
+                1,
+                self._redis_key(key),
+                now_arg,
+                self._window_seconds,
+                self._max_requests,
+                self._ttl_seconds,
+                uuid.uuid4().hex,
+            )
+            return raw
+        except _CLIENT_FAULTS as error:
+            if isinstance(error, redis.RedisError):
+                # Some Redis errors are also ValueErrors; they still fail open.
+                raise
+            failure = class_name(error)
+        # Outside the handler: the original error, which can quote a
+        # connection option, is neither the cause nor the context.
+        raise RateLimitStoreError(f"rate limiter redis check failed: {failure}")
+
     def reset(self) -> None:
         """Remove every rate-limit key under this limiter's prefix.
 
@@ -229,5 +298,5 @@ class RedisSlidingWindowRateLimiter:
         except redis.RedisError as error:
             _logger.warning(
                 "rate limiter redis reset failed; ignoring: %s",
-                class_name(error),
+                describe_store_failure(error),
             )

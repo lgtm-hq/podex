@@ -41,13 +41,19 @@ explicitly empty value does not generally select the default:
   name and error class only. Non-credential settings may be quoted by the
   library that parses them. Percent-encode `@`, `:`, `/`, `#` and `?` in a URL
   password, and write `%%` for `%` in `alembic.ini`;
-- on first use, the same applies to the Redis URL's connection options (an
-  option the Redis client rejects stops start-up), to
-  `PODEX_TRANSCRIPTS__S3_ENDPOINT_URL`, `PODEX_TRANSCRIPTS__S3_REGION_NAME` and
-  a non-ASCII `PODEX_TRANSCRIPTS__ENCRYPTION_KEY` (the ops purge and takedown
-  routes answer 409 with the setting name and error class), and a failed Redis
-  connection is logged by error class only. A storage endpoint that cannot be
-  reached is still quoted by the storage client's connection error;
+- on first use, the same applies to the Redis URL's connection options,
+  including `encoding` and `ssl_min_version` (an option the Redis client rejects
+  or cannot apply stops start-up), and to `PODEX_TRANSCRIPTS__STORAGE_BACKEND`,
+  `PODEX_TRANSCRIPTS__S3_BUCKET`, `PODEX_TRANSCRIPTS__S3_ENDPOINT_URL`,
+  `PODEX_TRANSCRIPTS__S3_REGION_NAME` (or the AWS region it falls back to),
+  control characters in the S3 access key id and secret, and a non-ASCII
+  `PODEX_TRANSCRIPTS__ENCRYPTION_KEY`: the ops purge and takedown routes answer
+  409 with the setting name and error class, for every action, including one
+  that would not reach the bucket. A failed Redis connection is logged by error
+  class (with its cause's class and `errno`), and a storage client error during
+  a bucket request still fails the route with the opaque 500, its logged error
+  naming the class only. A storage server's error response is passed on
+  unchanged;
 - the optional credential and provider strings in the table below treat an empty
   value as not configured, exactly as described in each row; this is why
   `.env.example` can leave them empty.
