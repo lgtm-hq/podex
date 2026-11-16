@@ -8,12 +8,15 @@ routes answer as they did (500, with the opaque body). A server's error
 response propagates unchanged.
 
 Settings now checked when the store is built (endpoint shape, bucket name,
-control characters in the static credentials) refuse ops actions even when the
+the access key id's control characters) refuse ops actions even when the
 action would not have reached the bucket; those cases are pinned here too.
-Nothing reaches the network: name resolution is stubbed and AWS files and
-region are isolated.
+What building the client reads from the AWS environment or shared
+configuration is reported under a generic source, by class only. Nothing
+reaches the network: name resolution is stubbed and AWS files and region are
+isolated.
 """
 
+import asyncio
 import logging
 import socket
 from collections.abc import Callable
@@ -38,9 +41,13 @@ from sqlalchemy.orm import Session
 from podex.config import Settings, TranscriptStorageSettings
 from podex.models import TakedownRequest, Transcript, TranscriptArtifact
 from podex.services.transcript_artifacts import (
-    AMBIENT_REGION_SOURCE,
+    AMBIENT_CONFIGURATION_SOURCE,
     EncryptedS3TranscriptArtifactStore,
     TranscriptStorageError,
+    TranscriptStorageLookupError,
+    TranscriptStorageOSError,
+    TranscriptStorageTypeError,
+    TranscriptStorageValueError,
     build_transcript_artifact_store,
 )
 from podex.unusable_settings import UnusableSettingError
@@ -70,6 +77,8 @@ def offline_aws_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "aws-creds"))
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
     monkeypatch.setenv("AWS_MAX_ATTEMPTS", "1")
+    # The default session caches what it read from the environment.
+    monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
 
     def unresolvable(*_args: object, **_kwargs: object) -> NoReturn:
         """Fail name resolution as the resolver does for an unknown host."""
@@ -82,6 +91,7 @@ def _real_store(
     *,
     endpoint_url: str = "https://storage.example",
     access_key_id: str = _ACCESS_ID,
+    secret_access_key: str = _ACCESS_KEY,
 ) -> EncryptedS3TranscriptArtifactStore:
     """Return a store over a real storage client built without the store's checks."""
     client: Any = boto3.client(
@@ -89,7 +99,7 @@ def _real_store(
         endpoint_url=endpoint_url,
         region_name="auto",
         aws_access_key_id=access_key_id,
-        aws_secret_access_key=_ACCESS_KEY,
+        aws_secret_access_key=secret_access_key,
     )
     return EncryptedS3TranscriptArtifactStore(
         bucket=_BUCKET,
@@ -120,6 +130,9 @@ def _operations(
         ("access-key-id", "botocore.exceptions.HTTPClientError"),
         # An unreachable endpoint, quoted in full with its userinfo.
         ("endpoint", "botocore.exceptions.EndpointConnectionError"),
+        # A lone surrogate in the secret: signing raises an encoding error
+        # whose arguments hold the whole signing key.
+        ("secret-access-key", "UnicodeEncodeError"),
     ],
 )
 def test_client_side_request_failure_names_class_only(
@@ -139,6 +152,8 @@ def test_client_side_request_failure_names_class_only(
             endpoint_url="http://127.0.0.1:9",
             access_key_id=f"{secret}\n",
         )
+    elif case == "secret-access-key":
+        store = _real_store(secret_access_key=f"{secret}\udc91")
     else:
         store = _real_store(endpoint_url=f"https://user:{secret}@{secret}.example")
 
@@ -153,7 +168,7 @@ def test_client_side_request_failure_names_class_only(
     )
     assert_that(caught.value.__cause__).is_none()
     assert_that(caught.value.__context__).is_none()
-    _assert_absent(_printed(caught.value), secret)
+    _assert_absent(_printed(caught.value) + repr(caught.value.args), secret)
     _assert_absent(caplog.text, secret)
 
 
@@ -179,7 +194,7 @@ class _RejectingClient:
 @pytest.mark.parametrize("operation", ["get", "put", "delete"])
 def test_server_error_response_propagates_unchanged(operation: str) -> None:
     """A server's error response is not a client-side error and is not rewrapped."""
-    error = ClientError(
+    error: Exception = ClientError(
         {"Error": {"Code": "NoSuchKey", "Message": "The key does not exist."}},
         "GetObject",
     )
@@ -193,6 +208,119 @@ def test_server_error_response_propagates_unchanged(operation: str) -> None:
         _operations(store)[operation]()
 
     assert_that(caught.value).is_same_as(error)
+
+
+def _quoting(kind: type[Exception], secret: str) -> Exception:
+    """Return a ``kind`` error whose text and arguments quote ``secret``."""
+    if kind is ParamValidationError:
+        # The client's error takes its message as a keyword argument.
+        make_validation: Callable[..., Exception] = ParamValidationError
+        return make_validation(report=f'Invalid bucket name "{secret}"')
+    if kind is UnicodeEncodeError:
+        signing_key = f"AWS4{secret}\udc91"
+        encoding: Exception = UnicodeEncodeError(
+            "utf-8",
+            signing_key,
+            len(signing_key) - 1,
+            len(signing_key),
+            "surrogates not allowed",
+        )
+        return encoding
+    return kind(f"Invalid header value b'Credential={secret}'")
+
+
+# Every class the request wrapper replaces, with the replacement's kind. Each
+# is listed here so that dropping one from the wrapper fails a test.
+_WRAPPED_REQUEST_FAILURES: list[
+    tuple[type[Exception], type[TranscriptStorageError]]
+] = [
+    (ParamValidationError, TranscriptStorageError),
+    (AttributeError, TranscriptStorageError),
+    (UnicodeEncodeError, TranscriptStorageValueError),
+    (ValueError, TranscriptStorageValueError),
+    (TypeError, TranscriptStorageTypeError),
+    (KeyError, TranscriptStorageLookupError),
+    (LookupError, TranscriptStorageLookupError),
+    (OSError, TranscriptStorageOSError),
+]
+
+
+@pytest.mark.parametrize("operation", ["get", "put", "delete"])
+@pytest.mark.parametrize(
+    ("kind", "replacement"),
+    _WRAPPED_REQUEST_FAILURES,
+    ids=[kind.__name__ for kind, _replacement in _WRAPPED_REQUEST_FAILURES],
+)
+def test_each_request_failure_class_is_replaced_by_class_only(
+    kind: type[Exception],
+    replacement: type[TranscriptStorageError],
+    operation: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each wrapped class is replaced by one of the same builtin kind, unquoted."""
+    secret = _secret()
+    original = _quoting(kind, secret)
+    store = EncryptedS3TranscriptArtifactStore(
+        bucket=_BUCKET,
+        encryption_key=_key(),
+        client=_RejectingClient(original),
+    )
+
+    with (
+        caplog.at_level(logging.DEBUG),
+        pytest.raises(TranscriptStorageError) as caught,
+    ):
+        _operations(store)[operation]()
+
+    message = "Transcript artifact storage request failed: " + (
+        "botocore.exceptions.ParamValidationError"
+        if kind is ParamValidationError
+        else kind.__name__
+    )
+    assert_that(type(caught.value)).is_same_as(replacement)
+    assert_that(str(caught.value)).is_equal_to(message)
+    assert_that(caught.value.args).is_equal_to((message,))
+    assert_that(caught.value.__cause__).is_none()
+    assert_that(caught.value.__context__).is_none()
+    _assert_absent(_printed(caught.value) + repr(caught.value.args), secret)
+    _assert_absent(caplog.text, secret)
+
+
+@pytest.mark.parametrize(
+    "interruption",
+    [asyncio.CancelledError, KeyboardInterrupt, SystemExit],
+)
+def test_cancellation_and_exit_pass_through_unchanged(
+    interruption: type[BaseException],
+) -> None:
+    """Only errors are replaced: cancellation, interrupts and exit propagate."""
+    raised = interruption()
+
+    class _InterruptedClient:
+        """Stand-in whose every request is interrupted."""
+
+        def put_object(self, **_kwargs: object) -> NoReturn:
+            """Be interrupted."""
+            raise raised
+
+        def delete_object(self, **_kwargs: object) -> NoReturn:
+            """Be interrupted."""
+            raise raised
+
+        def get_object(self, **_kwargs: object) -> NoReturn:
+            """Be interrupted."""
+            raise raised
+
+    store = EncryptedS3TranscriptArtifactStore(
+        bucket=_BUCKET,
+        encryption_key=_key(),
+        client=_InterruptedClient(),
+    )
+
+    for operation in _operations(store).values():
+        with pytest.raises(interruption) as caught:
+            operation()
+        assert_that(caught.value).is_same_as(raised)
 
 
 @pytest.mark.parametrize(
@@ -326,35 +454,214 @@ def _chain(error: BaseException) -> list[BaseException]:
     return seen
 
 
-@pytest.mark.usefixtures("offline_aws")
-def test_ambient_region_names_its_source_and_class_only(
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """A region from the AWS environment is reported without its text."""
-    secret = _secret()
-    monkeypatch.setenv("AWS_DEFAULT_REGION", f"{secret}/west")
-    transcripts = TranscriptStorageSettings(
+def _ambient_storage() -> TranscriptStorageSettings:
+    """Return S3 storage settings that leave endpoint, region and keys ambient."""
+    return TranscriptStorageSettings(
         storage_backend="encrypted_s3",
         encryption_key=SecretStr(_key()),
         s3_bucket=_BUCKET,
     )
 
-    with caplog.at_level(logging.DEBUG), pytest.raises(UnusableSettingError) as caught:
-        build_transcript_artifact_store(settings=Settings(transcripts=transcripts))
-    _use_settings(client, transcripts)
-    response = client.post("/api/v2/ops/retention/1/purge", headers=_HEADERS)
+
+# Values the storage client reads from the environment while it is built, and
+# the class it fails with; each error would quote the value.
+_AMBIENT_FAILURES = {
+    "endpoint": (
+        "AWS_ENDPOINT_URL_S3",
+        "https://user:{secret}@invalid host",
+        "ValueError",
+    ),
+    "endpoint-all-services": (
+        "AWS_ENDPOINT_URL",
+        "https://user:{secret}@invalid host",
+        "ValueError",
+    ),
+    "region": (
+        "AWS_DEFAULT_REGION",
+        "{secret}/west",
+        "botocore.exceptions.InvalidRegionError",
+    ),
+    "profile": ("AWS_PROFILE", "{secret}", "botocore.exceptions.ProfileNotFound"),
+    "retry-mode": (
+        "AWS_RETRY_MODE",
+        "{secret}",
+        "botocore.exceptions.InvalidRetryModeError",
+    ),
+    "max-attempts": ("AWS_MAX_ATTEMPTS", "{secret}", "ValueError"),
+    "defaults-mode": (
+        "AWS_DEFAULTS_MODE",
+        "{secret}",
+        "botocore.exceptions.InvalidDefaultsMode",
+    ),
+    "checksum": (
+        "AWS_REQUEST_CHECKSUM_CALCULATION",
+        "{secret}",
+        "botocore.exceptions.InvalidChecksumConfigError",
+    ),
+}
+
+
+@pytest.mark.usefixtures("offline_aws")
+@pytest.mark.parametrize("case", list(_AMBIENT_FAILURES))
+def test_ambient_configuration_names_its_source_and_class_only(
+    case: str,
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A value from the AWS environment is reported without its text."""
+    secret = _secret()
+    variable, template, failure = _AMBIENT_FAILURES[case]
+    monkeypatch.setenv(variable, template.format(secret=secret))
+    _use_settings(client, _ambient_storage())
+
+    with caplog.at_level(logging.DEBUG):
+        with pytest.raises(UnusableSettingError) as caught:
+            build_transcript_artifact_store(
+                settings=Settings(transcripts=_ambient_storage())
+            )
+        monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
+        response = client.post("/api/v2/ops/retention/1/purge", headers=_HEADERS)
 
     _assert_reported(
         caught.value,
-        setting=AMBIENT_REGION_SOURCE,
-        failure="botocore.exceptions.InvalidRegionError",
+        setting=AMBIENT_CONFIGURATION_SOURCE,
+        failure=failure,
         secret=secret,
     )
     assert_that(response.status_code).is_equal_to(409)
-    assert_that(response.json()["detail"]).starts_with(AMBIENT_REGION_SOURCE)
+    assert_that(response.json()["detail"]).starts_with(
+        f"{AMBIENT_CONFIGURATION_SOURCE} is not usable: {failure}. ",
+    )
     _assert_absent(response.text, secret)
+    _assert_absent(caplog.text, secret)
+
+
+# Every class building the client may raise for an environment value, as the
+# store's guard lists them; each is listed so dropping one fails a test.
+_AMBIENT_FAILURE_CLASSES: list[type[Exception]] = [
+    ParamValidationError,
+    KeyError,
+    LookupError,
+    OSError,
+    TypeError,
+    ValueError,
+]
+
+
+@pytest.mark.parametrize(
+    "kind",
+    _AMBIENT_FAILURE_CLASSES,
+    ids=lambda kind: kind.__name__,
+)
+def test_each_ambient_failure_class_is_reported_by_class_only(
+    kind: type[Exception],
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Whatever building the client raises for its environment is unquoted."""
+    secret = _secret()
+    failure = _quoting(kind, secret)
+
+    def failing_client(*_args: object, **_kwargs: object) -> NoReturn:
+        """Fail as building the client does for a value it read."""
+        raise failure
+
+    monkeypatch.setattr(boto3, "client", failing_client)
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(UnusableSettingError) as caught:
+        build_transcript_artifact_store(
+            settings=Settings(transcripts=_ambient_storage())
+        )
+
+    _assert_reported(
+        caught.value,
+        setting=AMBIENT_CONFIGURATION_SOURCE,
+        failure=(
+            "botocore.exceptions.ParamValidationError"
+            if kind is ParamValidationError
+            else kind.__name__
+        ),
+        secret=secret,
+    )
+    _assert_absent(repr(caught.value.args), secret)
+    _assert_absent(caplog.text, secret)
+
+
+@pytest.mark.usefixtures("offline_aws")
+@pytest.mark.parametrize("view", ["response", "server-record"])
+def test_ambient_endpoint_rejected_per_request_is_reported_by_class_only(
+    view: str,
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An environment endpoint the S3 rules reject on each request is unquoted.
+
+    The client builds with an endpoint that has a query, and its endpoint
+    rules reject it on the first bucket request, quoting it; the request
+    wrapper reports that by class, and the route answers 500 as before.
+    """
+    secret = _secret()
+    monkeypatch.setenv(
+        "AWS_ENDPOINT_URL_S3",
+        f"https://user:{secret}@storage.example/?token={secret}",
+    )
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", _ACCESS_ID)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", _ACCESS_KEY)
+    request = _pending_takedown(db_session, with_artifact=True)
+    _use_settings(client, _ambient_storage())
+
+    with caplog.at_level(logging.INFO):
+        if view == "response":
+            opaque = TestClient(client.app, raise_server_exceptions=False)
+            response = approve_takedown(opaque, request)
+            assert_that(response.status_code).is_equal_to(500)
+            assert_that(response.json()["detail"]).is_equal_to("Internal server error.")
+            surface = response.text
+        else:
+            with pytest.raises(TranscriptStorageError) as caught:
+                approve_takedown(client, request)
+            assert_that(str(caught.value)).is_equal_to(
+                "Transcript artifact storage request failed: "
+                "botocore.exceptions.EndpointResolutionError",
+            )
+            surface = _printed(caught.value) + repr(caught.value.args)
+
+    _assert_absent(surface, secret)
+    _assert_absent(caplog.text, secret)
+
+
+@pytest.mark.usefixtures("offline_aws")
+def test_unencodable_ambient_secret_fails_takedown_by_class_only(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A secret from the environment that cannot be encoded is not quoted.
+
+    Signing raises an encoding error holding the signing key; it was a
+    ``ValueError``, which the route answers with a 409, and its replacement
+    still is, with the class as the only text.
+    """
+    secret = _secret()
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", _ACCESS_ID)
+    # A byte that is not UTF-8, as the environment would hold it.
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", f"{secret}\udc91")
+    request = _pending_takedown(db_session, with_artifact=True)
+    _use_settings(client, _ambient_storage())
+
+    with caplog.at_level(logging.DEBUG):
+        response = approve_takedown(client, request)
+
+    assert_that(response.status_code).is_equal_to(409)
+    assert_that(response.json()["detail"]).is_equal_to(
+        "Transcript artifact storage request failed: UnicodeEncodeError",
+    )
+    _assert_absent(response.text, secret)
+    assert_that(response.text.lower()).does_not_contain("udc91")
     _assert_absent(caplog.text, secret)
 
 

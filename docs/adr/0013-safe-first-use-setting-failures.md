@@ -35,10 +35,13 @@ by the library that first used it, one request or one ops action later:
   logged by the application's own loggers.
 - The transcript artifact store is built by the ops purge and takedown routes.
   An unknown storage backend (`ValueError` from the backend enum), a malformed
-  endpoint (`ValueError`) or region (`InvalidRegionError`, also for a region
-  taken from the AWS environment or configuration), and a non-ASCII encryption
-  key (`UnicodeEncodeError`) were all quoted. All are `ValueError`s, which those
-  routes return as a 409 with the error's text.
+  endpoint (`ValueError`) or region (`InvalidRegionError`), and a non-ASCII
+  encryption key (`UnicodeEncodeError`) were all quoted. All are `ValueError`s,
+  which those routes return as a 409 with the error's text. Building the client
+  also reads the AWS environment and shared configuration, and quoted what it
+  read there: an endpoint (`AWS_ENDPOINT_URL_S3`, `AWS_ENDPOINT_URL`, with any
+  userinfo), a region, a profile name, a retry, defaults or checksum mode, a
+  maximum attempt count.
 - Settings that built a client were then quoted by the client on every bucket
   request: an endpoint with a non-numeric port, a scheme other than `http` or
   `https`, or a query (`EndpointResolutionError`); a bucket name it rejects
@@ -47,7 +50,11 @@ by the library that first used it, one request or one ops action later:
   the whole signed `Authorization` header); and an endpoint that cannot be
   reached (`EndpointConnectionError`, quoting the URL with any userinfo). These
   are not `ValueError`s; the routes answered 500, and the server logged the
-  error with its text.
+  error with its text. A secret key that cannot be encoded as UTF-8 (a lone
+  surrogate, which is what bytes that are not UTF-8 become when read from the
+  environment) failed while signing with a `UnicodeEncodeError` whose arguments
+  hold the whole signing key; it is a `ValueError`, so the takedown route
+  answered 409 with part of it.
 
 Hosts, socket paths, endpoints, buckets and regions are not credentials, but an
 operator may not want them in logs or responses, and query option names, the
@@ -79,14 +86,20 @@ key, the access key id and URL userinfo can hold credential text.
      every bucket request (`http` or `https`, no query, a numeric port),
      reported as `ValueError`.
    - `PODEX_TRANSCRIPTS__S3_REGION_NAME`: the client's own region check,
-     reported as its class (`botocore.exceptions.InvalidRegionError`). With the
-     setting empty, the client takes its region from the AWS environment or
-     configuration and checks it while it is built; building the client catches
-     only that class, reported with the source "The AWS region from the
-     environment or AWS configuration".
-   - `PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID` and
-     `PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY`: no control characters
-     (`ValueError`).
+     reported as its class (`botocore.exceptions.InvalidRegionError`).
+   - `PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID`, which is sent in a header: UTF-8
+     encodable and without control characters (`ValueError`).
+   - `PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY`, which is only signing input:
+     UTF-8 encodable (`UnicodeEncodeError`). Any other character, including a
+     newline, is accepted as before. The settings have no session token.
+   - Everything else the storage client reads while it is built (the AWS
+     environment and shared configuration: endpoint, region, profile,
+     configuration files, retry, defaults and checksum modes, attempt counts):
+     the store's own settings are checked first, so building the client runs
+     under the guard with the generic source "The storage client's environment
+     configuration", catching the client's own errors (`BotoCoreError`) and the
+     builtin errors parsing a value raises (`LookupError`, `OSError`,
+     `TypeError`, `ValueError`).
    - `PODEX_TRANSCRIPTS__ENCRYPTION_KEY`: its ASCII encoding, reported as
      `UnicodeEncodeError`; both stores encode it once, through one helper.
 
@@ -119,14 +132,23 @@ key, the access key id and URL userinfo can hold credential text.
      `RateLimitStoreError` naming the class only, raised outside the handler.
      Redis errors that are also `ValueError`s (lock errors) still fail open.
    - Each request of the encrypted S3 store (put, get with its body read,
-     delete) turns the client's own errors (`BotoCoreError`: parameter
-     validation, connection, endpoint resolution, HTTP client, credentials) into
-     `TranscriptStorageError` naming the class only, raised outside the handler.
-     It derives from `Exception` only, as the client's errors do, so the
-     verification step and the ops routes treat it as before: the routes answer
-     500 with the opaque problem body, and the server's error record shows the
-     class only. A server's error response (`ClientError`) is not a client-side
-     error and propagates unchanged.
+     delete) replaces the client's own errors (`BotoCoreError`: parameter
+     validation, connection, endpoint resolution, HTTP client, credentials) and
+     the builtin errors raised while preparing or signing a request
+     (`AttributeError`, `LookupError`, `OSError`, `TypeError`, `ValueError`,
+     which includes `UnicodeError`) with `TranscriptStorageError` naming the
+     class only, raised outside the handler. The replacement is of the same
+     builtin kind as the original (`TranscriptStorageValueError`,
+     `...TypeError`, `...LookupError`, `...OSError`; otherwise the base class,
+     which derives from `Exception` only, as the client's errors do), so the
+     verification step and the ops routes treat it exactly as before: a client
+     error is a 500 with the opaque problem body, an encoding error in the
+     takedown route a 409, and the server's error record or the detail shows the
+     class only. A server's error response (`ClientError`) and anything that is
+     not an `Exception` (cancellation, interrupts, exit) propagate unchanged. An
+     endpoint from the environment that the S3 endpoint rules reject on each
+     request (a query, a non-numeric port, another scheme) is not checked before
+     the request; its `EndpointResolutionError` is replaced here.
 
 Deliberately not chosen:
 
@@ -136,11 +158,14 @@ Deliberately not chosen:
 - **Reimplementing the Redis option rules** (known names per connection class,
   value types, certificate flags, codec names). They differ between connection
   classes and library versions; the library's own code is the authority.
-- **Building the clients inside the guard**, beyond the region case above. A
-  fault while building the client (0011's consequence) would be relabelled as a
-  configuration error; the checks above run on their own, and the client is
-  built outside them. Building the storage client catches only
-  `InvalidRegionError`, which the client raises for nothing but its region.
+- **Building the Redis client inside the guard.** A fault while building it
+  (0011's consequence) would be relabelled as a configuration error; the checks
+  above run on their own, and the client is built outside them. The storage
+  client is the exception: what it reads from the environment cannot be checked
+  beforehand without reimplementing the SDK's configuration chain, so it is
+  built under the guard, after the store's own settings are checked; an internal
+  fault while building it is then reported under the generic source, by its
+  class.
 - **Teaching the log boundary to withhold Redis or storage error text.** Both
   are replaced where they are raised or logged, so they are safe however they
   are printed.
@@ -169,25 +194,33 @@ Deliberately not chosen:
 - **Behaviour change**: the checks run when the ops routes build the store,
   which both routes do before anything else. An endpoint with a query, a
   non-numeric port or a scheme other than `http`/`https`, a bucket name the
-  client rejects, or a static credential holding a control character now refuses
-  every ops purge and takedown approval with a 409, including actions that never
-  reach the bucket: approving a takedown for an episode with no retained object
-  (200 before; now 409 and the request stays pending) and purging a transcript
-  that does not exist (404 before; now 409). Such a configuration failed every
-  bucket request before, so only actions that needed no bucket request change.
-  Tests pin both cases.
+  client rejects, an access key id holding a control character, or an access key
+  id or secret that cannot be encoded as UTF-8 now refuses every ops purge and
+  takedown approval with a 409, including actions that never reach the bucket:
+  approving a takedown for an episode with no retained object (200 before; now
+  409 and the request stays pending) and purging a transcript that does not
+  exist (404 before; now 409). Each such configuration failed every bucket
+  request before, so only actions that needed no bucket request change. Tests
+  pin both cases. A secret holding a newline or another control character is not
+  refused: it signs as any other character does.
 
 Known limits:
 
 - A server's error response (`ClientError`) propagates unchanged, and its
-  message is the server's text. Its code and operation are fixed, but some
-  servers' messages name configuration: an access-denied message can name the
-  calling principal and the bucket. It is not caught by the ops routes (500,
-  opaque body) and is printed in the server's error record.
+  message is the server's text: the server can name the bucket, the access key
+  id or the calling account in it (for example in an access-denied or
+  unknown-key response). Its code and operation are fixed. It is not caught by
+  the ops routes (500, opaque body) and is printed in the server's error record.
 - A Redis option the connection class accepts and uses only on a live connection
   is not checked at start-up: for example `socket_keepalive_options`,
   `socket_type`, `credential_provider` or `retry` given as text fail on the
   first request with a value-free error, which fails the request by class only,
   and a non-standard `encoding_errors` handler fails only if a value needs it.
-- Third-party DEBUG records keep 0010's URL rule: the storage client's request
-  lines print the endpoint's host.
+- With DEBUG enabled and the log boundary installed (0010, unchanged here), a
+  storage request prints its request line and URL without userinfo: the endpoint
+  host, the endpoint path, the bucket, the object key and the signing scope's
+  region. URL userinfo, the access key id, the secret key, the session token,
+  the signature, the encryption key and its key id are withheld. The store's
+  requests carry no query string; a query parameter on another request made with
+  the same client would be printed under 0010's URL rule. A test pins each of
+  these fields.

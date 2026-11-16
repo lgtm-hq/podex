@@ -15,7 +15,6 @@ import errno
 import logging
 import socket
 import tempfile
-import threading
 import traceback
 from collections.abc import Callable, Iterator
 from hashlib import sha256
@@ -54,6 +53,7 @@ from podex.services.transcript_artifacts import (
 )
 from podex.unusable_settings import UnusableSettingError
 from tests.conftest import seed_catalog_graph
+from tests.redis_peer import parse_commands, reply_to, start_peer
 from tests.test_transcript_artifacts import RecordingS3Client
 
 _REDIS_SETTING = "PODEX_RATE_LIMIT__REDIS_URL"
@@ -354,61 +354,6 @@ def test_valid_redis_url_builds_client_with_same_arguments(
     assert_that(list(pool_state["_in_use_connections"])).is_empty()
 
 
-# Replies by command name: the handshake, and the limiter's script admitting
-# the request as the first hit of the window.
-_PEER_REPLIES = {
-    b"HELLO": b"%1\r\n+proto\r\n:3\r\n",
-    b"EVAL": b"*4\r\n:1\r\n:1\r\n$1\r\n0\r\n$1\r\n0\r\n",
-}
-
-
-def _answer(connection: socket.socket) -> None:
-    """Answer every command in each chunk the client sends, until it closes."""
-    connection.settimeout(2.0)
-    with connection:
-        while True:
-            try:
-                received = connection.recv(65536)
-            except OSError:
-                return
-            if not received:
-                return
-            # Each command is "*<count>\r\n$<length>\r\n<NAME>\r\n...".
-            replies = [
-                _PEER_REPLIES.get(
-                    (command.split(b"\r\n") + [b"", b"", b""])[2],
-                    b"+OK\r\n",
-                )
-                for command in received.split(b"*")[1:]
-            ]
-            try:
-                connection.sendall(b"".join(replies))
-            except OSError:
-                return
-
-
-def _start_peer(listener: socket.socket) -> None:
-    """Serve a local stand-in Redis server for the limiter's commands.
-
-    It listens on the loopback interface or a local socket only. It answers
-    the handshake, answers the limiter's script with an admitting window and
-    every other command with ``+OK``, each connection on its own thread until
-    the listener closes.
-    """
-    listener.listen()
-
-    def accept() -> None:
-        """Hand each connection to its own thread."""
-        while True:
-            try:
-                connection, _address = listener.accept()
-            except OSError:
-                return
-            threading.Thread(target=_answer, args=(connection,), daemon=True).start()
-
-    threading.Thread(target=accept, daemon=True).start()
-
-
 @pytest.fixture(name="peer_urls")
 def peer_urls_fixture(short_dir: str) -> Iterator[dict[str, str]]:
     """Start loopback and local-socket peers; return their base URLs."""
@@ -417,8 +362,8 @@ def peer_urls_fixture(short_dir: str) -> Iterator[dict[str, str]]:
     port: int = tcp.getsockname()[1]
     local = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     local.bind(f"{short_dir}/redis.sock")
-    _start_peer(tcp)
-    _start_peer(local)
+    start_peer(tcp)
+    start_peer(local)
     try:
         yield {
             "tcp": f"redis://127.0.0.1:{port}/0",
@@ -511,6 +456,109 @@ def test_client_fault_on_a_request_fails_it_by_class_only(
     _assert_absent(printed, f"{_TLS_VERSION:x}")
 
 
+_HELLO = b"*2\r\n$5\r\nHELLO\r\n$1\r\n3\r\n"
+_EVAL = b"*3\r\n$4\r\nEVAL\r\n$4\r\nr*\r\n\r\n$1\r\n1\r\n"
+
+
+@pytest.mark.parametrize(
+    "chunks",
+    [
+        [_HELLO + _EVAL],
+        [b"*2\r\n$5\r\nHEL", b"LO\r\n$1\r\n3\r\n", _EVAL],
+        [_HELLO[:3], _HELLO[3:] + _EVAL[:9], _EVAL[9:]],
+        [bytes([byte]) for byte in _HELLO + _EVAL],
+    ],
+    ids=["whole", "split-name", "split-headers", "byte-by-byte"],
+)
+def test_peer_answers_complete_commands_however_the_stream_is_split(
+    chunks: list[bytes],
+) -> None:
+    """The stand-in server answers each command once, when it is complete.
+
+    The script argument holds ``*`` and an empty line, which a reader splitting
+    on markers instead of lengths would mistake for commands.
+    """
+    pending = b""
+    answered: list[bytes] = []
+    for chunk in chunks:
+        commands, pending = parse_commands(pending + chunk)
+        answered.extend(reply_to(command) for command in commands)
+
+    assert_that(pending).is_empty()
+    assert_that(answered).is_equal_to(
+        [
+            b"%1\r\n+proto\r\n:3\r\n",
+            b"*4\r\n:1\r\n:1\r\n$1\r\n0\r\n$1\r\n0\r\n",
+        ],
+    )
+
+
+def test_peer_holds_an_incomplete_command() -> None:
+    """Nothing is answered for a command whose last argument has not arrived."""
+    commands, pending = parse_commands(_HELLO[:-1])
+
+    assert_that(commands).is_empty()
+    assert_that(pending).is_equal_to(_HELLO[:-1])
+
+
+# Every builtin fault the limiter replaces; each entry must be listed here so
+# that dropping one from the limiter fails a test.
+_REPLACED_CLIENT_FAULTS: list[type[Exception]] = [
+    AttributeError,
+    LookupError,
+    KeyError,
+    TypeError,
+    ValueError,
+    UnicodeEncodeError,
+]
+
+
+def _fault(kind: type[Exception], secret: str) -> Exception:
+    """Return a ``kind`` error whose text and arguments quote ``secret``."""
+    if kind is UnicodeEncodeError:
+        encode_error: Exception = UnicodeEncodeError(
+            "utf-8",
+            f"option {secret}\udc91",
+            len(f"option {secret}"),
+            len(f"option {secret}") + 1,
+            "surrogates not allowed",
+        )
+        return encode_error
+    return kind(f"unknown encoding: {secret}")
+
+
+@pytest.mark.parametrize(
+    "kind",
+    _REPLACED_CLIENT_FAULTS,
+    ids=lambda kind: kind.__name__,
+)
+def test_each_client_fault_fails_the_request_by_class_only(
+    kind: type[Exception],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A non-Redis client fault fails the request with its class name only."""
+    secret = _secret()
+    limiter = RedisSlidingWindowRateLimiter(
+        _FailingClient(_fault(kind, secret)),
+        max_requests=1,
+        window_seconds=60.0,
+    )
+
+    with caplog.at_level(logging.DEBUG), pytest.raises(RateLimitStoreError) as caught:
+        limiter.check("client")
+
+    assert_that(str(caught.value)).is_equal_to(
+        f"rate limiter redis check failed: {kind.__name__}",
+    )
+    assert_that(caught.value.args).is_equal_to(
+        (f"rate limiter redis check failed: {kind.__name__}",),
+    )
+    assert_that(caught.value.__cause__).is_none()
+    assert_that(caught.value.__context__).is_none()
+    _assert_absent(_printed(caught.value) + repr(caught.value.args), secret)
+    _assert_absent(caplog.text, secret)
+
+
 @pytest.mark.parametrize(
     ("peer", "options"),
     [
@@ -583,13 +631,23 @@ def _storage_cases(secret: str, tmp_path: Path) -> dict[str, TranscriptStorageSe
             s3_access_key_id=SecretStr(f"{secret}\n"),
             s3_secret_access_key=SecretStr(_ACCESS_KEY),
         ),
-        "secret-access-key": TranscriptStorageSettings(
+        # A lone surrogate, which is what bytes that are not UTF-8 become
+        # when read from the environment.
+        "access-key-id-encoding": TranscriptStorageSettings(
+            storage_backend="encrypted_s3",
+            encryption_key=SecretStr(_key()),
+            s3_bucket="private-transcripts",
+            s3_region_name="auto",
+            s3_access_key_id=SecretStr(f"{secret}\udc91"),
+            s3_secret_access_key=SecretStr(_ACCESS_KEY),
+        ),
+        "secret-access-key-encoding": TranscriptStorageSettings(
             storage_backend="encrypted_s3",
             encryption_key=SecretStr(_key()),
             s3_bucket="private-transcripts",
             s3_region_name="auto",
             s3_access_key_id=SecretStr(_ACCESS_ID),
-            s3_secret_access_key=SecretStr(f"{secret}\r"),
+            s3_secret_access_key=SecretStr(f"{secret}\udc91"),
         ),
     }
 
@@ -608,7 +666,11 @@ _STORAGE_FAILURES = {
         "botocore.exceptions.ParamValidationError",
     ),
     "access-key-id": ("PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID", "ValueError"),
-    "secret-access-key": ("PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY", "ValueError"),
+    "access-key-id-encoding": ("PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID", "ValueError"),
+    "secret-access-key-encoding": (
+        "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY",
+        "UnicodeEncodeError",
+    ),
 }
 
 
@@ -618,6 +680,8 @@ def isolated_aws_fixture(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("AWS_CONFIG_FILE", str(tmp_path / "aws-config"))
     monkeypatch.setenv("AWS_SHARED_CREDENTIALS_FILE", str(tmp_path / "aws-creds"))
     monkeypatch.setenv("AWS_DEFAULT_REGION", "us-east-1")
+    # The default session caches what it read from the environment.
+    monkeypatch.setattr(boto3, "DEFAULT_SESSION", None)
     _forbid_network(monkeypatch)
 
 
@@ -808,8 +872,19 @@ def test_takedown_route_reports_store_setting_without_value(
             {"s3_endpoint_url": "https://storage.example:9443/base/"},
             {"endpoint_url": "https://storage.example:9443/base/"},
         ),
+        # The secret is only signing input; a newline in it signs as before.
+        (
+            {
+                "s3_access_key_id": SecretStr(_ACCESS_ID),
+                "s3_secret_access_key": SecretStr(f"{_ACCESS_KEY}\n"),
+            },
+            {
+                "aws_access_key_id": _ACCESS_ID,
+                "aws_secret_access_key": f"{_ACCESS_KEY}\n",
+            },
+        ),
     ],
-    ids=["defaults", "r2", "ipv4", "ipv6", "path"],
+    ids=["defaults", "r2", "ipv4", "ipv6", "path", "secret-with-newline"],
 )
 def test_valid_storage_settings_build_client_with_same_arguments(
     configured: dict[str, Any],

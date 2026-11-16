@@ -45,15 +45,22 @@ explicitly empty value does not generally select the default:
   including `encoding` and `ssl_min_version` (an option the Redis client rejects
   or cannot apply stops start-up), and to `PODEX_TRANSCRIPTS__STORAGE_BACKEND`,
   `PODEX_TRANSCRIPTS__S3_BUCKET`, `PODEX_TRANSCRIPTS__S3_ENDPOINT_URL`,
-  `PODEX_TRANSCRIPTS__S3_REGION_NAME` (or the AWS region it falls back to),
-  control characters in the S3 access key id and secret, and a non-ASCII
-  `PODEX_TRANSCRIPTS__ENCRYPTION_KEY`: the ops purge and takedown routes answer
-  409 with the setting name and error class, for every action, including one
-  that would not reach the bucket. A failed Redis connection is logged by error
-  class (with its cause's class and `errno`), and a storage client error during
-  a bucket request still fails the route with the opaque 500, its logged error
-  naming the class only. A storage server's error response is passed on
-  unchanged;
+  `PODEX_TRANSCRIPTS__S3_REGION_NAME`, an S3 access key id holding a control
+  character, an S3 access key id or secret that is not valid UTF-8, and a
+  non-ASCII `PODEX_TRANSCRIPTS__ENCRYPTION_KEY`: the ops purge and takedown
+  routes answer 409 with the setting name and error class, for every action,
+  including one that would not reach the bucket. A value the storage client
+  reads from the AWS environment or shared configuration (such as
+  `AWS_ENDPOINT_URL_S3`, `AWS_DEFAULT_REGION`, `AWS_PROFILE` or
+  `AWS_RETRY_MODE`) is reported the same way, as "The storage client's
+  environment configuration". A failed Redis connection is logged by error class
+  (with its cause's class and `errno`). A storage client error during a bucket
+  request fails the route as before (the opaque 500, or a 409 for an encoding
+  error), naming the class only. A storage server's error response is passed on
+  unchanged, and its message can name the bucket, the access key id or the
+  calling account. With DEBUG logging, storage request lines print the endpoint
+  host and path, the bucket, the object key and the signing region, never URL
+  userinfo, credentials, the signature or the encryption key;
 - the optional credential and provider strings in the table below treat an empty
   value as not configured, exactly as described in each row; this is why
   `.env.example` can leave them empty.

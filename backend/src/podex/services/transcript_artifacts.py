@@ -14,11 +14,7 @@ from typing import Any, Protocol, TypeVar
 from urllib.parse import urlsplit
 
 import boto3
-from botocore.exceptions import (
-    BotoCoreError,
-    InvalidRegionError,
-    ParamValidationError,
-)
+from botocore.exceptions import BotoCoreError, ParamValidationError
 from botocore.handlers import validate_bucket_name
 from botocore.utils import (
     is_valid_endpoint_url,
@@ -42,9 +38,32 @@ from podex.unusable_settings import without_setting_text
 
 RAW_TRANSCRIPT_CONTENT_TYPE = "application/vnd.podex.transcript+json"
 ARTIFACT_VERIFICATION_FAILED = "Retained transcript artifact failed source verification"
-# Where the storage client takes its region from when the region setting is
-# empty: the AWS environment variables or configuration file.
-AMBIENT_REGION_SOURCE = "The AWS region from the environment or AWS configuration"
+# Where everything the storage client reads beyond the store's own settings
+# comes from: AWS environment variables and shared configuration (endpoint,
+# region, profile, configuration files, retry and checksum modes).
+AMBIENT_CONFIGURATION_SOURCE = "The storage client's environment configuration"
+# What building the client raises for a value it read from there: its own
+# configuration errors, and builtin errors from parsing a value (an endpoint,
+# a number). Each can quote the value.
+_AMBIENT_CONFIGURATION_FAILURES: tuple[type[Exception], ...] = (
+    BotoCoreError,
+    LookupError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+# What a storage request raises on the client side, besides a server's error
+# response: the client's own errors, and builtin errors from preparing or
+# signing the request, which carry request or credential text (an encoding
+# error holds the whole signing key in its arguments).
+_REQUEST_FAILURES: tuple[type[Exception], ...] = (
+    BotoCoreError,
+    AttributeError,
+    LookupError,
+    OSError,
+    TypeError,
+    ValueError,
+)
 
 ResultT = TypeVar("ResultT")
 
@@ -54,10 +73,37 @@ class TranscriptStorageError(Exception):
 
     The storage client's own errors quote its configuration: the bucket name,
     the endpoint URL with any userinfo, or the whole ``Authorization`` header.
-    This deliberately derives from ``Exception`` only, so the handlers that
-    catch ``ValueError``, ``RuntimeError`` or ``OSError`` treat it exactly as
-    they treated the client's errors, which derive from none of them.
+    This class derives from ``Exception`` only, as the client's own errors do;
+    a failure that was also a builtin ``ValueError``, ``TypeError``,
+    ``LookupError`` or ``OSError`` is replaced by the subclass of the same
+    kind, so every handler treats the replacement as it treated the original.
     """
+
+
+class TranscriptStorageValueError(TranscriptStorageError, ValueError):
+    """A storage request failure that was a ``ValueError``."""
+
+
+class TranscriptStorageTypeError(TranscriptStorageError, TypeError):
+    """A storage request failure that was a ``TypeError``."""
+
+
+class TranscriptStorageLookupError(TranscriptStorageError, LookupError):
+    """A storage request failure that was a ``LookupError``."""
+
+
+class TranscriptStorageOSError(TranscriptStorageError, OSError):
+    """A storage request failure that was an ``OSError``."""
+
+
+# Checked in order: the first builtin kind the failure is, picks the
+# replacement; a failure of none of them gets the base class.
+_REPLACEMENT_KINDS: tuple[tuple[type[Exception], type[TranscriptStorageError]], ...] = (
+    (OSError, TranscriptStorageOSError),
+    (ValueError, TranscriptStorageValueError),
+    (TypeError, TranscriptStorageTypeError),
+    (LookupError, TranscriptStorageLookupError),
+)
 
 
 class TranscriptArtifactStorageBackend(StrEnum):
@@ -358,34 +404,50 @@ def _build_s3_client(
     if access_key_id or secret_access_key:
         if not access_key_id or not secret_access_key:
             raise ValueError("S3 artifact credentials must be configured together")
-        # A control character (a trailing newline from a secrets file) makes
-        # the HTTP layer quote the whole signed header on every request.
-        for credential, source in (
-            (access_key_id, "PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID"),
-            (secret_access_key, "PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY"),
-        ):
-            without_setting_text(
-                lambda value=credential: _check_no_control_characters(value),
-                source=source,
-                failures=(ValueError,),
-            )
+        # The key id goes into a header: a control character (a trailing
+        # newline from a secrets file) makes the HTTP layer quote the whole
+        # signed header on every request. The secret is only signing input,
+        # where any character works, but both are encoded as UTF-8 to sign,
+        # and that error holds the whole signing key.
+        without_setting_text(
+            lambda: _check_header_credential(access_key_id),
+            source="PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID",
+            failures=(ValueError,),
+        )
+        without_setting_text(
+            lambda: secret_access_key.encode("utf-8"),
+            source="PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY",
+            failures=(UnicodeEncodeError,),
+        )
         kwargs["aws_access_key_id"] = access_key_id
         kwargs["aws_secret_access_key"] = secret_access_key
-    # With no region setting, the client takes one from the AWS environment or
-    # configuration and checks it while it is built; that is the only region
-    # error building it can raise, and it quotes the region.
+    # The store's own settings are checked above, so what building the client
+    # can still fail on is what it reads from the AWS environment and shared
+    # configuration (an endpoint, region, profile, configuration file, retry
+    # or checksum mode), whose errors quote the value.
     client: S3ObjectClient = without_setting_text(
         lambda: boto3.client("s3", **kwargs),
-        source=AMBIENT_REGION_SOURCE,
-        failures=(InvalidRegionError,),
+        source=AMBIENT_CONFIGURATION_SOURCE,
+        failures=_AMBIENT_CONFIGURATION_FAILURES,
     )
     return client
 
 
-def _check_no_control_characters(value: str) -> None:
-    """Reject a credential holding a control character, without quoting it."""
-    if any(unicodedata.category(character) == "Cc" for character in value):
-        raise ValueError("Credential holds a control character")
+def _check_header_credential(value: str) -> None:
+    """Require a credential sent in a header to be UTF-8 without control characters.
+
+    Raises:
+        ValueError: Naming neither the value nor the offending character.
+    """
+    encodable = True
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        encodable = False
+    if not encodable or any(
+        unicodedata.category(character) == "Cc" for character in value
+    ):
+        raise ValueError("Credential cannot be sent in a header")
 
 
 def _storage_request(request: Callable[[], ResultT]) -> ResultT:
@@ -400,20 +462,30 @@ def _storage_request(request: Callable[[], ResultT]) -> ResultT:
     Raises:
         TranscriptStorageError: When the client raises one of its own errors
             (``BotoCoreError``: parameter validation, connection, endpoint
-            resolution, HTTP client and credential errors), whose text quotes
-            configuration. It names the class only and keeps neither cause nor
-            context. A server's error response (``ClientError``) propagates
-            unchanged.
+            resolution, HTTP client and credential errors) or a builtin error
+            while preparing or signing the request, whose text or arguments
+            quote configuration or credentials. It names the class only, keeps
+            neither cause nor context, and is of the same builtin kind as the
+            original (see ``_REPLACEMENT_KINDS``). A server's error response
+            (``ClientError``) and anything that is not an ``Exception``
+            (cancellation, interrupts, exit) propagate unchanged.
     """
     failure = ""
+    replacement: type[TranscriptStorageError] = TranscriptStorageError
     try:
         return request()
-    except BotoCoreError as error:
+    except _REQUEST_FAILURES as error:
         failure = class_name(error)
+        replacement = next(
+            (
+                kind_replacement
+                for kind, kind_replacement in _REPLACEMENT_KINDS
+                if isinstance(error, kind)
+            ),
+            TranscriptStorageError,
+        )
     # Outside the handler: the original error is not kept as context.
-    raise TranscriptStorageError(
-        f"Transcript artifact storage request failed: {failure}",
-    )
+    raise replacement(f"Transcript artifact storage request failed: {failure}")
 
 
 def _check_storage_endpoint(endpoint_url: str) -> None:
