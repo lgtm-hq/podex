@@ -10,6 +10,7 @@ development, CI, and single-worker deployments actually need.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
@@ -70,14 +71,19 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
     from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
     # Parsing the URL can quote part of its password (a "/", "#" or "?" in it
-    # moves the rest into the port or the query); report it by class only.
-    client: redis.Redis = without_setting_text(
-        lambda: redis.Redis.from_url(
-            redis_url,
-            socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
-            socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
-        ),
+    # moves the rest into the port or the query): parse it with the client's
+    # own parser first, which raises ValueError for bad input, where that is
+    # reported by class only. The client is then built outside that check.
+    parse_redis_url: Callable[[str], dict[str, object]] = redis.connection.parse_url
+    without_setting_text(
+        lambda: parse_redis_url(redis_url),
         source="PODEX_RATE_LIMIT__REDIS_URL",
+        failures=(ValueError,),
+    )
+    client: redis.Redis = redis.Redis.from_url(
+        redis_url,
+        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
     )
     return RedisSlidingWindowRateLimiter(
         client,

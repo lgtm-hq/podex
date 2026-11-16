@@ -198,8 +198,10 @@ async def _run_bounded(
 ) -> tuple[int, str, str, str | None]:
     """Run the command within its bounds; keep all it printed.
 
-    The command runs in a session of its own; whatever it started there is
-    killed when it ends.
+    The command runs in a session of its own, and this owns that session's
+    process group only: whatever the command started in it is killed when it
+    ends. A command that deliberately starts a new session leaves that
+    session to the test that runs it, which must clean it up.
 
     Returns:
         tuple[int, str, str, str | None]: Exit status, standard output,

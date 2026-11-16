@@ -51,6 +51,7 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
+from sentry_sdk.utils import Dsn
 
 from podex import __version__
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
@@ -511,24 +512,28 @@ def init_sentry(settings: Settings) -> bool:
             field_path,
             SHORT_VALUE_LENGTH,
         )
-    # Parsing the DSN can quote it (an invalid project, scheme or port);
-    # report a malformed DSN by the setting's name and error class only.
+    # Parsing the DSN can quote it (an invalid project, scheme or port): parse
+    # it with the SDK's own parser first, which raises ValueError (BadDsn is
+    # one) for bad input, where that is reported by class only. The SDK is
+    # then initialised outside that check.
     without_setting_text(
-        lambda: sentry_sdk.init(
-            dsn=settings.observability.sentry_dsn,
-            environment=settings.observability.sentry_environment,
-            release=f"podex@{__version__}",
-            before_send=before_send,
-            before_breadcrumb=before_breadcrumb,
-            send_default_pii=False,
-            include_local_variables=False,
-            max_request_body_size="never",
-            event_scrubber=EventScrubber(
-                denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
-                recursive=True,
-            ),
-        ),
+        lambda: Dsn(settings.observability.sentry_dsn),
         source="PODEX_OBSERVABILITY__SENTRY_DSN",
+        failures=(ValueError,),
+    )
+    sentry_sdk.init(
+        dsn=settings.observability.sentry_dsn,
+        environment=settings.observability.sentry_environment,
+        release=f"podex@{__version__}",
+        before_send=before_send,
+        before_breadcrumb=before_breadcrumb,
+        send_default_pii=False,
+        include_local_variables=False,
+        max_request_body_size="never",
+        event_scrubber=EventScrubber(
+            denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
+            recursive=True,
+        ),
     )
     # Access records carry the client address; keep them out of breadcrumbs.
     ignore_logger(_ACCESS_LOGGER)

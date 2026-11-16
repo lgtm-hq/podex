@@ -33,13 +33,15 @@ explicitly empty value does not generally select the default:
   the scheduler do not start;
 - an empty `PODEX_DATABASE__URL` passes validation but stops start-up and
   migrations, because SQLAlchemy cannot parse it;
-- a settings validation error at start-up or in migrations prints the field path
-  and error type, not the rejected value; and `PODEX_DATABASE__URL` (also
-  `sqlalchemy.url` when set in the Alembic configuration),
-  `PODEX_RATE_LIMIT__REDIS_URL` and `PODEX_OBSERVABILITY__SENTRY_DSN`, when they
-  cannot be parsed, are reported by name and error class only. Other values are
-  not checked at start-up. Percent-encode `@`, `:`, `/`, `#` and `?` in a URL
-  password;
+- at start-up and in migrations, credential-bearing settings are not printed: a
+  settings validation error prints the field path and error type, not the
+  rejected value; and `PODEX_DATABASE__URL` (also `sqlalchemy.url` when set in
+  the Alembic configuration), `PODEX_RATE_LIMIT__REDIS_URL` and
+  `PODEX_OBSERVABILITY__SENTRY_DSN`, when they cannot be parsed, are reported by
+  name and error class only. Non-credential settings may be quoted by the
+  library that parses them, and failures on first use (a Redis connection, the
+  object storage client) are not covered. Percent-encode `@`, `:`, `/`, `#` and
+  `?` in a URL password, and write `%%` for `%` in `alembic.ini`;
 - the optional credential and provider strings in the table below treat an empty
   value as not configured, exactly as described in each row; this is why
   `.env.example` can leave them empty.

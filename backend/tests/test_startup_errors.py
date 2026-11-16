@@ -16,6 +16,7 @@ and searches everything the process wrote to its standard streams:
   library's record of the values it read is withheld.
 """
 
+import contextlib
 import os
 import signal
 import sys
@@ -103,19 +104,22 @@ MIGRATIONS_ONLINE = Entrypoint(
 ENTRYPOINTS = (API, SCHEDULER, OPENAPI, MIGRATIONS)
 
 
-def _alembic_ini(directory: Path) -> Path:
+def _alembic_ini(directory: Path, url: str = "") -> Path:
     """Write the migration configuration with its paths made absolute.
 
     Alembic resolves ``script_location`` and ``prepend_sys_path`` against the
     working directory; absolute paths let the command run from ``directory``.
+    ``url``, when given, is written as ``sqlalchemy.url`` as it stands, so the
+    configuration parser interpolates it.
     """
     lines = (_BACKEND / "alembic.ini").read_text(encoding="utf-8").splitlines()
     replaced = {
         "script_location = alembic": f"script_location = {_BACKEND / 'alembic'}",
         "prepend_sys_path = .": f"prepend_sys_path = {_BACKEND}",
+        "sqlalchemy.url =": f"sqlalchemy.url = {url}".rstrip(),
     }
+    assert_that(lines).contains(*replaced)
     rewritten = [replaced.get(line, line) for line in lines]
-    assert_that(rewritten).does_not_contain(*replaced)
     path = directory / "alembic.ini"
     path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
     return path
@@ -140,11 +144,17 @@ def _start(
     settings: dict[str, str],
     *,
     debug: bool = False,
+    configured_url: str = "",
 ) -> CommandResult:
-    """Start ``entrypoint`` from ``tmp_path`` with ``settings``; return its output."""
+    """Start ``entrypoint`` from ``tmp_path`` with ``settings``; return its output.
+
+    ``configured_url`` is the migration configuration's ``sqlalchemy.url``.
+    """
     places = {
         "out": str(tmp_path / "openapi.json"),
-        "ini": str(_alembic_ini(tmp_path)) if entrypoint.migrations else "",
+        "ini": (
+            str(_alembic_ini(tmp_path, configured_url)) if entrypoint.migrations else ""
+        ),
     }
     if debug:
         arguments: tuple[str, ...] = (
@@ -256,7 +266,7 @@ UNUSABLE_URLS = (
         name="unknown-dialect",
         template="nodialect://podex:pw{secret}@db.invalid/podex",
         userinfo="podex:pw",
-        failure="NoSuchModuleError",
+        failure="sqlalchemy.exc.NoSuchModuleError",
     ),
 )
 
@@ -357,13 +367,13 @@ DSNS = (
         name="invalid-project",
         variable=_DSN,
         template="https://key@127.0.0.1:1/{secret}",
-        failure="BadDsn",
+        failure="sentry_sdk.utils.BadDsn",
     ),
     MalformedValue(
         name="unsupported-scheme",
         variable=_DSN,
         template="s{secret}://key@127.0.0.1:1/1",
-        failure="BadDsn",
+        failure="sentry_sdk.utils.BadDsn",
     ),
     MalformedValue(
         name="port-text",
@@ -418,6 +428,51 @@ def test_malformed_client_url_reports_setting_and_class_only(
     assert_that(printed).does_not_contain(secret.lower())
 
 
+@pytest.mark.parametrize(
+    ("template", "failure"),
+    [
+        # A percent-encoded password: a lone "%" is invalid interpolation.
+        (
+            "postgresql+psycopg://podex:{secret}%40{secret}@db.invalid/podex",
+            "configparser.InterpolationSyntaxError",
+        ),
+        # An interpolation reference naming an option that does not exist.
+        (
+            "postgresql+psycopg://podex:%({secret})s@db.invalid/podex",
+            "configparser.InterpolationMissingOptionError",
+        ),
+    ],
+    ids=["lone-percent", "missing-reference"],
+)
+@pytest.mark.parametrize(
+    "entrypoint",
+    [MIGRATIONS, MIGRATIONS_ONLINE],
+    ids=lambda entry: entry.name,
+)
+def test_configured_url_interpolation_reports_source_and_class_only(
+    entrypoint: Entrypoint,
+    template: str,
+    failure: str,
+    tmp_path: Path,
+) -> None:
+    """A URL in the migration configuration that cannot be read is withheld."""
+    secret = _secret()
+
+    result = _start(
+        entrypoint,
+        tmp_path,
+        {},
+        configured_url=template.format(secret=secret),
+    )
+
+    assert_that(result.returncode).described_as(result.describe()).is_not_zero()
+    assert_that(result.stderr).contains(
+        "UnusableSettingError: sqlalchemy.url in the Alembic configuration is "
+        f"not usable: {failure}.",
+    )
+    assert_that(result.stdout + result.stderr).does_not_contain(secret)
+
+
 def test_timed_out_command_is_killed_and_reported(tmp_path: Path) -> None:
     """A command that never finishes is killed, waited for and reported."""
     never_finishes = (
@@ -447,23 +502,31 @@ def test_inherited_pipes_do_not_hold_the_result(
 ) -> None:
     """A process left running with the command's pipes cannot hold the result.
 
-    It starts its own session, so the command's cleanup does not reach it;
-    killing it afterwards succeeds only because it was still running, holding
-    the pipes, when the result came back.
+    It starts its own session, so the command's cleanup does not reach it, and
+    this test kills it, whatever happens. Signalling it succeeds only because
+    it was still running, holding the pipes, when the result came back.
     """
     monkeypatch.setattr(process_support, "DRAIN_TIMEOUT_SECONDS", 0.5)
+    pid_file = tmp_path / "left-running.pid"
     leaves_a_process = (
-        "import subprocess, sys; "
+        "import pathlib, subprocess, sys; "
         "child = subprocess.Popen([sys.executable, '-c', "
         "'import time; time.sleep(60)'], start_new_session=True); "
-        "print(child.pid, flush=True)"
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid)); "
+        "print('started', flush=True)"
     )
 
-    result = run_command(
-        (sys.executable, "-c", leaves_a_process),
-        env=dict(os.environ),
-        cwd=tmp_path,
-    )
-    os.kill(int(result.stdout.split()[0]), signal.SIGKILL)
+    try:
+        result = run_command(
+            (sys.executable, "-c", leaves_a_process, str(pid_file)),
+            env=dict(os.environ),
+            cwd=tmp_path,
+        )
+        os.kill(int(pid_file.read_text()), 0)
+    finally:
+        if pid_file.exists():
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(int(pid_file.read_text()), signal.SIGKILL)
 
     assert_that(result.returncode).described_as(result.describe()).is_zero()
+    assert_that(result.stdout).is_equal_to("started\n")
