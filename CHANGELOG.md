@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.39] - 2026-11-16
+
+### Fixed
+
+- **extraction**: stop transcript cleanup from silently dropping the end of long
+  transcripts (#873) (2e6fcb7)
+
+## [0.41.38] - 2026-11-16
+
+### Fixed
+
+- **ops**: answer 422 for an unknown discovery source when creating a podcast (#871)
+  (8145345)
+
 ## [0.41.37] - 2026-11-16
 
 ### Changed
