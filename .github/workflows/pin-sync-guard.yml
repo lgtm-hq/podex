@@ -27,7 +27,12 @@ name: Quality - Pin Sync Guard
 permissions: {}
 
 concurrency:
-  group: pin-sync-guard-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    pin-sync-guard-${{ github.ref }}${{ github.event_name == 'push' &&
+    github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

@@ -1,0 +1,51 @@
+<!-- markdownlint-disable MD041 -->
+
+# 0012. Every main commit keeps its own validation run
+
+- Status: proposed
+- Date: 2026-11-16
+- Tags: ci
+
+## Context
+
+The validation workflows (quality, tests, frontend, Docker, SBOM, CodeQL, OSV
+audit, pin sync guard and the all-checks gate) used one concurrency group per
+ref. On `main` they never cancelled an in-progress run, but GitHub keeps only
+one pending run per group: a newly queued run replaces it. When three pushes to
+`main` overlapped, the middle commit's run was cancelled before any job started,
+and its all-checks gate then failed on that cancelled run. The infra-failure
+re-run workflow re-runs failures only, so that commit never got a result.
+Release workflows use repository-wide groups because they mutate versions and
+tags, and must stay serialized.
+
+## Decision
+
+A push to `main` in a validation workflow gets a concurrency group of its own by
+appending `-<sha>` when
+`github.event_name == 'push' && github.ref == 'refs/heads/main'`, and keeps
+`cancel-in-progress` false. Every other event keeps the group without the
+suffix: pull requests still cancel superseded runs, merge queue entries and tags
+keep their own refs, and manual or scheduled runs on `main` keep the shared
+`main` group.
+
+Release mutators (`release-version-pr`, `release-auto-tag`) and scheduled
+maintenance are deliberately left as they are. Making them concurrent per commit
+would allow concurrent release mutations.
+
+Every workflow file is assigned to one class (main validation, release mutation,
+scheduled upkeep, pull request only, follows other runs) in a BATS contract
+test. The test evaluates the groups with GitHub's expression semantics and
+replays them through the queueing rule.
+
+## Consequences
+
+- Each main commit gets a completed run of every validation workflow, so a red
+  or green result can be attributed to the commit that caused it.
+- A burst of merges runs that many validation runs, and that many polling gates,
+  in parallel instead of at most two per workflow. Runner minutes and the shared
+  API quota grow with merge bursts.
+- A new workflow file fails the contract test until it is classified, and a new
+  validation workflow that runs on pushes to `main` must use the per-commit
+  group.
+- Release workflows keep their serialization and their existing pending-run
+  replacement; changing either needs a separate decision.

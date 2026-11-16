@@ -27,7 +27,13 @@ permissions: {}
 # Cancel superseded PR validate runs; never cancel main/tag publishes (a
 # cancelled publish leaves GHCR tags / signatures in a partial state).
 concurrency:
-  group: docker-ci-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run, tag pushes included, keeps the group
+  # without the suffix.
+  group: >-
+    docker-ci-${{ github.ref }}${{ github.event_name == 'push' && github.ref ==
+    'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: >-
     ${{ github.event_name == 'pull_request' }}
 

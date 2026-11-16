@@ -278,3 +278,61 @@ for SARIF, `packages: write`, `id-token: write`, and `attestations: write`.
 These are additive probes and smoke gates. Roll back by reverting this change or
 deploying the previous image digest; no production migration or backfill is
 added.
+
+## Concurrency for main commits
+
+GitHub keeps at most one running and one pending run per concurrency group. A
+newly queued run replaces the pending one even when `cancel-in-progress` is
+false, so a group shared by every push to `main` loses a commit's run whenever
+three pushes overlap. Until #44 that happened on `main`: the `CI - Tests` run
+for `4655557` was cancelled while still pending, with no job started, when
+`0d35ec3` was pushed eight minutes later, and the all-checks gate for `4655557`
+failed on that cancelled run. The pinned infra-failure re-run workflow re-runs
+failed runs only, so such a commit never got its result.
+
+Every workflow file belongs to one class, checked by
+`tests/bats/ci/test_main_validation_concurrency.bats`:
+
+| Class              | Workflows                                                                                                                    | Concurrency                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| Main validation    | `all-checks-gate`, `codeql`, `docker-ci`, `frontend-ci`, `pin-sync-guard`, `quality-ci`, `sbom`, `security-audit`, `test-ci` | Push to `main`: one group per commit, never cancelled. Everything else: the group without the suffix |
+| Release mutations  | `release-auto-tag`, `release-version-pr`                                                                                     | One repository-wide group, never cancelled (unchanged)                                               |
+| Scheduled upkeep   | `ghcr-cleanup`, `scorecards`, `vuln-suppression-check`                                                                       | Unchanged                                                                                            |
+| Pull request only  | `ai-review`, `dependency-review`, `pr-auto-assign`, `pr-labeler`, `semantic-pr-title`, `validate-action-pinning`             | Unchanged                                                                                            |
+| Follows other runs | `auto-rerun-on-infra-failure`                                                                                                | None                                                                                                 |
+
+A main validation group appends `-<sha>` only when
+`github.event_name == 'push' && github.ref == 'refs/heads/main'`. Pull request
+runs keep one group per pull request and still cancel the run they supersede.
+Merge queue entries keep their per-entry ref. Tag pushes of `docker-ci` and
+`sbom` keep one group per tag, never cancelled. Manual and scheduled runs on
+`main` keep the shared `main` group, and they no longer share a group with
+pushes. The all-checks gate passes no `head-sha`, so each gate run judges
+`github.sha`, the commit its group belongs to.
+
+The test renders each group and `cancel-in-progress` value with GitHub's
+expression semantics (`tests/bats/ci/helpers/github_expression.py`) for concrete
+events. It then replays those runs through the queueing rule above. Adding a
+workflow file without classifying it fails the test.
+
+The release workflows are not changed. Their repository-wide groups still
+serialize version and tag mutations. A burst of pushes can still replace a
+pending release run with the newest one, as before. Their pinned reusables run
+the mutating job in a second, job-level group of their own.
+
+### Post-merge check
+
+A pull request cannot show two pushes to `main` both completing. After merge,
+read the run history without triggering anything:
+
+```sh
+gh run list --branch main --event push --limit 200 \
+  --json headSha,name,conclusion,createdAt |
+  jq -r '.[] | select(.conclusion == "cancelled")
+    | select(.name | startswith("Release - ") | not)
+    | [.createdAt, .name, .headSha[0:7]] | @tsv'
+```
+
+Validation runs created after the merge must not appear. Commits pushed minutes
+apart should each show a completed run of every main validation workflow,
+`Quality - Pin Sync Guard` only when workflow files changed.
