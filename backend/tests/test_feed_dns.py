@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from assertpy import assert_that
 
-from podex.services.feed_dns import resolve_feed_host
+from podex.services.feed_dns import FeedDnsError, resolve_feed_host
 
 
 def test_system_dns_resolves_ipv4_and_ipv6_without_network(
@@ -45,8 +45,9 @@ def test_system_dns_failure_propagates(
     slots: Queue[None] = Queue(maxsize=1)
     monkeypatch.setattr("podex.services.feed_dns._RESOLVER_SLOTS", slots)
     monkeypatch.setattr(socket, "getaddrinfo", Mock(side_effect=error("not found")))
-    with pytest.raises(OSError, match="DNS resolution failed"):
+    with pytest.raises(FeedDnsError, match="DNS resolution failed") as caught:
         asyncio.run(resolve_feed_host("feeds.example", 443))
+    assert_that(caught.value.failure_reason).is_equal_to("dns_failure")
     assert_that(slots.empty()).is_true()
 
 
@@ -79,8 +80,9 @@ def test_abandoned_dns_keeps_capacity_until_worker_finishes(
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-        with pytest.raises(OSError, match="busy"):
+        with pytest.raises(FeedDnsError, match="busy") as caught:
             await resolve_feed_host("other.example", 443)
+        assert_that(caught.value.failure_reason).is_equal_to("dns_busy")
         with pytest.raises(Full):
             slots.put_nowait(None)
 
@@ -100,6 +102,7 @@ def test_dns_worker_start_failure_releases_capacity(
     worker = Mock()
     worker.start.side_effect = RuntimeError("thread unavailable")
     monkeypatch.setattr("podex.services.feed_dns.Thread", Mock(return_value=worker))
-    with pytest.raises(OSError, match="worker could not start"):
+    with pytest.raises(FeedDnsError, match="worker could not start") as caught:
         asyncio.run(resolve_feed_host("feeds.example", 443))
+    assert_that(caught.value.failure_reason).is_equal_to("dns_worker_unavailable")
     assert_that(slots.empty()).is_true()

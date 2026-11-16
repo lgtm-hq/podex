@@ -6,6 +6,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from podex.models import IngestionRun
+from podex.services.failure_descriptors import readable_failure
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,7 +57,7 @@ def _to_ingestion_run_summary_data(
     return IngestionRunSummaryData(
         id=run.id,
         status=run.status,
-        error_summary=run.error_summary,
+        error_summary=readable_failure(run.error_summary),
         started_at=run.started_at,
         completed_at=run.completed_at,
         created_at=run.created_at,
