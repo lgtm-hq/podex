@@ -1,6 +1,6 @@
 """Tests for ops podcast management queries, commands, and audit log."""
 
-from typing import Any
+from typing import Any, NoReturn
 
 import pytest
 from assertpy import assert_that
@@ -422,6 +422,46 @@ def test_rejected_update_leaves_the_loaded_podcast_untouched(
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
+@pytest.mark.parametrize(
+    ("provided_fields", "message"),
+    [
+        (
+            frozenset({"name", "slug", "status", "discovery_source"}),
+            "^name cannot be cleared$",
+        ),
+        (
+            frozenset({"slug", "status", "discovery_source"}),
+            "^slug cannot be cleared$",
+        ),
+        (
+            frozenset({"status", "discovery_source"}),
+            "^status cannot be cleared$",
+        ),
+    ],
+    ids=["name-first", "slug-before-status", "status-before-discovery-source"],
+)
+def test_update_reports_the_first_invalid_field_in_a_fixed_order(
+    db_session: Session,
+    provided_fields: frozenset[str],
+    message: str,
+) -> None:
+    """Name, slug and status are checked in that order, before discovery source."""
+    podcast_id = _existing_podcast(db_session)
+
+    with pytest.raises(ValueError, match=message):
+        update_ops_podcast(
+            db=db_session,
+            podcast_id=podcast_id,
+            payload=UpdateOpsPodcastInputData(
+                provided_fields=provided_fields,
+                name=None,
+                slug=None,
+                status=None,
+                discovery_source="bogus",
+            ),
+        )
+
+
 def test_update_rejects_unknown_discovery_source(db_session: Session) -> None:
     """An unknown discovery source is rejected and the stored source is kept."""
     podcast_id = _existing_podcast(db_session)
@@ -736,3 +776,87 @@ def test_api_create_and_update_reject_unknown_status_with_the_same_body(
     assert_that((created.status_code, updated.status_code)).is_equal_to((422, 422))
     assert_that(_error_body(created)).is_equal_to(_error_body(updated))
     assert_that(created.json()["errors"][0]["loc"]).is_equal_to(["body", "status"])
+
+
+def _create_then_reject(
+    *,
+    db: Session,
+    payload: CreateOpsPodcastInputData,
+) -> NoReturn:
+    """Write a podcast to the session, then fail as an invalid payload would."""
+    db.add(
+        Podcast(
+            name=payload.name,
+            slug=payload.slug,
+            status=payload.status.value,
+        ),
+    )
+    db.flush()
+    raise ValueError("'bogus' is not a valid DiscoverySource")
+
+
+def test_api_create_rolls_back_writes_made_before_a_rejection(
+    client: TestClient,
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rejected create discards what the service flushed before it raised."""
+    enable_ops(client, api_key=_OPS_KEY)
+    monkeypatch.setattr("podex.api.v2.ops.create_ops_podcast", _create_then_reject)
+
+    response = client.post(
+        "/api/v2/ops/podcasts",
+        json=_CREATE_BODY,
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(response.status_code).is_equal_to(422)
+    assert_that(response.json()["detail"]).is_equal_to(
+        "'bogus' is not a valid DiscoverySource",
+    )
+    assert_that(db_session.in_transaction()).is_false()
+    assert_that(_podcast_count(db_session)).is_zero()
+    db_session.rollback()
+    assert_that(_podcast_count(db_session)).is_zero()
+
+
+def test_api_create_does_not_map_an_audit_failure_to_422(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ValueError raised after creation succeeded is not a validation error."""
+    enable_ops(client, api_key=_OPS_KEY)
+
+    def _failing_audit(**_: object) -> NoReturn:
+        """Fail the way an audit write error would."""
+        raise ValueError("audit failure")
+
+    monkeypatch.setattr("podex.api.v2.ops.record_audit_log", _failing_audit)
+
+    with pytest.raises(ValueError, match="^audit failure$"):
+        client.post(
+            "/api/v2/ops/podcasts",
+            json=_CREATE_BODY,
+            headers={"X-Ops-Key": _OPS_KEY},
+        )
+
+
+def test_api_create_does_not_map_other_errors_to_422(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only a ValueError from the service is reported as a 422."""
+    enable_ops(client, api_key=_OPS_KEY)
+
+    def _failing_create(**_: object) -> NoReturn:
+        """Fail with an error that is not a validation error."""
+        raise RuntimeError("Created podcast could not be reloaded")
+
+    monkeypatch.setattr("podex.api.v2.ops.create_ops_podcast", _failing_create)
+
+    with pytest.raises(RuntimeError, match="^Created podcast could not be reloaded$"):
+        client.post(
+            "/api/v2/ops/podcasts",
+            json=_CREATE_BODY,
+            headers={"X-Ops-Key": _OPS_KEY},
+        )
