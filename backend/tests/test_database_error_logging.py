@@ -109,7 +109,7 @@ def test_database_error_log_argument_is_described(
     logged: pytest.LogCaptureFixture,
 ) -> None:
     """A database error passed as a log argument is replaced by its descriptor."""
-    logging.getLogger("podex.api.v2.auth").warning(
+    logging.getLogger("podex.api.v2.account_library").warning(
         "digest_delivery_failed: %s",
         _unique_violation(),
     )
