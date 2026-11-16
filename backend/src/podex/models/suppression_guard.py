@@ -356,7 +356,7 @@ def lock_media_rows(*, session: Session, media_ids: Iterable[int]) -> None:
             select(Media.id)
             .where(Media.id.in_(batch))
             .order_by(Media.id)
-            .with_for_update(key_share=True),
+            .with_for_update(read=True, key_share=True),
         ).all()
         locked.update(batch)
 
