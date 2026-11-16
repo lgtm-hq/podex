@@ -1,8 +1,10 @@
 """Shared podcast management mutation services for ops surfaces."""
 
+import sqlite3
 from dataclasses import dataclass
 
-from sqlalchemy import select
+from psycopg.errors import UniqueViolation
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from podex.models import DiscoverySource, Podcast, PodcastStatus
@@ -10,6 +12,12 @@ from podex.services.ops_podcast_queries import (
     OpsPodcastSummaryData,
     get_ops_podcast_by_id,
 )
+
+SLUG_UNIQUE_INDEX = "ix_podcasts_slug"
+"""Unique index on ``podcasts.slug``, named by migration 0001."""
+
+_SQLITE_SLUG_UNIQUE_MESSAGE = "UNIQUE constraint failed: podcasts.slug"
+"""SQLite's message for a duplicate value in the slug's unique index."""
 
 DISCOVERY_SOURCE_ECHO_LIMIT = 50
 """Most characters of a rejected discovery source echoed in its message.
@@ -239,26 +247,36 @@ def update_ops_podcast(
     return updated_podcast
 
 
-def slug_belongs_to_another_podcast(
-    *,
-    db: Session,
-    slug: str,
-    podcast_id: int,
-) -> bool:
-    """Return whether a podcast other than ``podcast_id`` uses ``slug``.
+def is_slug_conflict(error: IntegrityError) -> bool:
+    """Return whether ``error`` is a duplicate slug and nothing else.
+
+    The decision uses only the driver error the failed statement raised, so
+    it does not depend on rows that may change after the failure:
+
+    - PostgreSQL (psycopg): a ``UniqueViolation`` (SQLSTATE ``23505``) whose
+      constraint is ``SLUG_UNIQUE_INDEX``.
+    - SQLite: an ``IntegrityError`` with extended code
+      ``SQLITE_CONSTRAINT_UNIQUE`` whose message names ``podcasts.slug`` alone.
+
+    Anything else, including another unique index, a check, trigger, foreign
+    key or NOT NULL failure, or an unknown driver, is not a slug conflict.
 
     Args:
-        db: Database session, outside any failed transaction.
-        slug: Slug to look up.
-        podcast_id: Podcast that may keep its own slug.
+        error: Integrity error raised by a podcast flush.
 
     Returns:
-        ``True`` when another podcast holds the slug.
+        ``True`` only for a positively identified slug unique violation.
     """
-    other = db.scalar(
-        select(Podcast.id).where(Podcast.slug == slug, Podcast.id != podcast_id),
-    )
-    return other is not None
+    driver_error = error.orig
+    if isinstance(driver_error, UniqueViolation):
+        return driver_error.diag.constraint_name == SLUG_UNIQUE_INDEX
+    if isinstance(driver_error, sqlite3.IntegrityError):
+        return (
+            getattr(driver_error, "sqlite_errorname", None)
+            == "SQLITE_CONSTRAINT_UNIQUE"
+            and str(driver_error) == _SQLITE_SLUG_UNIQUE_MESSAGE
+        )
+    return False
 
 
 def archive_ops_podcast(

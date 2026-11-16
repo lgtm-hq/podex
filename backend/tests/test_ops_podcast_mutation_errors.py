@@ -4,7 +4,11 @@ Covers the slug conflict on update, the request length limits, text the
 database cannot store, and which service errors are reported as 422.
 """
 
+from __future__ import annotations
+
 import json
+from collections.abc import Callable, Iterator
+from pathlib import Path
 from typing import Any, NoReturn
 
 import pytest
@@ -12,11 +16,15 @@ from assertpy import assert_that
 from fastapi.testclient import TestClient
 from httpx2 import Response
 from pydantic import BaseModel
-from sqlalchemy import func, select, text
+from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
-from podex.models import AuditLog, Episode, Podcast, PodcastStatus
+from podex.api.deps import get_app_settings
+from podex.config import RateLimitSettings, Settings
+from podex.database import enable_sqlite_foreign_keys, get_db
+from podex.main import create_app
+from podex.models import AuditLog, Base, Episode, Podcast, PodcastStatus
 from podex.schemas.ops import (
     OpsPodcastCreateRequest,
     OpsPodcastSourcesInput,
@@ -28,7 +36,6 @@ from podex.services.ops_podcast_commands import (
     OpsPodcastValidationError,
     UpdateOpsPodcastInputData,
     create_ops_podcast,
-    slug_belongs_to_another_podcast,
     update_ops_podcast,
 )
 from tests.conftest import enable_ops
@@ -188,8 +195,10 @@ def _update_then_violate_foreign_key(
         {"name": "Renamed Show"},
         {"name": "Renamed Show", "slug": "first-show"},
         {"name": "Renamed Show", "slug": "unused-slug"},
+        {"name": "Renamed Show", "slug": "second-show"},
+        {"name": "Renamed Show", "slug": "SECOND-SHOW"},
     ],
-    ids=["no-slug", "own-slug", "free-slug"],
+    ids=["no-slug", "own-slug", "free-slug", "taken-slug", "taken-slug-other-case"],
 )
 def test_api_update_does_not_report_other_integrity_errors_as_a_conflict(
     client: TestClient,
@@ -212,25 +221,6 @@ def test_api_update_does_not_report_other_integrity_errors_as_a_conflict(
 
     assert_that(_rows(db_session)).is_equal_to(before)
     assert_that(_audit_count(db_session)).is_zero()
-
-
-def test_slug_belongs_to_another_podcast(db_session: Session) -> None:
-    """Only a different podcast holding the exact slug counts."""
-    first_id = _add_podcast(db_session, slug="first-show")
-    second_id = _add_podcast(db_session, slug="second-show")
-
-    def taken(slug: str, podcast_id: int) -> bool:
-        """Return whether ``slug`` is held by a podcast other than ``podcast_id``."""
-        result: bool = slug_belongs_to_another_podcast(
-            db=db_session,
-            slug=slug,
-            podcast_id=podcast_id,
-        )
-        return result
-
-    assert_that(taken("second-show", first_id)).is_true()
-    assert_that(taken("second-show", second_id)).is_false()
-    assert_that(taken("unused-slug", first_id)).is_false()
 
 
 # Length limits
@@ -549,3 +539,102 @@ def test_api_update_rolls_back_writes_made_before_a_rejection(
     assert_that(response.json()["detail"]).is_equal_to("slug cannot be cleared")
     assert_that(db_session.in_transaction()).is_false()
     assert_that(_rows(db_session)).is_equal_to(before)
+
+
+def _create_write_then_fail(
+    *,
+    db: Session,
+    payload: CreateOpsPodcastInputData,
+) -> NoReturn:
+    """Flush a new podcast, then fail with an internal ``ValueError``."""
+    db.add(Podcast(name=payload.name, slug=payload.slug))
+    db.flush()
+    raise ValueError("internal detail")
+
+
+def _update_write_then_fail(
+    *,
+    db: Session,
+    podcast_id: int,
+    payload: UpdateOpsPodcastInputData,
+) -> NoReturn:
+    """Flush a change to the podcast, then fail with an internal ``ValueError``."""
+    podcast = db.get(Podcast, podcast_id)
+    if podcast is None:
+        raise AssertionError("expected the podcast to exist")
+    podcast.name = payload.name or podcast.name
+    db.flush()
+    raise ValueError("internal detail")
+
+
+@pytest.fixture(name="file_sessions")
+def file_sessions_fixture(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
+    """Provide sessions on a file database that separate connections can read."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'ops-podcasts.db'}")
+    enable_sqlite_foreign_keys(engine)
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, autoflush=False)
+    finally:
+        engine.dispose()
+
+
+def _per_request_client(sessions: sessionmaker[Session]) -> TestClient:
+    """Return a client that opens and closes one session per request, as in use."""
+    app = create_app(Settings(rate_limit=RateLimitSettings(enabled=False)))
+
+    def per_request_session() -> Iterator[Session]:
+        """Yield a new session and close it after the request."""
+        db = sessions()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = per_request_session
+    app.dependency_overrides[get_app_settings] = lambda: Settings(
+        ops_api_key=_OPS_KEY,
+    )
+    return TestClient(app, raise_server_exceptions=False)
+
+
+@pytest.mark.parametrize(
+    "route",
+    [
+        (
+            "podex.api.v2.ops.create_ops_podcast",
+            _create_write_then_fail,
+            "POST",
+            _PODCASTS,
+            {"name": "New Show", "slug": "new-show"},
+        ),
+        (
+            "podex.api.v2.ops.update_ops_podcast",
+            _update_write_then_fail,
+            "PATCH",
+            f"{_PODCASTS}/1",
+            {"name": "Renamed Show"},
+        ),
+    ],
+    ids=["create", "update"],
+)
+def test_api_internal_value_error_after_a_write_answers_500_and_keeps_nothing(
+    file_sessions: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+    route: tuple[str, Callable[..., NoReturn], str, str, dict[str, Any]],
+) -> None:
+    """A service that flushes, then fails internally, leaves no committed change."""
+    target, stand_in, method, path, body = route
+    with file_sessions() as db:
+        _add_podcast(db, slug="first-show")
+        before = _rows(db)
+    monkeypatch.setattr(target, stand_in)
+
+    with _per_request_client(file_sessions) as client:
+        response = client.request(method, path, json=body, headers=_HEADERS)
+
+    assert_that(response.status_code).is_equal_to(500)
+    assert_that(response.text).does_not_contain("internal detail")
+    with file_sessions() as fresh:
+        assert_that(_rows(fresh)).is_equal_to(before)
+        assert_that(_audit_count(fresh)).is_zero()

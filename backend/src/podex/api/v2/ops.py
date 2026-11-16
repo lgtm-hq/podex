@@ -52,7 +52,7 @@ from podex.services.ops_podcast_commands import (
     UpdateOpsPodcastInputData,
     archive_ops_podcast,
     create_ops_podcast,
-    slug_belongs_to_another_podcast,
+    is_slug_conflict,
     update_ops_podcast,
 )
 from podex.services.ops_podcast_queries import get_ops_podcast_by_id, list_ops_podcasts
@@ -269,13 +269,9 @@ def update_ops_podcast_endpoint(
         raise HTTPException(status_code=422, detail=str(error)) from error
     except IntegrityError as error:
         db.rollback()
-        # Only a slug held by another podcast is a conflict the operator can
+        # Only the slug's unique violation is a conflict the operator can
         # resolve; any other constraint failure stays an internal error.
-        if payload.slug is None or not slug_belongs_to_another_podcast(
-            db=db,
-            slug=payload.slug,
-            podcast_id=podcast_id,
-        ):
+        if not is_slug_conflict(error):
             raise
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
