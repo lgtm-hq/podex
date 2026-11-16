@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.30] - 2026-11-16
+
+### Fixed
+
+- **scheduler**: log start, ticks and stop at the default level in the standalone runner
+  (#833) (aa74a36)
+
 ## [0.41.29] - 2026-11-16
 
 ### Changed
