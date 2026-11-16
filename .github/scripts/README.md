@@ -341,6 +341,11 @@ workflow can run the notifier at once, so two issues for one workflow key are
 possible. The reusable has no `concurrency` of its own; the fix belongs in the
 reusable notifier.
 
+Code-scanning uploads (`codeql`, and the image scan in `docker-ci`) for two main
+commits can finish out of order. Each upload names its commit, but which one
+GitHub treats as current for `main` when an older commit's upload arrives last
+is not established; alert state may lag one commit until the next push.
+
 ### Post-merge check
 
 A pull request cannot show two pushes to `main` both completing. After merge,

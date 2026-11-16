@@ -50,6 +50,11 @@ replays them through the queueing rule.
 - The pinned main failure notifier was serialized by the shared `main` group.
   Two failing commits of one workflow can now run it at once and open two issues
   for one workflow key. The fix belongs in the reusable notifier.
+- Code-scanning uploads for two main commits can now finish out of order. Each
+  upload names the commit it analysed, but which upload GitHub treats as the
+  current state of `main` when an older commit's analysis arrives last is not
+  established. If it is the last to arrive, alert state can lag one commit
+  until the next push.
 - A burst of merges runs that many validation runs, and that many polling gates,
   in parallel instead of at most two per workflow: about 29 to 33 run-minutes
   per commit across the nine workflows, so N overlapping merges add roughly
