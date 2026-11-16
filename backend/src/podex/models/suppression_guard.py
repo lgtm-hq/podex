@@ -293,16 +293,19 @@ def _carries_derived_text(transcript: Transcript) -> bool:
 
 
 def _transcript_rule(pending: _Pending) -> Iterator[_Requirement]:
-    """Derived transcript text may not be set on or moved to a suppressed episode."""
+    """Derived transcript text may not be set on or moved to a suppressed episode.
+
+    Clearing one derived field while the other keeps its text only removes
+    content, so it is not checked.
+    """
     transcript: Transcript = pending.row
     if not _carries_derived_text(transcript):
         return
-    if pending.inserted or _changed(
-        transcript,
-        *_DERIVED_TRANSCRIPT_TEXT,
-        "episode_id",
-        "episode",
-    ):
+    sets_text = any(
+        _changed(transcript, name) and getattr(transcript, name) is not None
+        for name in _DERIVED_TRANSCRIPT_TEXT
+    )
+    if pending.inserted or sets_text or _changed(transcript, "episode_id", "episode"):
         yield from _episode_derivative_rule(pending)
 
 

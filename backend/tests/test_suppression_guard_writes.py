@@ -366,6 +366,24 @@ def _clear_transcript_text(world: _World) -> None:
     stored.cleaned_text = None
 
 
+def _clear_one_transcript_field(world: _World) -> None:
+    transcript = _committed(
+        world,
+        _transcript(world.open, cleaned_text="x", digest_text="y"),
+    )
+    if not isinstance(transcript, Transcript):
+        raise TypeError(type(transcript))
+    world.db.query(Transcript).filter(Transcript.id == transcript.id).update(
+        {Transcript.episode_id: world.suppressed},
+    )
+    world.db.commit()
+    world.db.expire_all()
+    stored = world.db.get(Transcript, transcript.id)
+    if stored is None:
+        raise AssertionError(transcript.id)
+    stored.digest_text = None
+
+
 def _no_seed(_world: _World) -> None:
     """Seed nothing before the takedown."""
 
@@ -395,6 +413,13 @@ def _transcript_text_is_gone(world: _World) -> None:
     )
 
 
+def _only_the_digest_is_gone(world: _World) -> None:
+    transcript = world.db.query(Transcript).one()
+    assert_that(
+        (transcript.episode_id, transcript.cleaned_text, transcript.digest_text),
+    ).is_equal_to((world.suppressed, "x", None))
+
+
 _WorldStep = Callable[[_World], None]
 _ALLOWED: dict[str, tuple[_WorldStep, _WorldStep, _WorldStep]] = {
     "triple-evidence-cleared": (
@@ -411,6 +436,11 @@ _ALLOWED: dict[str, tuple[_WorldStep, _WorldStep, _WorldStep]] = {
         _no_seed,
         _clear_transcript_text,
         _transcript_text_is_gone,
+    ),
+    "transcript-one-field-cleared": (
+        _no_seed,
+        _clear_one_transcript_field,
+        _only_the_digest_is_gone,
     ),
 }
 
