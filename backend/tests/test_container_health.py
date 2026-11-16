@@ -1,6 +1,7 @@
 """Exercise the container probe's role decision and API liveness check."""
 
 import runpy
+from functools import partial
 from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -81,9 +82,8 @@ def _assert_api_quickly(pid1: bytes, root: Path, http: MagicMock) -> None:
     _process_table(ordinary, {1: _cmdline(API)})
     _assert_api(pid1, probed, http)
     assert_fast(
-        lambda: healthcheck.detected_role(probed),
-        baseline=lambda: healthcheck.detected_role(ordinary),
-        limit=1.0,
+        lambda: partial(healthcheck.detected_role, probed),
+        lambda: partial(healthcheck.detected_role, ordinary),
     )
 
 
@@ -292,11 +292,19 @@ def test_many_launchers_are_bounded(tmp_path: Path, http: MagicMock) -> None:
     _assert_api_quickly(_cmdline(["env"] * 1100 + SCHEDULER), tmp_path, http)
 
 
-def test_huge_command_line_is_bounded(tmp_path: Path, http: MagicMock) -> None:
+def test_huge_command_line_is_bounded(
+    tmp_path: Path, http: MagicMock, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A very long command line is not parsed and keeps the HTTP check."""
+    parse = MagicMock(wraps=healthcheck.command_runs_scheduler)
+    monkeypatch.setattr(healthcheck, "command_runs_scheduler", parse)
+
     _assert_api_quickly(
-        _cmdline(["env"] + ["-i"] * 100_000 + SCHEDULER), tmp_path, http
+        _cmdline(["env"] + ["-i"] * 1_000_000 + SCHEDULER), tmp_path, http
     )
+    # Only the baseline's ordinary command line is ever parsed.
+    parsed = {len(call.args[0]) for call in parse.call_args_list}
+    assert_that(parsed).is_equal_to({len(API)})
 
 
 def test_limits_bound_the_supported_forms(tmp_path: Path, http: MagicMock) -> None:

@@ -3,6 +3,7 @@
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import partial
 from secrets import token_hex
 from typing import Any
 
@@ -96,7 +97,20 @@ def log_sdk_request(secret: str) -> None:
 
 
 RECORD_LIMIT_SECONDS = 0.05
-"""Longest a bounded record may take to log, on its fastest run."""
+"""Longest a bounded record may take to log, on its fastest run.
+
+A backstop for a regression that slows the baseline record as well, which
+the relative bound alone would not see.
+"""
+
+_ORDINARY_RECORD = "ordinary record"
+"""The start of the baseline's message, which is padded with spaces to the
+measured message's length: no known form, so the boundary withholds it."""
+
+
+def _fresh(text: str) -> str:
+    """Return a new string equal to ``text``, its hash not computed yet."""
+    return text[:1] + text[1:]
 
 
 def assert_quick_record(
@@ -107,9 +121,15 @@ def assert_quick_record(
 ) -> None:
     """Assert that logging one record costs about as much as an ordinary one.
 
-    The record is logged several times (see :func:`assert_fast`); its fastest
-    run must stay under :data:`RECORD_LIMIT_SECONDS` and within a fixed
-    multiple of an ordinary record logged by the same logger at ``level``.
+    The record is logged several times (see :func:`assert_fast`), each time
+    with a new copy of ``message``, so no run reuses a hash the interpreter
+    cached in an earlier one. The baseline is a record that is never parsed:
+    a message of the same length in no known form, which the boundary
+    withholds whole, so hashing the message counts on both sides. It has no
+    arguments: work that grows with the arguments is what the bound is for,
+    and a baseline that shared them would slow down with the regression it
+    should expose. The fastest run must stay within the default number of
+    baselines and under :data:`RECORD_LIMIT_SECONDS`.
 
     Args:
         logger: The library logger the record is sent to.
@@ -117,9 +137,10 @@ def assert_quick_record(
         message: The record's message or format string.
         *arguments: The record's arguments.
     """
+    ordinary = _ORDINARY_RECORD.ljust(len(message))
     assert_fast(
-        lambda: logger.log(level, message, *arguments),
-        baseline=lambda: logger.log(level, "ordinary record %s", "value"),
+        lambda: partial(logger.log, level, _fresh(message), *arguments),
+        lambda: partial(logger.log, level, _fresh(ordinary)),
         limit=RECORD_LIMIT_SECONDS,
     )
 

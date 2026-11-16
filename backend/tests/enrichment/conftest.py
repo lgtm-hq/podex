@@ -1,6 +1,6 @@
 """Shared helpers for enrichment tests."""
 
-import time
+import threading
 from typing import Any
 
 import httpx
@@ -79,18 +79,18 @@ class _RaisingProvider:
         """No-op close."""
 
 
-class _SlowProvider:
-    """Provider double that sleeps past the aggregate deadline."""
+class _BlockedProvider:
+    """Provider double that blocks until the test releases it."""
 
-    def __init__(self, result: EnrichmentResult, delay: float) -> None:
+    def __init__(self, result: EnrichmentResult, release: threading.Event) -> None:
         self.result = result
-        self.delay = delay
+        self.release = release
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
-        """Sleep, then return the canned result."""
+        """Block until released, then return the canned result."""
 
         del media
-        time.sleep(self.delay)
+        self.release.wait()
         return self.result
 
     def close(self) -> None:

@@ -1,10 +1,19 @@
 """Tests for academic enrichment providers and aggregation."""
 
+import threading
+from collections.abc import Iterable
+from concurrent.futures import FIRST_COMPLETED, Future, wait
+
 import httpx
+import pytest
 from assertpy import assert_that
 
 from podex.models import Media, MediaType
-from podex.services.academic_enrichment import AcademicEnricher
+from podex.services import academic_enrichment
+from podex.services.academic_enrichment import (
+    DEFAULT_AGGREGATE_TIMEOUT_SECONDS,
+    AcademicEnricher,
+)
 from podex.services.enrichment import (
     CrossRefProvider,
     OMDBProvider,
@@ -13,10 +22,10 @@ from podex.services.enrichment import (
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from tests.enrichment.conftest import (
     _academic_with,
+    _BlockedProvider,
     _CountingLimiter,
     _media,
     _RaisingProvider,
-    _SlowProvider,
     _StubProvider,
     _swap_client,
     crossref_sleep_work,
@@ -24,6 +33,9 @@ from tests.enrichment.conftest import (
     require_result,
     semantic_sleep_metadata,
 )
+
+_ProviderFutures = set[Future[EnrichmentResult | None]]
+"""Futures of provider lookups, as the fan-out's ``wait`` returns them."""
 
 
 def test_academic_enricher_degrades_gracefully() -> None:
@@ -490,8 +502,10 @@ def test_academic_fanout_isolates_provider_failures() -> None:
     assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
 
 
-def test_academic_fanout_drops_slow_provider() -> None:
-    """A provider sleeping past the aggregate deadline is dropped."""
+def test_academic_fanout_drops_slow_provider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider still running at the aggregate deadline is dropped."""
     fast = EnrichmentResult(
         source=EnrichmentSource.CROSSREF,
         description="A sleep study.",
@@ -506,20 +520,35 @@ def test_academic_fanout_drops_slow_provider() -> None:
         metadata={"title": "Sleep study"},
         confidence=0.95,
     )
-    # The deadline leaves the instant provider half a second to be scheduled
-    # on a busy machine, and ends well before the slow provider can finish.
+    release = threading.Event()
+    submitted: list[Future[EnrichmentResult | None]] = []
+    timeouts: list[float | None] = []
+
+    def wait_until_first_completes(
+        futures: Iterable[Future[EnrichmentResult | None]],
+        timeout: float | None = None,
+    ) -> tuple[_ProviderFutures, _ProviderFutures]:
+        """Stand in for the deadline: return once the instant provider is done."""
+        submitted.extend(futures)
+        timeouts.append(timeout)
+        return wait(submitted, return_when=FIRST_COMPLETED)
+
+    monkeypatch.setattr(academic_enrichment, "wait", wait_until_first_completes)
     enricher = _academic_with(
         {
             EnrichmentSource.CROSSREF: _StubProvider(fast),
-            EnrichmentSource.SEMANTIC_SCHOLAR: _SlowProvider(slow, delay=2.0),
+            EnrichmentSource.SEMANTIC_SCHOLAR: _BlockedProvider(slow, release),
         },
-        aggregate_timeout_seconds=0.5,
     )
+    try:
+        result = enricher.enrich_with_verification(
+            _media("Sleep study", MediaType.STUDY),
+        )
+    finally:
+        release.set()
+        wait(submitted)
 
-    result = enricher.enrich_with_verification(
-        _media("Sleep study", MediaType.STUDY),
-    )
-
+    assert_that(timeouts).is_equal_to([DEFAULT_AGGREGATE_TIMEOUT_SECONDS])
     result = require_result(result)
     assert_that(result.verified_by).is_equal_to([EnrichmentSource.CROSSREF])
 
