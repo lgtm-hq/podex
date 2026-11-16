@@ -497,6 +497,46 @@ def test_many_long_allowlisted_headers_are_bounded(
     assert_that(message).does_not_contain("v" * 200)
 
 
+def test_huge_integer_header_values_are_withheld_quickly(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Integer header values of 100,001 digits are measured without text."""
+    headers = {
+        "content-length": 10**100_000,
+        "x-ratelimit-remaining": -(10**100_000),
+    }
+    sdk = logging.getLogger("botocore.parsers")
+    with debug_logging(caplog):
+        assert_quick_record(sdk, logging.DEBUG, "Response headers: %r", headers)
+
+    assert_that(caplog.records[-1].getMessage()).is_equal_to(
+        "Response headers: {'content-length': '[withheld]', "
+        "'x-ratelimit-remaining': '[withheld]'}",
+    )
+
+
+_LARGE_HEADER_BYTES = 32_000_000
+"""A bytes header value whose decoding alone costs far more than a record.
+
+Measured when this was set: the record took about 2 baselines with the
+length checked first, and 80 to 90 with the value decoded first.
+"""
+
+
+def test_large_bytes_header_value_is_withheld_before_decoding(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A bytes header value is measured before it is decoded, so it is cheap."""
+    headers = {"content-type": b"a" * _LARGE_HEADER_BYTES}
+    sdk = logging.getLogger("botocore.parsers")
+    with debug_logging(caplog):
+        assert_quick_record(sdk, logging.DEBUG, "Response headers: %r", headers)
+
+    assert_that(caplog.records[-1].getMessage()).is_equal_to(
+        "Response headers: {'content-type': '[withheld]'}",
+    )
+
+
 def test_header_names_are_printed_only_from_the_allowlist(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

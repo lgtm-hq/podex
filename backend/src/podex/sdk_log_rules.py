@@ -167,7 +167,7 @@ _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _WORD_SPLIT_RE = re.compile(r"[\s.\-]+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 _SAFE_PREFIX_NAME_RE = re.compile(r"[a-z0-9\-]{1,64}")
-_HEADER_VALUE_RE = re.compile(r"[A-Za-z0-9 _.:;,=/+*#()\-]{0,128}")
+_HEADER_VALUE_RE = re.compile(r"[A-Za-z0-9 _.:;,=/+*#()\-]*")
 _QUERY_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 _QUERY_VALUE_RE = re.compile(r"[A-Za-z0-9_.\-]{0,64}")
 _HOST_RE = re.compile(r"[A-Za-z0-9.\-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\]")
@@ -175,7 +175,8 @@ _PATH_RE = re.compile(r"/?[A-Za-z0-9._~/\-]{0,512}")
 _IDENTIFIER_RE = re.compile(
     r"[A-Za-z_][A-Za-z0-9_]{0,127}(?:\.[A-Za-z_][A-Za-z0-9_]{0,127}){0,8}",
 )
-_NUMBER_TEXT_RE = re.compile(r"\d{1,12}(?:\.\d{1,6})?")
+_NUMBER_TEXT_RE = re.compile(r"[0-9]{1,12}(?:\.[0-9]{1,6})?")
+_ASCII_SPACE = "".join(char for char in map(chr, range(128)) if char.isspace())
 _SCHEMES = frozenset({"http", "https"})
 _DESCRIBED_TYPES = frozenset({str, bytes, bytearray, dict, list, tuple})
 
@@ -313,25 +314,40 @@ def safe_header_name(name: object) -> str | None:
 def header_value(value: object) -> str:
     """Return an allowlisted header's value if it validates, else withheld.
 
+    :data:`MAX_HEADER_VALUE` is the only bound: text and bytes are measured
+    before they are decoded or matched, and an integer by magnitude, before
+    it is converted to text.
+
     Args:
-        value: The value, as text, bytes or a number.
+        value: The value, as text, bytes or an integer.
 
     Returns:
         str: The value, or ``[withheld]``.
     """
-    if exact_bytes(value):
-        if len(value) > MAX_HEADER_VALUE:
-            return WITHHELD
-        value = value.decode("latin-1")
     if exact_int(value):
-        return str(int(value))
-    if (
-        exact_str(value)
-        and len(value) <= MAX_HEADER_VALUE
-        and _HEADER_VALUE_RE.fullmatch(value)
-    ):
-        return str(value)
-    return WITHHELD
+        return str(int(value)) if _int_text_fits(value) else WITHHELD
+    raw: str | bytes
+    if exact_bytes(value) or exact_str(value):
+        raw = value
+    else:
+        return WITHHELD
+    if len(raw) > MAX_HEADER_VALUE:
+        return WITHHELD
+    text = raw.decode("latin-1") if isinstance(raw, bytes) else raw
+    return text if _HEADER_VALUE_RE.fullmatch(text) else WITHHELD
+
+
+def _int_text_fits(value: int) -> bool:
+    """Return whether ``str(value)`` is at most :data:`MAX_HEADER_VALUE` long.
+
+    Decided by comparing with powers of ten, never by building the text, so
+    an integer of any size is measured cheaply and never meets the
+    interpreter's limit on converting integers to text. A minus sign takes
+    one character of the bound.
+    """
+    digits = MAX_HEADER_VALUE - 1 if value < 0 else MAX_HEADER_VALUE
+    bound: int = 10**digits
+    return -bound < value < bound
 
 
 def _size(value: object) -> int:
@@ -492,8 +508,8 @@ def number(value: object) -> int | float | None:
     if exact_float(value):
         return float(value)
     if exact_str(value) and len(value) <= 32:
-        text = value.strip()
-        if _NUMBER_TEXT_RE.fullmatch(text) and text.isascii():
+        text = value.strip(_ASCII_SPACE)
+        if _NUMBER_TEXT_RE.fullmatch(text):
             return float(text) if "." in text else int(text)
     return None
 

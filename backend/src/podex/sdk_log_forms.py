@@ -58,7 +58,7 @@ _MAX_NAMES = 16
 _NAME_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
 _HOST_RE = re.compile(r"[A-Za-z0-9.\-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\]")
 _CLIENT_RE = re.compile(r"[0-9A-Fa-f.:\[\]]{1,64}")
-_VERSION_RE = re.compile(r"(?:HTTP/)?\d(?:\.\d)?")
+_VERSION_RE = re.compile(r"(?:HTTP/)?[0-9](?:\.[0-9])?")
 _REQUEST_ID_RE = re.compile(r"[A-Za-z0-9_\-]{1,128}")
 _ROLE_RE = re.compile(r"[A-Za-z0-9+=,.@_\-]{1,64}")
 _ENDPOINT_RE = re.compile(r"[a-z0-9.\-]{1,128}")
@@ -66,15 +66,15 @@ _PERIOD_RE = re.compile(r"mandatory|advisory")
 _TIMEZONE_RE = re.compile(r"[A-Za-z0-9_/+\-]{1,64}")
 _CLASS_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_.]{0,128}")
 _ALGORITHM_RE = re.compile(r"[A-Z0-9\-]{1,32}")
-_TIMESTAMP_RE = re.compile(r"\d{8}T\d{6}Z")
-_SCOPE_RE = re.compile(r"\d{8}/[a-z0-9\-]{1,32}/[a-z0-9\-]{1,32}/aws4_request")
+_TIMESTAMP_RE = re.compile(r"[0-9]{8}T[0-9]{6}Z")
+_SCOPE_RE = re.compile(r"[0-9]{8}/[a-z0-9\-]{1,32}/[a-z0-9\-]{1,32}/aws4_request")
 _HASH_RE = re.compile(r"[0-9a-f]{64}|UNSIGNED-PAYLOAD|STREAMING-[A-Z0-9\-]{1,64}")
 _HEADER_LINE_RE = re.compile(r"([a-z0-9\-]{1,128}):([^\n]{0,1024})")
 _PLACEHOLDER_RE = re.compile(r"%(?:\.\d+)?[sdifr]|%%")
 _SPOTIFY_ERROR_RE = re.compile(
     r"HTTP Error for ([A-Z]{1,16}) to ([^ ]{1,2048}) with Params: ",
 )
-_SPOTIFY_STATUS_RE = re.compile(r" returned (\d{3}) due to ")
+_SPOTIFY_STATUS_RE = re.compile(r" returned ([0-9]{3}) due to ")
 _SPOTIFY_REQUEST_RE = re.compile(
     r"Sending ([A-Z]{1,16}) to ([^ ]{1,2048}) with Params: "
 )
@@ -105,9 +105,9 @@ _TRACE_STEPS = frozenset(
 _TRACE_PHASES = frozenset({"started", "complete", "failed"})
 _TRACE_EXCEPTION_RE = re.compile(r"exception=([A-Za-z_][A-Za-z0-9_.]{0,128})\(")
 _TRACE_HOST_RE = re.compile(
-    r"host='([A-Za-z0-9.\-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])' port=(\d{1,5})(?: |$)",
+    r"host='([A-Za-z0-9.\-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\])' port=([0-9]{1,5})(?: |$)",
 )
-_TRACE_STATUS_RE = re.compile(r"return_value=\(b'(HTTP/[0-9.]{1,5})', (\d{3}), ")
+_TRACE_STATUS_RE = re.compile(r"return_value=\(b'(HTTP/[0-9.]{1,5})', ([0-9]{3}), ")
 _TRACE_DETAIL = 320
 
 

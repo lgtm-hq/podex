@@ -96,7 +96,7 @@ TRACEBACK_WITHHELD = "[traceback text withheld]"
 _STACK_SCAN = 65_536
 _NUMERIC_PLACEHOLDER_RE = re.compile(r"%(?:\.\d+)?[dif]")
 _STACK_FRAME_RE = re.compile(
-    r'^  File "[^"\n]{1,1024}", line \d{1,9}, in [^\n]{1,256}$',
+    r'^  File "[^"\n]{1,1024}", line [0-9]{1,9}, in [^\n]{1,256}$',
     re.MULTILINE,
 )
 
