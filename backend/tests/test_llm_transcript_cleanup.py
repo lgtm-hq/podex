@@ -251,3 +251,167 @@ def test_non_text_cleaned_value_is_returned_as_text() -> None:
 
     assert_that(result.cleaned_text).is_instance_of(str)
     assert_that(result.cleaned_text).is_equal_to("12345")
+
+
+def test_text_after_the_limit_is_not_lost() -> None:
+    """Reproduction: a marker placed after ``max_chars`` survives cleanup."""
+    long_text = "a" * 150 + "TAIL-MARKER" + "b" * 50
+
+    result, _model = _clean(json.dumps({"corrections": []}), long_text, max_chars=150)
+
+    assert_that(result.cleaned_text).is_equal_to(long_text)
+    assert_that(result.cleaned_text).contains("TAIL-MARKER")
+
+
+_LIMIT = 150
+_CLEANED_HEAD = "HEAD-CLEANED-BY-MODEL"
+
+
+@pytest.mark.parametrize(
+    ("text", "head_chars"),
+    [
+        ("x" * (_LIMIT - 1), _LIMIT - 1),
+        ("x" * _LIMIT, _LIMIT),
+        ("x" * _LIMIT + "Y", _LIMIT),
+        ("a" * _LIMIT + "TAIL-MARKER" + "b" * (3 * _LIMIT - 11), _LIMIT),
+    ],
+    ids=["under-limit", "at-limit", "one-over", "four-times-limit"],
+)
+def test_cleaned_head_is_followed_by_the_uncleaned_tail(
+    text: str,
+    head_chars: int,
+) -> None:
+    """The model's head comes first, then every character after the cut."""
+    result, model = _clean(
+        json.dumps({"cleaned_text": _CLEANED_HEAD, "corrections": []}),
+        text,
+        max_chars=_LIMIT,
+    )
+
+    tail = text[head_chars:]
+    assert_that(model.transcripts_sent()).is_equal_to([text[:head_chars]])
+    assert_that(result.cleaned_text).is_equal_to(_CLEANED_HEAD + tail)
+    assert_that(result.uncleaned_chars).is_equal_to(len(tail))
+    assert_that(result.partial).is_equal_to(bool(tail))
+    assert_that(result.success).is_true()
+    assert_that(result.fully_cleaned).is_equal_to(not tail)
+
+
+def test_marker_after_the_cut_is_returned_after_the_cleaned_head() -> None:
+    """A marker beyond the limit appears exactly once, after the model's head."""
+    long_text = "a" * _LIMIT + "TAIL-MARKER" + "b" * 50
+
+    result, _model = _clean(
+        json.dumps({"cleaned_text": _CLEANED_HEAD}),
+        long_text,
+        max_chars=_LIMIT,
+    )
+
+    assert_that(result.cleaned_text).starts_with(_CLEANED_HEAD)
+    assert_that(result.cleaned_text.count("TAIL-MARKER")).is_equal_to(1)
+    assert_that(result.cleaned_text).ends_with("TAIL-MARKER" + "b" * 50)
+
+
+@pytest.mark.parametrize(
+    ("text", "head"),
+    [
+        ("a" * 145 + " " + "b" * 20, "a" * 145),
+        ("a" * 140 + "\n" + "b" * 30, "a" * 140),
+        ("a" * _LIMIT + " " + "b" * 20, "a" * _LIMIT),
+    ],
+    ids=["mid-word-after-space", "mid-word-after-line-break", "cut-on-space"],
+)
+def test_cut_moves_back_to_whitespace_so_no_word_is_split(text: str, head: str) -> None:
+    """The tail starts at the last whitespace at or before the limit."""
+    result, model = _clean(json.dumps({"corrections": []}), text, max_chars=_LIMIT)
+
+    assert_that(model.transcripts_sent()).is_equal_to([head])
+    assert_that(result.cleaned_text).is_equal_to(text)
+    assert_that(result.uncleaned_chars).is_equal_to(len(text) - len(head))
+    assert_that(text[len(head)].isspace()).is_true()
+
+
+def test_reply_without_cleaned_text_returns_the_whole_long_input() -> None:
+    """The fallback keeps the unchanged head and the uncleaned tail."""
+    long_text = "a" * _LIMIT + "TAIL-MARKER" + "b" * 50
+
+    result, _model = _clean(json.dumps({"corrections": []}), long_text, max_chars=150)
+
+    assert_that(result.cleaned_text).is_equal_to(long_text)
+    assert_that(result.success).is_true()
+    assert_that(result.partial).is_true()
+    assert_that(result.fully_cleaned).is_false()
+    assert_that(result.uncleaned_chars).is_equal_to(61)
+
+
+@pytest.mark.parametrize(
+    ("reply", "errors"),
+    [("", []), ("not json", [_INVALID_JSON])],
+    ids=["empty-reply", "invalid-json"],
+)
+def test_long_input_without_usable_reply_is_returned_whole_and_partial(
+    reply: str,
+    errors: list[str],
+) -> None:
+    """Without a usable reply the original text is kept and the cut reported."""
+    long_text = "a" * _LIMIT + "TAIL-MARKER" + "b" * 50
+
+    result, _model = _clean(reply, long_text, max_chars=_LIMIT)
+
+    assert_that(result.cleaned_text).is_equal_to(long_text)
+    assert_that(result.errors).is_equal_to(errors)
+    assert_that(result.partial).is_true()
+    assert_that(result.uncleaned_chars).is_equal_to(61)
+    assert_that(result.fully_cleaned).is_false()
+
+
+def test_request_failure_on_long_input_keeps_the_whole_text() -> None:
+    """A provider error returns the original input and reports no success."""
+    long_text = "a" * _LIMIT + "TAIL-MARKER" + "b" * 50
+
+    def unavailable(_request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(503, json={"type": "error"})
+
+    with httpx2.Client(transport=httpx2.MockTransport(unavailable)) as http_client:
+        client: anthropic.Anthropic = anthropic.Anthropic(
+            api_key=f"synthetic-{token_hex(4)}",
+            http_client=http_client,
+            max_retries=0,
+        )
+        result = TranscriptCleaner(client=client).cleanup_transcript(
+            long_text,
+            max_chars=_LIMIT,
+        )
+
+    assert_that(result.cleaned_text).is_equal_to(long_text)
+    assert_that(result.errors).is_length(1)
+    assert_that(result.success).is_false()
+    assert_that(result.partial).is_true()
+    assert_that(result.fully_cleaned).is_false()
+
+
+def test_cut_at_whitespace_is_logged_with_the_head_length(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The existing warning reports the characters actually sent."""
+    caplog.set_level(logging.WARNING, logger=_LOGGER)
+
+    _clean(
+        json.dumps({"corrections": []}),
+        "a" * 145 + " " + "b" * 20,
+        max_chars=_LIMIT,
+    )
+
+    assert_that(
+        [(r.levelno, r.getMessage()) for r in caplog.records if r.name == _LOGGER],
+    ).is_equal_to([(logging.WARNING, "Transcript truncated from 166 to 145 chars")])
+
+
+def test_short_transcript_is_not_partial() -> None:
+    """Text skipped for being short is returned whole and fully covered."""
+    result, model = _clean(json.dumps({"cleaned_text": "y"}), "tiny", max_chars=2)
+
+    assert_that(model.sent).is_empty()
+    assert_that(result.cleaned_text).is_equal_to("tiny")
+    assert_that(result.uncleaned_chars).is_zero()
+    assert_that(result.fully_cleaned).is_true()

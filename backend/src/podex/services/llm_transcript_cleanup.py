@@ -42,11 +42,25 @@ class CleanupCorrection:
 
 @dataclass
 class CleanupResult:
-    """Outcome of one cleanup run: cleaned text plus corrections made."""
+    """Outcome of one cleanup run: cleaned text plus corrections made.
+
+    ``cleaned_text`` always covers the whole input. When the input is longer
+    than the request limit, only its head is sent to the model; the rest is
+    appended verbatim after the cleaned head and counted in
+    ``uncleaned_chars``. On a failed request ``cleaned_text`` is the original
+    input and ``success`` is False.
+
+    Attributes:
+        cleaned_text: Cleaned head followed by any uncleaned tail.
+        corrections_made: Corrections the model reported for the head.
+        errors: Allowlisted failure descriptors; empty on success.
+        uncleaned_chars: Trailing input characters never sent to the model.
+    """
 
     cleaned_text: str
     corrections_made: list[CleanupCorrection] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    uncleaned_chars: int = 0
 
     @property
     def success(self) -> bool:
@@ -54,9 +68,44 @@ class CleanupResult:
         return len(self.errors) == 0
 
     @property
+    def partial(self) -> bool:
+        """Return True if the end of the input was not sent for cleanup."""
+        return self.uncleaned_chars > 0
+
+    @property
+    def fully_cleaned(self) -> bool:
+        """Return True if cleanup succeeded and covered the whole input."""
+        return self.success and not self.partial
+
+    @property
     def correction_count(self) -> int:
         """Return the number of corrections applied."""
         return len(self.corrections_made)
+
+
+def _split_at_limit(text: str, max_chars: int) -> tuple[str, str]:
+    """Split text into the head sent for cleanup and the verbatim tail.
+
+    Text within the limit is sent whole. Longer text is cut at the last
+    whitespace character at or before index ``max_chars``, so the tail starts
+    with that whitespace and no word is split between head and tail. Without
+    such whitespace the cut falls exactly at ``max_chars``.
+
+    Args:
+        text: Full transcript text.
+        max_chars: Maximum characters sent to the model.
+
+    Returns:
+        Tuple of (head, tail); the tail is empty when nothing is cut.
+    """
+    if len(text) <= max_chars:
+        return text, ""
+    cut = max_chars
+    for index in range(max_chars, 0, -1):
+        if text[index].isspace():
+            cut = index
+            break
+    return text[:cut], text[cut:]
 
 
 def _cleanup_context(
@@ -132,7 +181,9 @@ class TranscriptCleaner:
             host_name: Name of the host.
             guest_name: Name of the guest (if any).
             terminology: Known terms that may be misspelled.
-            max_chars: Maximum characters sent to the model.
+            max_chars: Maximum characters sent to the model. Longer input is
+                cleaned up to this limit and its remainder is returned
+                uncleaned; see :class:`CleanupResult`.
 
         Returns:
             CleanupResult with cleaned text and corrections made.
@@ -142,13 +193,14 @@ class TranscriptCleaner:
         if len(transcript_text) < _MIN_TRANSCRIPT_CHARS:
             return result
 
-        if len(transcript_text) > max_chars:
+        head, tail = _split_at_limit(transcript_text, max_chars)
+        if tail:
             logger.warning(
                 "Transcript truncated from %d to %d chars",
                 len(transcript_text),
-                max_chars,
+                len(head),
             )
-            transcript_text = transcript_text[:max_chars]
+            result.uncleaned_chars = len(tail)
 
         context = _cleanup_context(
             podcast_name=podcast_name,
@@ -157,15 +209,13 @@ class TranscriptCleaner:
             terminology=terminology,
         )
 
-        user_message = (
+        response_text, request_error = self._request_text(
             f"CONTEXT:\n{context}\n\n"
             "TRANSCRIPT TO CLEAN:\n"
-            f"<transcript>\n{transcript_text}\n</transcript>\n\n"
+            f"<transcript>\n{head}\n</transcript>\n\n"
             "Please analyze the transcript and fix any transcription errors. "
-            "Return as JSON."
+            "Return as JSON.",
         )
-
-        response_text, request_error = self._request_text(user_message)
         if request_error is not None:
             result.errors.append(request_error)
             return result
@@ -180,7 +230,7 @@ class TranscriptCleaner:
             )
             return result
 
-        result.cleaned_text = str(parsed.get("cleaned_text", transcript_text))
+        result.cleaned_text = str(parsed.get("cleaned_text", head)) + tail
         for corr in parsed.get("corrections", []):
             if isinstance(corr, dict):
                 result.corrections_made.append(
