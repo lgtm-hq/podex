@@ -4,19 +4,29 @@ from __future__ import annotations
 
 import json
 import unicodedata
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
+from urllib.parse import urlsplit
 
 import boto3
+from botocore.exceptions import BotoCoreError, ParamValidationError
+from botocore.handlers import validate_bucket_name
+from botocore.utils import (
+    is_valid_endpoint_url,
+    is_valid_ipv6_endpoint_url,
+    validate_region_name,
+)
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
 from podex.config import Settings
 from podex.models import Episode, Transcript, TranscriptArtifact, TranscriptDigest
+from podex.sdk_log_rules import class_name
 from podex.services.transcript_acquisition import (
     TranscriptAcquisitionResult,
     TranscriptResult,
@@ -24,9 +34,76 @@ from podex.services.transcript_acquisition import (
 from podex.services.transcript_retention_policies import (
     apply_stored_acquisition_opt_out,
 )
+from podex.unusable_settings import without_setting_text
 
 RAW_TRANSCRIPT_CONTENT_TYPE = "application/vnd.podex.transcript+json"
 ARTIFACT_VERIFICATION_FAILED = "Retained transcript artifact failed source verification"
+# Where everything the storage client reads beyond the store's own settings
+# comes from: AWS environment variables and shared configuration (endpoint,
+# region, profile, configuration files, retry and checksum modes).
+AMBIENT_CONFIGURATION_SOURCE = "The storage client's environment configuration"
+# What building the client raises for a value it read from there: its own
+# configuration errors, and builtin errors from parsing a value (an endpoint,
+# a number). Each can quote the value.
+_AMBIENT_CONFIGURATION_FAILURES: tuple[type[Exception], ...] = (
+    BotoCoreError,
+    LookupError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+# What a storage request raises on the client side, besides a server's error
+# response: the client's own errors, and builtin errors from preparing or
+# signing the request, which carry request or credential text (an encoding
+# error holds the whole signing key in its arguments).
+_REQUEST_FAILURES: tuple[type[Exception], ...] = (
+    BotoCoreError,
+    AttributeError,
+    LookupError,
+    OSError,
+    TypeError,
+    ValueError,
+)
+
+ResultT = TypeVar("ResultT")
+
+
+class TranscriptStorageError(Exception):
+    """A storage request failed in the client; reported by the error class only.
+
+    The storage client's own errors quote its configuration: the bucket name,
+    the endpoint URL with any userinfo, or the whole ``Authorization`` header.
+    This class derives from ``Exception`` only, as the client's own errors do;
+    a failure that was also a builtin ``ValueError``, ``TypeError``,
+    ``LookupError`` or ``OSError`` is replaced by the subclass of the same
+    kind, so every handler treats the replacement as it treated the original.
+    """
+
+
+class TranscriptStorageValueError(TranscriptStorageError, ValueError):
+    """A storage request failure that was a ``ValueError``."""
+
+
+class TranscriptStorageTypeError(TranscriptStorageError, TypeError):
+    """A storage request failure that was a ``TypeError``."""
+
+
+class TranscriptStorageLookupError(TranscriptStorageError, LookupError):
+    """A storage request failure that was a ``LookupError``."""
+
+
+class TranscriptStorageOSError(TranscriptStorageError, OSError):
+    """A storage request failure that was an ``OSError``."""
+
+
+# Checked in order: the first builtin kind the failure is, picks the
+# replacement; a failure of none of them gets the base class.
+_REPLACEMENT_KINDS: tuple[tuple[type[Exception], type[TranscriptStorageError]], ...] = (
+    (OSError, TranscriptStorageOSError),
+    (ValueError, TranscriptStorageValueError),
+    (TypeError, TranscriptStorageTypeError),
+    (LookupError, TranscriptStorageLookupError),
+)
 
 
 class TranscriptArtifactStorageBackend(StrEnum):
@@ -125,8 +202,9 @@ class EncryptedFilesystemTranscriptArtifactStore:
         if not encryption_key:
             raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
         self.root_path = root_path
-        self.fernet = Fernet(encryption_key.encode("ascii"))
-        self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
+        key = _encryption_key_bytes(encryption_key)
+        self.fernet = Fernet(key)
+        self.key_id = sha256(key).hexdigest()[:16]
 
     def put_json(
         self,
@@ -195,9 +273,17 @@ class EncryptedS3TranscriptArtifactStore:
             raise ValueError("PODEX_TRANSCRIPTS__S3_BUCKET must be configured")
         if not encryption_key:
             raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
+        # The client's own bucket name check, which it applies to every
+        # request and whose error quotes the name.
+        without_setting_text(
+            lambda: validate_bucket_name({"Bucket": bucket}),
+            source="PODEX_TRANSCRIPTS__S3_BUCKET",
+            failures=(ParamValidationError,),
+        )
         self.bucket = bucket
-        self.fernet = Fernet(encryption_key.encode("ascii"))
-        self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
+        key = _encryption_key_bytes(encryption_key)
+        self.fernet = Fernet(key)
+        self.key_id = sha256(key).hexdigest()[:16]
         self.client = client or _build_s3_client(
             endpoint_url=endpoint_url,
             region_name=region_name,
@@ -214,12 +300,14 @@ class EncryptedS3TranscriptArtifactStore:
         """Encrypt and upload one transcript JSON object."""
         plaintext = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         ciphertext = self.fernet.encrypt(plaintext)
-        self.client.put_object(
-            Bucket=self.bucket,
-            Key=storage_key,
-            Body=ciphertext,
-            ContentType="application/octet-stream",
-            Metadata={"podex-key-id": self.key_id},
+        _storage_request(
+            lambda: self.client.put_object(
+                Bucket=self.bucket,
+                Key=storage_key,
+                Body=ciphertext,
+                ContentType="application/octet-stream",
+                Metadata={"podex-key-id": self.key_id},
+            ),
         )
         return StoredTranscriptArtifactData(
             storage_key=storage_key,
@@ -230,16 +318,25 @@ class EncryptedS3TranscriptArtifactStore:
 
     def delete(self, *, storage_key: str) -> None:
         """Delete an encrypted artifact object from its private bucket."""
-        self.client.delete_object(Bucket=self.bucket, Key=storage_key)
+        _storage_request(
+            lambda: self.client.delete_object(Bucket=self.bucket, Key=storage_key),
+        )
 
     def get_json(self, *, storage_key: str) -> dict[str, Any]:
         """Download and decrypt one S3-compatible transcript JSON object."""
-        response = self.client.get_object(Bucket=self.bucket, Key=storage_key)
-        body = response["Body"]
-        ciphertext = body.read() if hasattr(body, "read") else body
+        ciphertext = _storage_request(
+            lambda: self._download(storage_key=storage_key),
+        )
         if not isinstance(ciphertext, bytes):
             raise ValueError("Encrypted transcript artifact body must be bytes")
         return _decode_encrypted_payload(fernet=self.fernet, ciphertext=ciphertext)
+
+    def _download(self, *, storage_key: str) -> object:
+        """Request one object and read its body, which streams from the client."""
+        response = self.client.get_object(Bucket=self.bucket, Key=storage_key)
+        body = response["Body"]
+        content: object = body.read() if hasattr(body, "read") else body
+        return content
 
 
 def build_transcript_artifact_store(
@@ -250,8 +347,12 @@ def build_transcript_artifact_store(
     encryption_key = settings.transcripts.encryption_key.get_secret_value()
     if not encryption_key:
         return None
-    backend = TranscriptArtifactStorageBackend(
-        settings.transcripts.storage_backend,
+    configured_backend = settings.transcripts.storage_backend
+    # The enum's error quotes the value.
+    backend = without_setting_text(
+        lambda: TranscriptArtifactStorageBackend(configured_backend),
+        source="PODEX_TRANSCRIPTS__STORAGE_BACKEND",
+        failures=(ValueError,),
     )
     if backend is TranscriptArtifactStorageBackend.ENCRYPTED_S3:
         return EncryptedS3TranscriptArtifactStore(
@@ -277,19 +378,154 @@ def _build_s3_client(
     access_key_id: str,
     secret_access_key: str,
 ) -> S3ObjectClient:
-    """Build an S3 client using default credentials unless explicitly supplied."""
+    """Build an S3 client using default credentials unless explicitly supplied.
+
+    Raises:
+        UnusableSettingError: When the endpoint or the region is malformed;
+            the message names the setting and the error class only.
+        ValueError: When only one of the two static credentials is supplied.
+    """
     kwargs: dict[str, str] = {}
     if endpoint_url:
+        without_setting_text(
+            lambda: _check_storage_endpoint(endpoint_url),
+            source="PODEX_TRANSCRIPTS__S3_ENDPOINT_URL",
+            failures=(ValueError,),
+        )
         kwargs["endpoint_url"] = endpoint_url
     if region_name:
+        # The client's own region check; its error quotes the region.
+        without_setting_text(
+            lambda: validate_region_name(region_name),
+            source="PODEX_TRANSCRIPTS__S3_REGION_NAME",
+            failures=(ValueError,),
+        )
         kwargs["region_name"] = region_name
     if access_key_id or secret_access_key:
         if not access_key_id or not secret_access_key:
             raise ValueError("S3 artifact credentials must be configured together")
+        # The key id goes into a header: a control character (a trailing
+        # newline from a secrets file) makes the HTTP layer quote the whole
+        # signed header on every request. The secret is only signing input,
+        # where any character works, but both are encoded as UTF-8 to sign,
+        # and that error holds the whole signing key.
+        without_setting_text(
+            lambda: _check_header_credential(access_key_id),
+            source="PODEX_TRANSCRIPTS__S3_ACCESS_KEY_ID",
+            failures=(ValueError,),
+        )
+        without_setting_text(
+            lambda: secret_access_key.encode("utf-8"),
+            source="PODEX_TRANSCRIPTS__S3_SECRET_ACCESS_KEY",
+            failures=(UnicodeEncodeError,),
+        )
         kwargs["aws_access_key_id"] = access_key_id
         kwargs["aws_secret_access_key"] = secret_access_key
-    client: S3ObjectClient = boto3.client("s3", **kwargs)
+    # The store's own settings are checked above, so what building the client
+    # can still fail on is what it reads from the AWS environment and shared
+    # configuration (an endpoint, region, profile, configuration file, retry
+    # or checksum mode), whose errors quote the value.
+    client: S3ObjectClient = without_setting_text(
+        lambda: boto3.client("s3", **kwargs),
+        source=AMBIENT_CONFIGURATION_SOURCE,
+        failures=_AMBIENT_CONFIGURATION_FAILURES,
+    )
     return client
+
+
+def _check_header_credential(value: str) -> None:
+    """Require a credential sent in a header to be UTF-8 without control characters.
+
+    Raises:
+        ValueError: Naming neither the value nor the offending character.
+    """
+    encodable = True
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        encodable = False
+    if not encodable or any(
+        unicodedata.category(character) == "Cc" for character in value
+    ):
+        raise ValueError("Credential cannot be sent in a header")
+
+
+def _storage_request(request: Callable[[], ResultT]) -> ResultT:
+    """Run one storage client request, reporting client errors by class only.
+
+    Args:
+        request: The client call.
+
+    Returns:
+        What ``request`` returns.
+
+    Raises:
+        TranscriptStorageError: When the client raises one of its own errors
+            (``BotoCoreError``: parameter validation, connection, endpoint
+            resolution, HTTP client and credential errors) or a builtin error
+            while preparing or signing the request, whose text or arguments
+            quote configuration or credentials. It names the class only, keeps
+            neither cause nor context, and is of the same builtin kind as the
+            original (see ``_REPLACEMENT_KINDS``). A server's error response
+            (``ClientError``) and anything that is not an ``Exception``
+            (cancellation, interrupts, exit) propagate unchanged.
+    """
+    failure = ""
+    replacement: type[TranscriptStorageError] = TranscriptStorageError
+    try:
+        return request()
+    except _REQUEST_FAILURES as error:
+        failure = class_name(error)
+        replacement = next(
+            (
+                kind_replacement
+                for kind, kind_replacement in _REPLACEMENT_KINDS
+                if isinstance(error, kind)
+            ),
+            TranscriptStorageError,
+        )
+    # Outside the handler: the original error is not kept as context.
+    raise replacement(f"Transcript artifact storage request failed: {failure}")
+
+
+def _check_storage_endpoint(endpoint_url: str) -> None:
+    """Apply the checks the S3 client makes before using an endpoint.
+
+    Building the client requires a valid host name or IPv6 address; each
+    bucket request then requires an ``http`` or ``https`` URL without a query
+    whose port, if any, is a number (the S3 endpoint rules' URL check). The
+    client's errors for these quote the endpoint; this raises ``ValueError``
+    without it. ``urlsplit`` raises ``ValueError`` itself for a malformed IPv6
+    address or port.
+    """
+    client_check: bool = bool(
+        is_valid_endpoint_url(endpoint_url) or is_valid_ipv6_endpoint_url(endpoint_url),
+    )
+    parts = urlsplit(endpoint_url)
+    well_formed = (
+        client_check
+        and parts.scheme in {"http", "https"}
+        and not parts.query
+        # Reading the port raises ValueError unless it is a number in range.
+        and (parts.port is None or parts.port >= 0)
+    )
+    if not well_formed:
+        raise ValueError("Invalid endpoint")
+
+
+def _encryption_key_bytes(encryption_key: str) -> bytes:
+    """Encode the configured encryption key as the cipher expects.
+
+    Raises:
+        UnusableSettingError: When the key is not ASCII; the encoding error
+            would quote part of it, so only the setting and class are named.
+    """
+    encoded: bytes = without_setting_text(
+        lambda: encryption_key.encode("ascii"),
+        source="PODEX_TRANSCRIPTS__ENCRYPTION_KEY",
+        failures=(UnicodeEncodeError,),
+    )
+    return encoded
 
 
 def persist_transcript_acquisition(

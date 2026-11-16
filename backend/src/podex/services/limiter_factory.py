@@ -10,8 +10,9 @@ development, CI, and single-worker deployments actually need.
 
 from __future__ import annotations
 
+import ssl
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, cast
 
 from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
 from podex.unusable_settings import without_setting_text
@@ -26,6 +27,14 @@ if TYPE_CHECKING:
 # always preferable to hanging.
 _REDIS_CONNECT_TIMEOUT_SECONDS = 0.5
 _REDIS_SOCKET_TIMEOUT_SECONDS = 0.25
+
+
+class _OptionCheckConnection(Protocol):
+    """The part of a Redis connection the option check uses."""
+
+    def pack_command(self, *args: object) -> object:
+        """Encode one command as the connection would send it."""
+        ...
 
 
 def build_rate_limiter(settings: Settings) -> RateLimiter:
@@ -56,8 +65,9 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
         RateLimiter: A ready-to-use limiter matching the configured backend.
 
     Raises:
-        UnusableSettingError: When the Redis URL cannot be parsed; the
-            message names the setting and the error class only.
+        UnusableSettingError: When the Redis URL cannot be parsed, or its
+            connection options are rejected by the client's connection class;
+            the message names the setting and the error class only.
     """
     redis_url = settings.rate_limit.redis_url.get_secret_value()
     if not redis_url:
@@ -85,9 +95,56 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
         socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
         socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
     )
+    # The client connects lazily, so the URL's query options first reach the
+    # connection class on the first rate-limited request, whose errors quote
+    # them. Check them on an unconnected connection now, where these are
+    # reported by class only. The client is used unchanged.
+    connection_class: Callable[..., _OptionCheckConnection] = (
+        client.connection_pool.connection_class
+    )
+    connection_options: dict[str, object] = dict(
+        client.connection_pool.connection_kwargs,
+    )
+    without_setting_text(
+        lambda: _check_connection_options(connection_class, connection_options),
+        source="PODEX_RATE_LIMIT__REDIS_URL",
+        failures=(redis.RedisError, LookupError, TypeError, ValueError),
+    )
     return RedisSlidingWindowRateLimiter(
         client,
         max_requests=settings.rate_limit.max_requests,
         window_seconds=settings.rate_limit.window_seconds,
         key_prefix=settings.rate_limit.redis_prefix,
     )
+
+
+def _check_connection_options(
+    connection_class: Callable[..., _OptionCheckConnection],
+    connection_options: dict[str, object],
+) -> None:
+    """Apply the client's own handling of its connection options, without I/O.
+
+    Each step is what the client does with the options on its first request,
+    where the error it raises quotes the option:
+
+    * constructing the connection (an unknown option name gives
+      ``TypeError``, a certificate-requirements flag ``RedisError``, a port
+      ``ValueError``);
+    * packing a command with a text argument, which encodes it with the
+      configured ``encoding`` (``LookupError``);
+    * for TLS, setting the configured ``ssl_min_version`` on a TLS context
+      (``ValueError``).
+
+    The connection is a throwaway: it is never added to the client's pool and
+    never opens a socket.
+
+    Args:
+        connection_class: The connection class of the client's pool.
+        connection_options: The keyword arguments the pool gives it.
+    """
+    connection = connection_class(**connection_options)
+    connection.pack_command("ECHO", "")
+    minimum_version: object = getattr(connection, "ssl_min_version", None)
+    if minimum_version is not None:
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.minimum_version = cast(ssl.TLSVersion, minimum_version)
