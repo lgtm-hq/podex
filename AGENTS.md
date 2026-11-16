@@ -66,8 +66,9 @@ keeps each `cd` inside a subshell so the shell stays at the root.
   ```
 
   ```bash
+  PODEX_OPS_API_KEY=local-dev-key
   curl -X POST http://localhost:8000/api/v2/ops/podcasts \
-    -H 'X-Ops-Key: local-dev-key' -H 'Content-Type: application/json' \
+    -H "X-Ops-Key: ${PODEX_OPS_API_KEY}" -H 'Content-Type: application/json' \
     -d '{"name": "Example", "slug": "example", "status": "active",
          "sources": {"rss_url": "https://example.com/feed.xml"}}'
   ```
@@ -83,6 +84,10 @@ keeps each `cd` inside a subshell so the shell stays at the root.
   and Spotify when `SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` are set),
   digest delivery (needs SMTP) and retention sweeps. In containers it is the
   same image with the command overridden to `python -m podex.scheduler_runner`.
+  A healthy scheduler logs `scheduler_runner_started`, one
+  `scheduler_tick planned=... discovery=... digests=... retention=...` line per
+  tick (every 60 seconds by default) and `scheduler_runner_stopped`, all on
+  stderr.
 - **Ingestion pipeline is partial.** Discovery runs as above. Enrichment, LLM
   transcript cleanup, LLM mention extraction and extraction review exist as
   services but nothing in the API or scheduler calls them, and no transcript

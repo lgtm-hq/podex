@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from podex.config import Settings, get_settings
 from podex.database import SessionLocal
-from podex.logging_config import get_logger, install_log_boundaries
+from podex.logging_config import configure_logging, get_logger
 from podex.metrics import AppMetrics, build_metrics, observe_scheduler_tick
 from podex.observability import init_sentry
 from podex.services.notification_delivery import DigestSender, build_digest_sender
@@ -32,7 +32,8 @@ from podex.services.recurring_notifications import (
 )
 from podex.services.scheduled_work import plan_due_scheduled_work
 
-logger = get_logger(__name__)
+# Not __name__: under "python -m" that is "__main__".
+logger = get_logger("podex.scheduler_runner")
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,9 +187,9 @@ class SchedulerRunner:
 def main() -> None:
     """Entry point for the scheduler deployable."""
     # Before anything can log or fail: database error text, URL credentials
-    # and SDK authorization headers stay out of this process's output. The
-    # log format and levels are unchanged.
-    install_log_boundaries()
+    # and SDK authorization headers stay out of this process's output.
+    # Use the API's default level and format for lifecycle and tick logs.
+    configure_logging()
     # The runner is its own process, so it initializes Sentry independently
     # of the API deployable.
     init_sentry(get_settings())

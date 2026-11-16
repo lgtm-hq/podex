@@ -81,6 +81,36 @@ def test_scheduler_process_withholds_database_text(
     assert_that(stdout + stderr).does_not_contain(row_value)
 
 
+def test_scheduler_process_logs_lifecycle_at_default_level(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capfd: pytest.CaptureFixture[str],
+) -> None:
+    """One real tick logs its lifecycle and still withholds database text."""
+    row_value, stdout, stderr = _run(
+        boundary_scheduler_process.run_one_tick,
+        f"sqlite:///{tmp_path / 'scheduler.db'}",
+        monkeypatch,
+        capfd,
+    )
+
+    assert_that(stdout).contains(_NOT_IMPORTED)
+    assert_that(stderr.count("scheduler_runner_started tick_seconds=30")).is_equal_to(1)
+    assert_that(stderr).contains(
+        "INFO podex.scheduler_runner scheduler_runner_started tick_seconds=30",
+    )
+    assert_that(stderr.count("scheduler_tick planned=")).is_equal_to(1)
+    assert_that(stderr).matches(
+        r"INFO podex.scheduler_runner scheduler_tick "
+        r"planned=\d+ discovery=\d+ digests=\d+ retention=\d+",
+    )
+    assert_that(stderr.count("scheduler_runner_stopped")).is_equal_to(1)
+    assert_that(stderr).contains("INFO podex.scheduler_runner scheduler_runner_stopped")
+    assert_that(stderr).does_not_contain("scheduler_tick_failed")
+    assert_that(stderr).contains("database failure:", SQLSTATE_DESCRIPTOR)
+    assert_that(stdout + stderr).does_not_contain(row_value)
+
+
 def test_migration_process_withholds_database_text(
     monkeypatch: pytest.MonkeyPatch,
     capfd: pytest.CaptureFixture[str],
