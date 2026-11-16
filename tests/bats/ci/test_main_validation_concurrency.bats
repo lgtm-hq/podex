@@ -22,6 +22,11 @@ PR_ONLY=(ai-review dependency-review pr-auto-assign pr-labeler
 	semantic-pr-title validate-action-pinning)
 # Triggered by other workflows' completed runs.
 RUN_FOLLOWERS=(auto-rerun-on-infra-failure)
+# Callers without a workflow-level block: ai-review's pinned reusable sets a
+# per-PR group; the others run once per event and need none. Every other
+# workflow must keep its block.
+NO_CALLER_CONCURRENCY=(ai-review pr-auto-assign pr-labeler
+	auto-rerun-on-infra-failure)
 
 SHA_A=1111111111111111111111111111111111111111
 SHA_B=2222222222222222222222222222222222222222
@@ -99,8 +104,32 @@ replay() {
 	echo "${cancelled# }"
 }
 
+# `on` as one object keyed by event. GitHub also accepts a list of event names
+# or a single name; any other form is an error.
+TRIGGERS_JQ='."on"
+  | if type == "object" then .
+    elif type == "array" then (map({(tostring): null}) | add // {})
+    elif type == "string" then {(.): null}
+    else error("on must be a mapping, a list or an event name") end'
+
+# A push trigger runs on main unless its filters rule main out. Any branch
+# glob is assumed to match main.
+PUSHES_TO_MAIN_JQ='has("push") and ((.push // {}) as $p
+  | if ($p | type) != "object" then true
+    elif ($p | has("branches")) then
+      ($p.branches | any(. == "main" or contains("*")))
+    elif ($p | has("branches-ignore")) then
+      ($p["branches-ignore"] | any(. == "main") | not)
+    else (($p | has("tags")) or ($p | has("tags-ignore"))) | not end)'
+
+triggers() {
+	yq -o=json '.' "${WORKFLOWS}/$1.yml" | jq -ce "${TRIGGERS_JQ}"
+}
+
 has_trigger() {
-	yq -e "(.\"on\" | has(\"$2\"))" "${WORKFLOWS}/$1.yml" >/dev/null
+	local events
+	events="$(triggers "$1")" || return 1
+	jq -e --arg event "$2" 'has($event)' <<<"${events}" >/dev/null
 }
 
 lacks_trigger() {
@@ -111,8 +140,20 @@ lacks_trigger() {
 }
 
 pushes_to_main() {
-	yq -e '(."on".push.branches // []) | any_c(. == "main")' \
-		"${WORKFLOWS}/$1.yml" >/dev/null
+	local events
+	events="$(triggers "$1")" || return 1
+	jq -e "${PUSHES_TO_MAIN_JQ}" <<<"${events}" >/dev/null
+}
+
+no_caller_concurrency() {
+	[[ " ${NO_CALLER_CONCURRENCY[*]} " == *" $1 "* ]]
+}
+
+require_concurrency() {
+	if [[ "$(yq -r '.concurrency.group' "${WORKFLOWS}/$1.yml")" == null ]]; then
+		echo "$1: needs its concurrency block (group and cancel-in-progress)" >&2
+		return 1
+	fi
 }
 
 @test "test_expression_helper_follows_github_semantics" {
@@ -163,6 +204,11 @@ pushes_to_main() {
 	done
 	for name in ${class_members}; do
 		[ -f "${WORKFLOWS}/${name}.yml" ]
+		# Every `on` must be a form GitHub accepts and this test understands.
+		triggers "${name}" >/dev/null
+		if ! no_caller_concurrency "${name}"; then
+			require_concurrency "${name}"
+		fi
 	done
 
 	# Every workflow that runs on pushes to main is a validation or release one.
@@ -213,6 +259,21 @@ pushes_to_main() {
 	done
 }
 
+@test "test_main_validation_jobs_have_no_concurrency_of_their_own" {
+	# A job-level group would queue (or cancel) jobs across main commits again,
+	# whatever the workflow-level group says. The pinned reusables' own blocks
+	# are not visible here; check them when the lgtm-ci pin changes.
+	local name jobs
+	for name in "${MAIN_VALIDATION[@]}"; do
+		jobs="$(yq -r '.jobs | to_entries | map(select(.value | has("concurrency")) | .key) | join(",")' \
+			"${WORKFLOWS}/${name}.yml")"
+		if [ -n "${jobs}" ]; then
+			echo "${name}: job-level concurrency in ${jobs}" >&2
+			return 1
+		fi
+	done
+}
+
 @test "test_main_validation_pushes_are_not_replaced_by_other_main_runs" {
 	local name entries=()
 	for name in "${MAIN_VALIDATION[@]}"; do
@@ -246,7 +307,8 @@ pushes_to_main() {
 	local a b c other main_push
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
 		has_trigger "${name}" pull_request || continue
-		yq -e '.concurrency' "${WORKFLOWS}/${name}.yml" >/dev/null || continue
+		no_caller_concurrency "${name}" && continue
+		require_concurrency "${name}"
 		a="$(arrival "${name}-pr7-a" "${name}" pull_request "${ref}" "${SHA_A}" 7)"
 		b="$(arrival "${name}-pr7-b" "${name}" pull_request "${ref}" "${SHA_B}" 7)"
 		c="$(arrival "${name}-pr7-c" "${name}" pull_request "${ref}" "${SHA_C}" 7)"
@@ -270,7 +332,8 @@ pushes_to_main() {
 	local name q7 q8 main_push pr queue=refs/heads/gh-readonly-queue/main
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
 		has_trigger "${name}" merge_group || continue
-		yq -e '.concurrency' "${WORKFLOWS}/${name}.yml" >/dev/null || continue
+		no_caller_concurrency "${name}" && continue
+		require_concurrency "${name}"
 		q7="$(arrival q7 "${name}" merge_group "${queue}/pr-7-${SHA_A}" "${SHA_A}")"
 		q8="$(arrival q8 "${name}" merge_group "${queue}/pr-8-${SHA_B}" "${SHA_B}")"
 		pr="$(arrival pr7 "${name}" pull_request refs/pull/7/merge "${SHA_C}" 7)"
@@ -343,9 +406,7 @@ pushes_to_main() {
 	[ "$(cut -f2 <<<"${schedule}")" = "scorecards-${MAIN}" ]
 	[ "$(cut -f3 <<<"${schedule}")" = true ]
 
-	# Callers without a block of their own: ai-review's pinned reusable sets a
-	# per-PR group; the others run once per event and need none.
-	for name in ai-review pr-auto-assign pr-labeler auto-rerun-on-infra-failure; do
+	for name in "${NO_CALLER_CONCURRENCY[@]}"; do
 		run yq -r '.concurrency' "${WORKFLOWS}/${name}.yml"
 		[ "${output}" = null ]
 	done

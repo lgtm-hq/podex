@@ -296,7 +296,7 @@ Every workflow file belongs to one class, checked by
 | Class              | Workflows                                                                                                                    | Concurrency                                                                                          |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | Main validation    | `all-checks-gate`, `codeql`, `docker-ci`, `frontend-ci`, `pin-sync-guard`, `quality-ci`, `sbom`, `security-audit`, `test-ci` | Push to `main`: one group per commit, never cancelled. Everything else: the group without the suffix |
-| Release mutations  | `release-auto-tag`, `release-version-pr`                                                                                     | One repository-wide group, never cancelled (unchanged)                                               |
+| Release mutations  | `release-auto-tag`, `release-version-pr`                                                                                     | One repository-wide group, no cancel-in-progress (unchanged)                                         |
 | Scheduled upkeep   | `ghcr-cleanup`, `scorecards`, `vuln-suppression-check`                                                                       | Unchanged                                                                                            |
 | Pull request only  | `ai-review`, `dependency-review`, `pr-auto-assign`, `pr-labeler`, `semantic-pr-title`, `validate-action-pinning`             | Unchanged                                                                                            |
 | Follows other runs | `auto-rerun-on-infra-failure`                                                                                                | None                                                                                                 |
@@ -312,18 +312,39 @@ pushes. The all-checks gate passes no `head-sha`, so each gate run judges
 
 The test renders each group and `cancel-in-progress` value with GitHub's
 expression semantics (`tests/bats/ci/helpers/github_expression.py`) for concrete
-events. It then replays those runs through the queueing rule above. Adding a
-workflow file without classifying it fails the test.
+events. It then replays those runs through the queueing rule above. It also
+fails when a workflow file is not classified, when `on` is not a mapping, list
+or event name, when a main validation job has a `concurrency` key of its own,
+and when a workflow outside `ai-review`, `pr-auto-assign`, `pr-labeler` and
+`auto-rerun-on-infra-failure` loses its block.
 
-The release workflows are not changed. Their repository-wide groups still
-serialize version and tag mutations. A burst of pushes can still replace a
-pending release run with the newest one, as before. Their pinned reusables run
-the mutating job in a second, job-level group of their own.
+The test reads only this repository's files. When the lgtm-ci pin is bumped,
+check the called reusable workflows for `concurrency` blocks keyed on the ref
+with cancellation, because such a block would cancel main runs again and the
+test cannot see it.
+
+### What is not preserved
+
+`release-version-pr` and `release-auto-tag` keep their repository-wide groups.
+With three pushes to `main` inside one release run, the middle commit's pending
+release runs are still replaced by the newest ones. The all-checks gate judges
+every workflow run on its commit and fails on a cancelled one, so that commit's
+gate run fails even though its validation runs passed. A replaced auto-tag run
+for a release commit never cuts that commit's tag. This is tracked on #45 and
+not changed here.
+
+Seven main validation workflows (`codeql`, `docker-ci`, `frontend-ci`,
+`quality-ci`, `sbom`, `security-audit`, `test-ci`) call the pinned main failure
+notifier, which keeps one open issue per workflow key and branch. The shared
+`main` group used to serialize those calls. Now two failing commits of the same
+workflow can run the notifier at once, so two issues for one workflow key are
+possible. The reusable has no `concurrency` of its own; the fix belongs in the
+reusable notifier.
 
 ### Post-merge check
 
 A pull request cannot show two pushes to `main` both completing. After merge,
-read the run history without triggering anything:
+read the run history without triggering anything. Cancelled validation runs:
 
 ```sh
 gh run list --branch main --event push --limit 200 \
@@ -333,6 +354,32 @@ gh run list --branch main --event push --limit 200 \
     | [.createdAt, .name, .headSha[0:7]] | @tsv'
 ```
 
-Validation runs created after the merge must not appear. Commits pushed minutes
-apart should each show a completed run of every main validation workflow,
-`Quality - Pin Sync Guard` only when workflow files changed.
+No validation run created after the merge should appear. Per-commit
+completeness, as one line per commit (first run time, commit, successful
+validation workflows, missing ones):
+
+```sh
+gh run list --branch main --event push --limit 200 \
+  --json headSha,name,conclusion,createdAt |
+  jq -r '
+    ["Quality - Lint & Format", "CI - Tests", "CI - Frontend",
+     "Security - CodeQL Code Scanning", "Security - OSV Audit",
+     "CI - Docker Build & Publish", "Security - SBOM Generation",
+     "PR - All Checks Gate"] as $expected
+    | group_by(.headSha)[]
+    | (map(select(.conclusion == "success") | .name) | unique) as $ok
+    | ($expected - $ok) as $missing
+    | [(map(.createdAt) | min), .[0].headSha[0:7],
+       ($expected | length) - ($missing | length),
+       ($missing | join(", "))]
+    | @tsv' | sort
+```
+
+Expect `8` with nothing missing for every commit pushed after the merge.
+`Quality - Pin Sync Guard` is not counted: its path filter runs it only when
+`.github/workflows/**` or the guard's script or yq program changed, and then it
+should also succeed. No other validation workflow has a path filter. Runs still
+in progress show as missing, and the oldest commit in the 200-run window can be
+cut off. A commit whose only gap is `PR - All Checks Gate` while a release run
+of the same commit was cancelled or failed is a release problem (above), not a
+lost validation run.

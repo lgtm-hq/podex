@@ -39,13 +39,22 @@ replays them through the queueing rule.
 
 ## Consequences
 
-- Each main commit gets a completed run of every validation workflow, so a red
-  or green result can be attributed to the commit that caused it.
+- Each main commit gets a completed run of every validation workflow, so a
+  validation result belongs to the commit it ran on. The commit's all-checks
+  gate can still fail for a reason outside its validation (next point).
+- Release workflows keep their serialization and their pending-run replacement.
+  With three pushes inside one release run, the middle commit's release runs are
+  replaced, its gate fails on the cancelled run although validation passed, and
+  a replaced auto-tag run for a release commit never cuts that tag. This is
+  tracked on #45; changing it needs a separate decision.
+- The pinned main failure notifier was serialized by the shared `main` group.
+  Two failing commits of one workflow can now run it at once and open two issues
+  for one workflow key. The fix belongs in the reusable notifier.
 - A burst of merges runs that many validation runs, and that many polling gates,
-  in parallel instead of at most two per workflow. Runner minutes and the shared
-  API quota grow with merge bursts.
+  in parallel instead of at most two per workflow: about 29 to 33 run-minutes
+  per commit across the nine workflows, so N overlapping merges add roughly
+  (N-2) times that. Runner minutes and the shared API quota grow with bursts.
 - A new workflow file fails the contract test until it is classified, and a new
   validation workflow that runs on pushes to `main` must use the per-commit
-  group.
-- Release workflows keep their serialization and their existing pending-run
-  replacement; changing either needs a separate decision.
+  group. The test cannot see `concurrency` inside the pinned reusables, so a pin
+  bump needs that checked by hand.
