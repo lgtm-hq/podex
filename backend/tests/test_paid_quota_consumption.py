@@ -16,7 +16,7 @@ from typing import Any
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import Engine, create_engine, event
+from sqlalchemy import Engine, Integer, create_engine, event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -424,5 +424,112 @@ def test_integrity_error_other_than_the_race_propagates(
             db=db_session,
             user_id=user_id,
             settings=enforced(1),
+            now=JULY,
+        )
+
+
+_UNITS_COLUMN_MAX = 2**31 - 1
+
+
+def test_usage_counter_is_a_32_bit_integer_column() -> None:
+    """The clamp in the service assumes ``units`` is a plain ``Integer``."""
+    units_type = AccountQuotaUsage.__table__.c.units.type
+
+    assert_that(type(units_type)).is_same_as(Integer)
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [2**31, 2**63, 10**20],
+    ids=["above-int32", "above-int64", "far-above-int64"],
+)
+def test_limits_beyond_the_counter_column_take_the_unit(
+    db_session: Session,
+    limit: int,
+) -> None:
+    """A configured limit the column cannot store still serves the request."""
+    user_id = seed_paid_account(db_session, units=5)
+
+    assert_that(_consume(db_session, user_id=user_id, limit=limit)).is_equal_to(
+        "used=6",
+    )
+    assert_that(_usage_rows(db_session)).is_equal_to([(user_id, "2026-07", 6)])
+
+
+@pytest.mark.parametrize(
+    ("used_before", "expected", "stored"),
+    [
+        (_UNITS_COLUMN_MAX - 1, f"used={_UNITS_COLUMN_MAX}", _UNITS_COLUMN_MAX),
+        (_UNITS_COLUMN_MAX, "exceeded", _UNITS_COLUMN_MAX),
+    ],
+    ids=["reaches-column-maximum", "stops-at-column-maximum"],
+)
+def test_counter_stops_at_the_column_maximum(
+    db_session: Session,
+    used_before: int,
+    expected: str,
+    stored: int,
+) -> None:
+    """Above the column's maximum the counter refuses instead of overflowing."""
+    user_id = seed_paid_account(db_session, units=used_before)
+
+    outcome = _consume(db_session, user_id=user_id, limit=2**63)
+
+    assert_that(outcome).is_equal_to(expected)
+    assert_that(_usage_rows(db_session)).is_equal_to(
+        [(user_id, "2026-07", stored)],
+    )
+
+
+def test_row_deleted_before_the_retry_is_not_reported_as_spent(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An absent row after the retry is an error, not a spent allocation."""
+    user_id = seed_paid_account(db_session, units=1)
+    _row_unseen(monkeypatch, checks=1, increments=1)
+    real_create = vars(account_subscriptions)["_create_usage_row"]
+
+    def create_then_lose_row(**kwargs: Any) -> None:
+        real_create(**kwargs)  # the insert conflicts and is discarded
+        db_session.query(AccountQuotaUsage).delete()
+
+    monkeypatch.setattr(
+        account_subscriptions,
+        "_create_usage_row",
+        create_then_lose_row,
+    )
+
+    with pytest.raises(RuntimeError, match="could not be charged"):
+        consume_paid_api_request(
+            db=db_session,
+            user_id=user_id,
+            settings=enforced(2),
+            now=JULY,
+        )
+
+
+def test_pending_row_violation_is_not_taken_for_a_lost_race(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Another pending row's integrity error propagates from the charge.
+
+    The usage row exists but is hidden from the first update and existence
+    check, as after a lost creation race. Without the flush before the
+    savepoint, the pending duplicate account fails inside the handler's
+    ``try``, the existing usage row makes that look like a lost race, and the
+    caller sees a ``PendingRollbackError`` instead of the account's own
+    integrity error.
+    """
+    user_id = seed_paid_account(db_session, units=1)
+    _row_unseen(monkeypatch, checks=1, increments=1)
+    db_session.add(AccountUser(email="quota@example.com"))
+
+    with pytest.raises(IntegrityError, match="account_users.email"):
+        consume_paid_api_request(
+            db=db_session,
+            user_id=user_id,
+            settings=enforced(2),
             now=JULY,
         )

@@ -311,3 +311,63 @@ def test_first_row_race_conflicts_without_the_savepoint(
 
     assert_that(raised.value.orig).is_instance_of(psycopg.errors.UniqueViolation)
     assert_that(_stored(postgres)).is_equal_to([(user_id, "2026-07", 1)])
+
+
+_INTEGER_MAX = 2**31 - 1
+
+
+@pytest.mark.parametrize(
+    ("limit", "used_before"),
+    [(2**31, None), (2**31, 5), (2**63, None), (2**63, 5)],
+    ids=[
+        "int32-first-row",
+        "int32-existing-row",
+        "int64-first-row",
+        "int64-existing-row",
+    ],
+)
+def test_limits_beyond_the_integer_column_take_the_unit(
+    postgres: PostgresDatabase,
+    limit: int,
+    used_before: int | None,
+) -> None:
+    """A limit PostgreSQL ``integer`` cannot hold binds and serves the request."""
+    with postgres.sessions() as db:
+        user_id = seed_paid_account(
+            db, email="large-limit@example.com", units=used_before
+        )
+        outcome = consume_outcome(db, user_id=user_id, limit=limit)
+        db.commit()
+
+    expected = (used_before or 0) + 1
+    assert_that(outcome).is_equal_to(f"used={expected}")
+    assert_that(_stored(postgres)).is_equal_to([(user_id, "2026-07", expected)])
+
+
+@pytest.mark.parametrize(
+    ("used_before", "expected"),
+    [(_INTEGER_MAX - 1, f"used={_INTEGER_MAX}"), (_INTEGER_MAX, "exceeded")],
+    ids=["reaches-column-maximum", "stops-at-column-maximum"],
+)
+def test_counter_stops_at_the_integer_column_maximum(
+    postgres: PostgresDatabase,
+    used_before: int,
+    expected: str,
+) -> None:
+    """At the migrated column's maximum the unit is refused, not overflowed."""
+    with postgres.sessions() as db:
+        data_type = db.execute(
+            text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_name = 'account_quota_usage' AND column_name = 'units'",
+            ),
+        ).scalar_one()
+        user_id = seed_paid_account(
+            db, email="column-max@example.com", units=used_before
+        )
+        outcome = consume_outcome(db, user_id=user_id, limit=2**63)
+        db.commit()
+
+    assert_that(data_type).is_equal_to("integer")
+    assert_that(outcome).is_equal_to(expected)
+    assert_that(_stored(postgres)).is_equal_to([(user_id, "2026-07", _INTEGER_MAX)])

@@ -15,6 +15,12 @@ QuotaFeature = Literal["api_requests", "llm_requests"]
 API_REQUESTS: QuotaFeature = "api_requests"
 LLM_REQUESTS: QuotaFeature = "llm_requests"
 
+# Largest count ``account_quota_usage.units`` can hold: the column is
+# ``Integer``, a 32-bit ``integer`` on PostgreSQL. The guarded update binds
+# ``min(limit, _UNITS_MAX)``, so any configured limit binds as a valid value
+# and the counter stops at the column's maximum instead of overflowing it.
+_UNITS_MAX = 2**31 - 1
+
 
 class PaidSubscriptionRequiredError(Exception):
     """Raised when a protected paid feature is unavailable to an account."""
@@ -121,6 +127,11 @@ def _increment_usage(*, db: Session, key: _UsageKey, limit: int) -> int | None:
     writer at a time. Either way two transactions cannot both take the last
     unit, and neither overwrites the other's increment.
 
+    The bound is clamped to the column's maximum: a configured limit larger
+    than the column can store would otherwise fail to bind (PostgreSQL
+    ``integer out of range``, SQLite ``OverflowError`` past 64 bits), and
+    ``units + 1`` can never exceed the column.
+
     Returns:
         The stored units after the increment, or ``None`` when no row matched:
         the row does not exist (or this statement cannot see it yet) or its
@@ -128,7 +139,7 @@ def _increment_usage(*, db: Session, key: _UsageKey, limit: int) -> int | None:
     """
     statement = (
         update(AccountQuotaUsage)
-        .where(*key.criteria(), AccountQuotaUsage.units < limit)
+        .where(*key.criteria(), AccountQuotaUsage.units < min(limit, _UNITS_MAX))
         .values(units=AccountQuotaUsage.units + 1)
         .returning(AccountQuotaUsage.units)
         .execution_options(synchronize_session="fetch")
@@ -194,6 +205,8 @@ def consume_paid_api_request(
         PaidSubscriptionRequiredError: If the account has no active paid
             subscription.
         AccountQuotaExceededError: If the month's allocation is spent.
+        RuntimeError: If the month's usage row is gone when the unit is
+            retried, so the refusal cannot be attributed to a spent quota.
     """
     if not settings.billing.paid_tier_enforced:
         return None
@@ -212,6 +225,8 @@ def consume_paid_api_request(
         _create_usage_row(db=db, key=key)
         used = _increment_usage(db=db, key=key, limit=limit)
     if used is None:
+        if not _usage_row_exists(db=db, key=key):
+            raise RuntimeError("Paid API quota usage row could not be charged")
         raise AccountQuotaExceededError
     return QuotaSnapshot(
         period=key.period,
