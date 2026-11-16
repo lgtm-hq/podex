@@ -143,3 +143,22 @@ def test_downgrade_drops_the_table_and_upgrade_replays(tmp_path: Path) -> None:
     engine = create_engine(db_url)
     assert_that(inspect(engine).get_table_names()).contains("content_suppressions")
     engine.dispose()
+
+
+def test_alert_event_mention_ids_round_trip(tmp_path: Path) -> None:
+    """Revision 0023 adds a nullable column and its downgrade removes it."""
+    db_url = f"sqlite:///{tmp_path / 'events.db'}"
+
+    def columns() -> list[str]:
+        engine = create_engine(db_url)
+        names = [
+            column["name"]
+            for column in inspect(engine).get_columns("account_alert_events")
+        ]
+        engine.dispose()
+        return names
+
+    _migrate(db_url, "head")
+    assert_that(columns()).contains("mention_ids_json")
+    _migrate(db_url, "0022", down=True)
+    assert_that(columns()).does_not_contain("mention_ids_json")

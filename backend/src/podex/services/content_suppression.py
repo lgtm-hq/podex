@@ -2,7 +2,7 @@
 
 Every check here, every public mention read and the flush guard in
 ``podex.models.suppression_guard`` evaluate ``suppressed_clause``, so they
-agree on what a suppression covers. See ADR 0014.
+agree on what a suppression covers. See ADR 0015.
 """
 
 from collections.abc import Iterable

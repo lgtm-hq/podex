@@ -11,7 +11,7 @@ from unittest.mock import Mock
 import pytest
 from assertpy import assert_that
 from fastapi.testclient import TestClient
-from sqlalchemy import insert
+from sqlalchemy import insert, inspect
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -22,6 +22,7 @@ from podex.models import (
     MediaSummary,
     MediaType,
     Mention,
+    TakedownRequest,
     TakedownSubjectType,
 )
 from podex.services.account_alerts import create_alert_rule, evaluate_alert_rules
@@ -218,7 +219,8 @@ def test_pending_alert_for_taken_down_activity_is_not_delivered(
 
     assert_that(digest).is_none()
     assert_that(sender.mock_calls).is_empty()
-    assert_that(db_session.query(AccountAlertEvent).count()).is_zero()
+    pending = db_session.query(AccountAlertEvent).one()
+    assert_that(pending.digest_id).is_none()
 
 
 def test_account_api_hides_suppressed_activity(
@@ -296,3 +298,43 @@ def test_merge_baselines_count_only_published_mentions(db_session: Session) -> N
     db_session.commit()
 
     assert_that(evaluate_alert_rules(db=db_session, user_id=user.id)).is_length(1)
+
+
+def test_summary_that_quoted_no_mention_is_kept(db_session: Session) -> None:
+    """Stored provenance showing no mention context keeps the summary."""
+    graph = seed_catalog_graph(db_session)
+    quoted_nothing = _media_summary(graph.media_id, "identity only")
+    quoted_nothing.metadata_json = {
+        "source": "media_metadata_mentions",
+        "mention_context_count": 0,
+    }
+    quoted = _media_summary(graph.media_id, "quoted mentions")
+    quoted.metadata_json = {
+        "source": "media_metadata_mentions",
+        "mention_context_count": 1,
+    }
+    db_session.add_all([quoted_nothing, quoted])
+    db_session.commit()
+
+    take_down_mention(db_session, graph.mention_id)
+
+    remaining = [row.summary_text for row in db_session.query(MediaSummary)]
+    assert_that(remaining).is_equal_to(["identity only"])
+
+
+def test_loaded_summary_is_not_left_stale_and_count_is_recorded(
+    db_session: Session,
+) -> None:
+    """A loaded summary is deleted through the session; the case counts it."""
+    graph = seed_catalog_graph(db_session)
+    loaded = _media_summary(graph.media_id, "built from a great book")
+    db_session.add(loaded)
+    db_session.commit()
+    assert_that(db_session.get(MediaSummary, loaded.id)).is_same_as(loaded)
+
+    take_down_mention(db_session, graph.mention_id)
+
+    assert_that(inspect(loaded).was_deleted).is_true()
+    assert_that(db_session.get(MediaSummary, loaded.id)).is_none()
+    case = db_session.query(TakedownRequest).one()
+    assert_that(case.metadata_json).contains_entry({"media_summaries_dropped": 1})

@@ -301,14 +301,37 @@ def _summary_media_ids(
 def _drop_media_summaries(*, db: Session, media_ids: tuple[int, ...]) -> int:
     """Delete media summaries that may quote the covered text.
 
-    The next summary generation reads only unsuppressed mentions.
+    The media records come from ``_summary_media_ids``. A summary is kept only
+    when its stored provenance proves it quoted no mention context: our source
+    builder records ``mention_context_count`` for ``media_metadata_mentions``
+    sources. A summary without that record could quote the covered text and
+    is dropped. Rows are deleted through the session, so loaded objects do not
+    go stale. The next summary generation reads only unsuppressed mentions.
+
+    Returns:
+        The number of summaries deleted.
     """
     if not media_ids:
         return 0
-    return int(
-        db.query(MediaSummary)
+    dropped = [
+        summary
+        for summary in db.query(MediaSummary)
         .filter(MediaSummary.media_id.in_(media_ids))
-        .delete(synchronize_session=False),
+        .order_by(MediaSummary.id)
+        if not _quotes_no_mention_context(summary)
+    ]
+    for summary in dropped:
+        db.delete(summary)
+    db.flush()
+    return len(dropped)
+
+
+def _quotes_no_mention_context(summary: MediaSummary) -> bool:
+    """Return whether a summary's provenance proves it quoted no mention."""
+    metadata = summary.metadata_json or {}
+    return (
+        metadata.get("source") == "media_metadata_mentions"
+        and metadata.get("mention_context_count") == 0
     )
 
 

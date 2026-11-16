@@ -6,22 +6,22 @@ the changelog record _what_ changed.
 
 ## Index
 
-| Number                                                  | Title                                                                 | Status   | Date       |
-| ------------------------------------------------------- | --------------------------------------------------------------------- | -------- | ---------- |
-| [0001](./0001-nested-settings-models.md)                | Nested settings models with hard cutover                              | accepted | 2026-07-20 |
-| [0002](./0002-enrichment-provider-registry.md)          | Enrichment provider registry                                          | accepted | 2026-07-21 |
-| [0003](./0003-bounded-public-feed-http.md)              | Bounded public feed HTTP boundary                                     | proposed | 2026-11-14 |
-| [0004](./0004-keyset-sweep-checkpoints.md)              | Keyset checkpoints for recurring batched sweeps                       | proposed | 2026-11-14 |
-| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source                   | proposed | 2026-11-14 |
-| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction       | proposed | 2026-11-14 |
-| [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test                | proposed | 2026-11-14 |
-| [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text            | proposed | 2026-11-14 |
-| [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors                     | proposed | 2026-11-14 |
-| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                       | proposed | 2026-11-16 |
-| [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                                   | proposed | 2026-11-16 |
-| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                        | proposed | 2026-11-16 |
-| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value                  | proposed | 2026-11-16 |
-| [0014](./0014-durable-takedown-suppression.md)          | Approved takedowns leave a durable suppression checked on every write | proposed | 2026-11-16 |
+| Number                                                  | Title                                                           | Status   | Date       |
+| ------------------------------------------------------- | --------------------------------------------------------------- | -------- | ---------- |
+| [0001](./0001-nested-settings-models.md)                | Nested settings models with hard cutover                        | accepted | 2026-07-20 |
+| [0002](./0002-enrichment-provider-registry.md)          | Enrichment provider registry                                    | accepted | 2026-07-21 |
+| [0003](./0003-bounded-public-feed-http.md)              | Bounded public feed HTTP boundary                               | proposed | 2026-11-14 |
+| [0004](./0004-keyset-sweep-checkpoints.md)              | Keyset checkpoints for recurring batched sweeps                 | proposed | 2026-11-14 |
+| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source             | proposed | 2026-11-14 |
+| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction | proposed | 2026-11-14 |
+| [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test          | proposed | 2026-11-14 |
+| [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text      | proposed | 2026-11-14 |
+| [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |
+| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | proposed | 2026-11-16 |
+| [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | proposed | 2026-11-16 |
+| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | proposed | 2026-11-16 |
+| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
+| [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | proposed | 2026-11-16 |
 
 ## Format
 

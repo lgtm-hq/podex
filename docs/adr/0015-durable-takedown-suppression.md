@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0014. Approved takedowns leave a durable suppression checked on every write
+# 0015. Takedowns leave a durable suppression checked on every write
 
 - Status: proposed
 - Date: 2026-11-16
@@ -48,9 +48,19 @@ scope it requested, in the same transaction and before any destructive step:
   keep their storage and opt-out semantics and record no suppression. So a
   purged raw transcript can be re-acquired and stored again under the existing
   retention and opt-out policy. Publication guarantees do not cover raw storage.
-- With either scope, execution also deletes the media summaries of every media
-  record mentioned in the covered content, since they may quote it. The next
-  summary is built without it.
+- Execution now also deletes media summaries that may quote the covered text;
+  before this decision it left them in place.
+  - **Which media.** A mention-only takedown of one mention covers that
+    mention's media record. Any other suppression covers every media record
+    mentioned in the covered episodes, because a derivatives takedown covers
+    whole episodes.
+  - **What is kept.** A summary is kept only when its stored provenance
+    (`source` = `media_metadata_mentions`, `mention_context_count` = 0) proves
+    it quoted no mention context. Without that proof it could quote the covered
+    text, so it is dropped.
+  - **How.** Rows are deleted through the session, and the case's
+    `metadata_json` records `media_summaries_dropped`. The next summary is built
+    without the covered text.
 - A non-null `suppression_key` (subject type, ids, scope) is unique, because a
   unique constraint over nullable id columns does not deduplicate. A media merge
   moves pair suppressions to the surviving record.
@@ -63,10 +73,14 @@ own alias, so it answers for the outer row whether it is given a literal id, a
 - **Reads.** Every read of `Mention` rows that reaches a user goes through
   `published_mentions` or `count_published_mentions`
   (`podex.services.content_suppression`). This covers public lists and counts,
-  stats, account alert evaluation, merge alert baselines and digest delivery.
-  Digest delivery also trims pending events to activity that is still published.
-  Media summaries read through `summary_source_mentions`, which also leaves out
-  derivative-suppressed episodes.
+  stats, account alert evaluation, merge alert baselines and digest delivery. A
+  media alert event records the ids of the mentions it reports (revision
+  `0023`). Delivery counts how many of those are still published: a takedown of
+  other mentions leaves the event unchanged, and one of its own reduces it. An
+  event with none left is held back. It is never deleted. Events raised before
+  ids were recorded are delivered with their stored counts. Media summaries read
+  through `summary_source_mentions`, which also leaves out derivative-suppressed
+  episodes.
 - **Enforced reads.** `tests/test_public_read_suppression.py` calls every public
   `GET` route in the OpenAPI schema, every signed-in `/me` route, alert
   evaluation and the digest email. It fails if any statement reads `mentions`
@@ -150,6 +164,11 @@ a new scope and an owner decision.
 - **Retention boundaries.** Purge and takedown serialisation of transcript
   objects and its lock remain with the retention work. When added, transcript
   locks come after the podcast lock.
+- **Alert events.** Revision `0023` adds a nullable mention id list to alert
+  events. The aggregate counts could not tell an event's own mentions from older
+  ones, and timestamps cannot either (second resolution on SQLite, transaction
+  start on PostgreSQL). An event whose mentions are all hidden stays pending and
+  undelivered.
 - **Migration.** Revision `0022` backfills suppressions from takedowns that
   already ran:
   - a mention case resolves only from the execution result its decision audit
