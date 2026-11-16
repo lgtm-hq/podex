@@ -73,6 +73,7 @@ from podex.services.transcript_retention import (
     TranscriptRetentionBlocker,
     TranscriptRetentionPolicy,
 )
+from podex.unusable_settings import UnusableSettingError
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -409,7 +410,7 @@ def purge_ops_transcript_endpoint(
             ),
             retention=settings.retention,
         )
-    except ValueError as error:
+    except (ValueError, UnusableSettingError) as error:
         db.rollback()
         raise HTTPException(status_code=409, detail=str(error)) from error
     if purged is None:
@@ -484,7 +485,7 @@ def decide_ops_takedown_request(
                 request=decided,
                 artifact_store=build_transcript_artifact_store(settings=settings),
             )
-        except ValueError as error:
+        except (ValueError, UnusableSettingError) as error:
             db.rollback()
             raise HTTPException(status_code=409, detail=str(error)) from error
         execution = OpsTakedownExecutionRead(

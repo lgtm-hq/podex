@@ -56,8 +56,9 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
         RateLimiter: A ready-to-use limiter matching the configured backend.
 
     Raises:
-        UnusableSettingError: When the Redis URL cannot be parsed; the
-            message names the setting and the error class only.
+        UnusableSettingError: When the Redis URL cannot be parsed, or its
+            connection options are rejected by the client's connection class;
+            the message names the setting and the error class only.
     """
     redis_url = settings.rate_limit.redis_url.get_secret_value()
     if not redis_url:
@@ -84,6 +85,20 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
         redis_url,
         socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
         socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    )
+    # The client connects lazily, so the URL's query options first reach the
+    # connection class on the first rate-limited request, whose errors quote
+    # them: an unknown option name (TypeError), a certificate-requirements
+    # flag (RedisError) or a port (ValueError). Build one unconnected
+    # connection from the client's own pool now, where these are reported by
+    # class only. No socket is opened and the client is used unchanged.
+    pool = client.connection_pool
+    connection_class: Callable[..., object] = pool.connection_class
+    connection_options: dict[str, object] = dict(pool.connection_kwargs)
+    without_setting_text(
+        lambda: connection_class(**connection_options),
+        source="PODEX_RATE_LIMIT__REDIS_URL",
+        failures=(redis.RedisError, TypeError, ValueError),
     )
     return RedisSlidingWindowRateLimiter(
         client,

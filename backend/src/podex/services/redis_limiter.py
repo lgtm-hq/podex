@@ -20,7 +20,9 @@ Design notes:
 * Redis outages must not take user traffic down. Every ``EVAL`` runs against a
   client with finite connect/socket timeouts (configured by the factory) and
   is guarded by a fail-open ``try``/``except redis.RedisError``: on error the
-  request is admitted so a broken cache never turns into a hard 5xx.
+  request is admitted so a broken cache never turns into a hard 5xx. The
+  failure is logged by its class only, because the client's connection errors
+  quote the configured host or socket path.
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from typing import TYPE_CHECKING, cast
 
 import redis
 
+from podex.sdk_log_rules import class_name
 from podex.services.limiter import RateLimitDecision
 
 if TYPE_CHECKING:
@@ -182,11 +185,13 @@ class RedisSlidingWindowRateLimiter:
                 self._ttl_seconds,
                 member,
             )
-        except redis.RedisError:
+        except redis.RedisError as error:
+            # By class only: the client's connection errors quote the
+            # configured host or socket path.
             _logger.warning(
-                "rate limiter redis check failed; failing open for key=%s",
+                "rate limiter redis check failed; failing open for key=%s: %s",
                 key,
-                exc_info=True,
+                class_name(error),
             )
             return self._fail_open_decision()
 
@@ -221,5 +226,8 @@ class RedisSlidingWindowRateLimiter:
         try:
             for raw_key in self._client.scan_iter(match=pattern):
                 self._client.delete(raw_key)
-        except redis.RedisError:
-            _logger.warning("rate limiter redis reset failed; ignoring", exc_info=True)
+        except redis.RedisError as error:
+            _logger.warning(
+                "rate limiter redis reset failed; ignoring: %s",
+                class_name(error),
+            )

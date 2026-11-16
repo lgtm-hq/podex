@@ -39,9 +39,15 @@ explicitly empty value does not generally select the default:
   the Alembic configuration), `PODEX_RATE_LIMIT__REDIS_URL` and
   `PODEX_OBSERVABILITY__SENTRY_DSN`, when they cannot be parsed, are reported by
   name and error class only. Non-credential settings may be quoted by the
-  library that parses them, and failures on first use (a Redis connection, the
-  object storage client) are not covered. Percent-encode `@`, `:`, `/`, `#` and
-  `?` in a URL password, and write `%%` for `%` in `alembic.ini`;
+  library that parses them. Percent-encode `@`, `:`, `/`, `#` and `?` in a URL
+  password, and write `%%` for `%` in `alembic.ini`;
+- on first use, the same applies to the Redis URL's connection options (an
+  option the Redis client rejects stops start-up), to
+  `PODEX_TRANSCRIPTS__S3_ENDPOINT_URL`, `PODEX_TRANSCRIPTS__S3_REGION_NAME` and
+  a non-ASCII `PODEX_TRANSCRIPTS__ENCRYPTION_KEY` (the ops purge and takedown
+  routes answer 409 with the setting name and error class), and a failed Redis
+  connection is logged by error class only. A storage endpoint that cannot be
+  reached is still quoted by the storage client's connection error;
 - the optional credential and provider strings in the table below treat an empty
   value as not configured, exactly as described in each row; this is why
   `.env.example` can leave them empty.

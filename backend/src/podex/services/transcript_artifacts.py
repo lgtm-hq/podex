@@ -10,8 +10,14 @@ from enum import StrEnum, auto
 from hashlib import sha256
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import urlsplit
 
 import boto3
+from botocore.utils import (
+    is_valid_endpoint_url,
+    is_valid_ipv6_endpoint_url,
+    validate_region_name,
+)
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy.orm import Session
 
@@ -24,6 +30,7 @@ from podex.services.transcript_acquisition import (
 from podex.services.transcript_retention_policies import (
     apply_stored_acquisition_opt_out,
 )
+from podex.unusable_settings import without_setting_text
 
 RAW_TRANSCRIPT_CONTENT_TYPE = "application/vnd.podex.transcript+json"
 ARTIFACT_VERIFICATION_FAILED = "Retained transcript artifact failed source verification"
@@ -125,8 +132,9 @@ class EncryptedFilesystemTranscriptArtifactStore:
         if not encryption_key:
             raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
         self.root_path = root_path
-        self.fernet = Fernet(encryption_key.encode("ascii"))
-        self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
+        key = _encryption_key_bytes(encryption_key)
+        self.fernet = Fernet(key)
+        self.key_id = sha256(key).hexdigest()[:16]
 
     def put_json(
         self,
@@ -196,8 +204,9 @@ class EncryptedS3TranscriptArtifactStore:
         if not encryption_key:
             raise ValueError("PODEX_TRANSCRIPTS__ENCRYPTION_KEY must be configured")
         self.bucket = bucket
-        self.fernet = Fernet(encryption_key.encode("ascii"))
-        self.key_id = sha256(encryption_key.encode("ascii")).hexdigest()[:16]
+        key = _encryption_key_bytes(encryption_key)
+        self.fernet = Fernet(key)
+        self.key_id = sha256(key).hexdigest()[:16]
         self.client = client or _build_s3_client(
             endpoint_url=endpoint_url,
             region_name=region_name,
@@ -277,11 +286,28 @@ def _build_s3_client(
     access_key_id: str,
     secret_access_key: str,
 ) -> S3ObjectClient:
-    """Build an S3 client using default credentials unless explicitly supplied."""
+    """Build an S3 client using default credentials unless explicitly supplied.
+
+    Raises:
+        UnusableSettingError: When the endpoint or the region is malformed;
+            the message names the setting and the error class only.
+        ValueError: When only one of the two static credentials is supplied.
+    """
     kwargs: dict[str, str] = {}
     if endpoint_url:
+        without_setting_text(
+            lambda: _check_storage_endpoint(endpoint_url),
+            source="PODEX_TRANSCRIPTS__S3_ENDPOINT_URL",
+            failures=(ValueError,),
+        )
         kwargs["endpoint_url"] = endpoint_url
     if region_name:
+        # The client's own region check; its error quotes the region.
+        without_setting_text(
+            lambda: validate_region_name(region_name),
+            source="PODEX_TRANSCRIPTS__S3_REGION_NAME",
+            failures=(ValueError,),
+        )
         kwargs["region_name"] = region_name
     if access_key_id or secret_access_key:
         if not access_key_id or not secret_access_key:
@@ -290,6 +316,46 @@ def _build_s3_client(
         kwargs["aws_secret_access_key"] = secret_access_key
     client: S3ObjectClient = boto3.client("s3", **kwargs)
     return client
+
+
+def _check_storage_endpoint(endpoint_url: str) -> None:
+    """Apply the checks the S3 client makes before using an endpoint.
+
+    Building the client requires a valid host name or IPv6 address; each
+    bucket request then requires an ``http`` or ``https`` URL without a query
+    whose port, if any, is a number (the S3 endpoint rules' URL check). The
+    client's errors for these quote the endpoint; this raises ``ValueError``
+    without it. ``urlsplit`` raises ``ValueError`` itself for a malformed IPv6
+    address or port.
+    """
+    client_check: bool = bool(
+        is_valid_endpoint_url(endpoint_url) or is_valid_ipv6_endpoint_url(endpoint_url),
+    )
+    parts = urlsplit(endpoint_url)
+    well_formed = (
+        client_check
+        and parts.scheme in {"http", "https"}
+        and not parts.query
+        # Reading the port raises ValueError unless it is a number in range.
+        and (parts.port is None or parts.port >= 0)
+    )
+    if not well_formed:
+        raise ValueError("Invalid endpoint")
+
+
+def _encryption_key_bytes(encryption_key: str) -> bytes:
+    """Encode the configured encryption key as the cipher expects.
+
+    Raises:
+        UnusableSettingError: When the key is not ASCII; the encoding error
+            would quote part of it, so only the setting and class are named.
+    """
+    encoded: bytes = without_setting_text(
+        lambda: encryption_key.encode("ascii"),
+        source="PODEX_TRANSCRIPTS__ENCRYPTION_KEY",
+        failures=(UnicodeEncodeError,),
+    )
+    return encoded
 
 
 def persist_transcript_acquisition(
