@@ -46,13 +46,8 @@ def _quarter_vector(seed: int) -> list[float]:
 def _add_transcript(db: Session, *, slug: str, text_value: str = "") -> Transcript:
     """Add and flush a podcast, episode and transcript without committing."""
     podcast = Podcast(name=f"Show {slug}", slug=slug)
-    db.add(podcast)
-    db.flush()
-    episode = Episode(podcast_id=podcast.id, title=f"Episode {slug}")
-    db.add(episode)
-    db.flush()
     transcript = Transcript(
-        episode_id=episode.id,
+        episode=Episode(podcast=podcast, title=f"Episode {slug}"),
         provider="podscripts",
         raw_text=text_value,
         cleaned_text=text_value,

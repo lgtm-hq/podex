@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import TypeDecorator, TypeEngine, UserDefinedType
 
 from podex.models.base import Base
 
@@ -19,6 +19,43 @@ if TYPE_CHECKING:
 
     from podex.models.episode import Episode
     from podex.models.transcript import Transcript
+
+
+class PostgresVectorBind(UserDefinedType[list[float] | None]):
+    """PostgreSQL implementation type of ``PgVectorType``.
+
+    ``render_bind_cast`` makes the psycopg dialect, which renders a cast on
+    every bound parameter, write ``%(name)s::vector(N)`` instead of the
+    ``::VARCHAR`` it would render for the ``Text`` implementation, which
+    PostgreSQL refuses to assign to a ``vector`` column. ``None`` therefore
+    binds as ``NULL::vector(N)``. The value itself stays pgvector's text form.
+    """
+
+    cache_ok = True
+    render_bind_cast = True
+
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+
+    def get_col_spec(self, **_kwargs: Any) -> str:
+        """Return the pgvector type with this column's dimension."""
+        return f"vector({self.dimensions})"
+
+    def _with_collation(
+        self,
+        collation: str,
+        collation_schema: str | None = None,
+    ) -> PostgresVectorBind:
+        """Refuse ``COLLATE``: pgvector values have no collation.
+
+        Args:
+            collation: Requested collation name.
+            collation_schema: Schema of the requested collation.
+
+        Raises:
+            NotImplementedError: Always; vectors cannot be collated.
+        """
+        raise NotImplementedError(f"vector values have no collation: {collation}")
 
 
 # SQLAlchemy uses process_bind_param for literal fallback when this optional
@@ -37,6 +74,19 @@ class PgVectorType(TypeDecorator[list[float] | None]):
     ) -> None:
         super().__init__(**kwargs)
         self.dimensions = dimensions
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        """Bind as pgvector on PostgreSQL and as text everywhere else.
+
+        Args:
+            dialect: SQLAlchemy dialect the type is used with.
+
+        Returns:
+            The implementation type for ``dialect``.
+        """
+        if dialect.name == "postgresql":
+            return PostgresVectorBind(self.dimensions)
+        return super().load_dialect_impl(dialect)
 
     def process_bind_param(
         self,
