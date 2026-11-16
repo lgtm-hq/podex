@@ -1,9 +1,14 @@
 """Tests for ops podcast management queries, commands, and audit log."""
 
+from typing import Any
+
+import pytest
 from assertpy import assert_that
+from fastapi.testclient import TestClient
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
-from podex.models import AuditAction, Podcast, PodcastStatus
+from podex.models import AuditAction, AuditLog, DiscoverySource, Podcast, PodcastStatus
 from podex.services.audit_log import list_audit_logs, record_audit_log
 from podex.services.ops_podcast_commands import (
     CreateOpsPodcastInputData,
@@ -18,7 +23,16 @@ from podex.services.ops_podcast_queries import (
     get_ops_podcast_by_id,
     list_ops_podcasts,
 )
-from tests.conftest import seed_catalog_graph
+from tests.conftest import enable_ops, seed_catalog_graph
+
+_OPS_KEY = "ops-podcasts-test-key"
+_SOURCE_FIELDS = (
+    "rss_url",
+    "spotify_id",
+    "apple_id",
+    "youtube_channel_id",
+    "podscripts_slug",
+)
 
 
 def test_create_and_get_ops_podcast(db_session: Session) -> None:
@@ -180,3 +194,316 @@ def test_audit_log_records_and_lists(db_session: Session) -> None:
     paged = list_audit_logs(db=db_session, page=2, per_page=1)
     assert_that(paged.items).is_length(1)
     assert_that(paged.items[0].action).is_equal_to(AuditAction.CREATE_PODCAST)
+
+
+def _stored_row(db: Session, podcast_id: int) -> dict[str, Any]:
+    """Read the podcast row with SQL, bypassing the session's pending changes."""
+    row = db.execute(
+        text(
+            "SELECT name, slug, status, discovery_source, cover_url, rss_url "
+            "FROM podcasts WHERE id = :podcast_id",
+        ),
+        {"podcast_id": podcast_id},
+    ).mappings()
+    return dict(row.one())
+
+
+def _podcast_count(db: Session) -> int:
+    """Return the number of podcast rows."""
+    count: int | None = db.scalar(select(func.count()).select_from(Podcast))
+    return count or 0
+
+
+def _existing_podcast(db: Session) -> int:
+    """Create and commit one fully populated podcast; return its id."""
+    created = create_ops_podcast(
+        db=db,
+        payload=CreateOpsPodcastInputData(
+            name="The Example Show",
+            slug="example-show",
+            status=PodcastStatus.ACTIVE,
+            cover_url="https://cdn.example/cover.jpg",
+            discovery_source="rss",
+            sources=OpsPodcastSourceInputData(
+                rss_url="https://example.com/feed.xml",
+                spotify_id="spotify-original",
+                apple_id="apple-original",
+                youtube_channel_id="youtube-original",
+                podscripts_slug="podscripts-original",
+            ),
+        ),
+    )
+    db.commit()
+    podcast_id: int = created.id
+    return podcast_id
+
+
+def test_create_rejects_unknown_discovery_source_without_writing(
+    db_session: Session,
+) -> None:
+    """An unknown discovery source fails creation before any row is added."""
+    with pytest.raises(ValueError, match="'bogus' is not a valid DiscoverySource"):
+        create_ops_podcast(
+            db=db_session,
+            payload=CreateOpsPodcastInputData(
+                name="The Example Show",
+                slug="example-show",
+                status=PodcastStatus.WATCHLIST,
+                discovery_source="bogus",
+            ),
+        )
+
+    assert_that(db_session.new).is_empty()
+    assert_that(_podcast_count(db_session)).is_zero()
+
+
+def test_create_without_discovery_source_stores_none(db_session: Session) -> None:
+    """Omitting the discovery source stores no source and no identifiers."""
+    created = create_ops_podcast(
+        db=db_session,
+        payload=CreateOpsPodcastInputData(
+            name="The Example Show",
+            slug="example-show",
+            status=PodcastStatus.WATCHLIST,
+        ),
+    )
+    db_session.commit()
+
+    assert_that(created.status).is_equal_to(PodcastStatus.WATCHLIST)
+    assert_that(_stored_row(db_session, created.id)["discovery_source"]).is_none()
+    assert_that(created.sources.rss_url).is_none()
+
+
+@pytest.mark.parametrize(
+    ("field", "message"),
+    [
+        ("name", "name cannot be cleared"),
+        ("slug", "slug cannot be cleared"),
+        ("status", "status cannot be cleared"),
+    ],
+)
+def test_update_rejects_clearing_a_required_field(
+    db_session: Session,
+    field: str,
+    message: str,
+) -> None:
+    """Clearing name, slug or status is rejected and no row changes."""
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    with pytest.raises(ValueError) as caught:
+        update_ops_podcast(
+            db=db_session,
+            podcast_id=podcast_id,
+            payload=UpdateOpsPodcastInputData(provided_fields=frozenset({field})),
+        )
+
+    assert_that(str(caught.value)).is_equal_to(message)
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
+
+
+def test_rejected_update_writes_none_of_its_valid_fields(db_session: Session) -> None:
+    """A valid rename in the same payload as a cleared slug is not written."""
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    with pytest.raises(ValueError, match="^slug cannot be cleared$"):
+        update_ops_podcast(
+            db=db_session,
+            podcast_id=podcast_id,
+            payload=UpdateOpsPodcastInputData(
+                provided_fields=frozenset({"name", "slug", "cover_url"}),
+                name="Renamed Show",
+                slug=None,
+                cover_url=None,
+            ),
+        )
+
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
+    db_session.rollback()
+    assert_that(_stored_row(db_session, podcast_id)["name"]).is_equal_to(
+        "The Example Show",
+    )
+
+
+def test_update_rejects_unknown_discovery_source(db_session: Session) -> None:
+    """An unknown discovery source is rejected and the stored source is kept."""
+    podcast_id = _existing_podcast(db_session)
+
+    with pytest.raises(ValueError, match="'bogus' is not a valid DiscoverySource"):
+        update_ops_podcast(
+            db=db_session,
+            podcast_id=podcast_id,
+            payload=UpdateOpsPodcastInputData(
+                provided_fields=frozenset({"discovery_source"}),
+                discovery_source="bogus",
+            ),
+        )
+
+    # The enum column stores member names.
+    assert_that(_stored_row(db_session, podcast_id)["discovery_source"]).is_equal_to(
+        DiscoverySource.RSS.name,
+    )
+
+
+@pytest.mark.parametrize("value", ["spotify", None])
+def test_update_sets_or_clears_cover_and_discovery_source(
+    db_session: Session,
+    value: str | None,
+) -> None:
+    """Provided cover and discovery source fields are written, including None."""
+    podcast_id = _existing_podcast(db_session)
+    cover = None if value is None else "https://cdn.example/new.jpg"
+
+    updated = update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(
+            provided_fields=frozenset({"cover_url", "discovery_source"}),
+            cover_url=cover,
+            discovery_source=value,
+        ),
+    )
+    db_session.commit()
+
+    assert_that(updated).is_not_none()
+    row = _stored_row(db_session, podcast_id)
+    assert_that(row["cover_url"]).is_equal_to(cover)
+    assert_that(row["discovery_source"]).is_equal_to(
+        None if value is None else DiscoverySource(value).name,
+    )
+    assert_that(row["name"]).is_equal_to("The Example Show")
+
+
+def test_update_writes_status_and_slug(db_session: Session) -> None:
+    """Provided status and slug values replace the stored ones."""
+    podcast_id = _existing_podcast(db_session)
+
+    updated = update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(
+            provided_fields=frozenset({"status", "slug"}),
+            status=PodcastStatus.PAUSED,
+            slug="example-show-renamed",
+        ),
+    )
+    db_session.commit()
+
+    if updated is None:
+        raise AssertionError("expected the podcast to be found")
+    assert_that(updated.status).is_equal_to(PodcastStatus.PAUSED)
+    assert_that(updated.slug).is_equal_to("example-show-renamed")
+    assert_that(_stored_row(db_session, podcast_id)["status"]).is_equal_to(
+        PodcastStatus.PAUSED.name,
+    )
+
+
+@pytest.mark.parametrize("field", _SOURCE_FIELDS)
+def test_update_changes_only_the_listed_source_field(
+    db_session: Session,
+    field: str,
+) -> None:
+    """Only the source fields named in ``source_fields`` are written."""
+    podcast_id = _existing_podcast(db_session)
+    replacement = OpsPodcastSourceInputData(
+        **{name: f"{name}-replacement" for name in _SOURCE_FIELDS},
+    )
+
+    updated = update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(
+            source_fields=frozenset({field}),
+            sources=replacement,
+        ),
+    )
+    db_session.commit()
+
+    if updated is None:
+        raise AssertionError("expected the podcast to be found")
+    sources = updated.sources
+    original = {
+        "rss_url": "https://example.com/feed.xml",
+        "spotify_id": "spotify-original",
+        "apple_id": "apple-original",
+        "youtube_channel_id": "youtube-original",
+        "podscripts_slug": "podscripts-original",
+    }
+    expected = {**original, field: f"{field}-replacement"}
+    assert_that({name: getattr(sources, name) for name in _SOURCE_FIELDS}).is_equal_to(
+        expected,
+    )
+
+
+def test_update_clears_every_listed_source_field(db_session: Session) -> None:
+    """Listing every source field with empty values clears all identifiers."""
+    podcast_id = _existing_podcast(db_session)
+
+    updated = update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(
+            source_fields=frozenset(_SOURCE_FIELDS),
+            sources=OpsPodcastSourceInputData(),
+        ),
+    )
+    db_session.commit()
+
+    if updated is None:
+        raise AssertionError("expected the podcast to be found")
+    assert_that(
+        [getattr(updated.sources, name) for name in _SOURCE_FIELDS],
+    ).is_equal_to([None] * len(_SOURCE_FIELDS))
+
+
+def test_source_field_names_without_sources_change_nothing(
+    db_session: Session,
+) -> None:
+    """Naming source fields without a sources payload leaves identifiers intact."""
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(source_fields=frozenset(_SOURCE_FIELDS)),
+    )
+    db_session.commit()
+
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
+
+
+@pytest.mark.parametrize(
+    ("body", "detail"),
+    [
+        ({"name": None}, "name cannot be cleared"),
+        ({"name": "Renamed Show", "slug": None}, "slug cannot be cleared"),
+        ({"status": None}, "status cannot be cleared"),
+        ({"discovery_source": "bogus"}, "'bogus' is not a valid DiscoverySource"),
+    ],
+    ids=["name", "slug-with-rename", "status", "discovery-source"],
+)
+def test_api_update_validation_returns_422_and_changes_nothing(
+    client: TestClient,
+    db_session: Session,
+    body: dict[str, Any],
+    detail: str,
+) -> None:
+    """The ops endpoint reports the service's validation message as a 422."""
+    enable_ops(client, api_key=_OPS_KEY)
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    response = client.patch(
+        f"/api/v2/ops/podcasts/{podcast_id}",
+        json=body,
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(response.status_code).is_equal_to(422)
+    assert_that(response.json()["detail"]).is_equal_to(detail)
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
+    assert_that(
+        db_session.scalar(select(func.count()).select_from(AuditLog)),
+    ).is_zero()
