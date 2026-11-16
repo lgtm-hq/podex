@@ -14,8 +14,8 @@ the rules it applies:
   exception reprs after ``exception=``, URL userinfo and the configured
   secret values.
 
-Every scan is linear and capped: a string is inspected up to
-:data:`MAX_TEXT` characters and the remainder replaced by a marker, and
+Every scan is linear and capped: a string longer than :data:`MAX_TEXT`
+characters is withheld whole (type and size, never a prefix), and
 containers are read up to :data:`MAX_ITEMS` entries.
 """
 
@@ -72,11 +72,14 @@ SAFE_HEADER_PREFIXES = ("anthropic-ratelimit-", "x-ratelimit-")
 
 CREDENTIAL_KEYS = frozenset(
     {
+        "accesskeyid",
         "accesstoken",
         "apikey",
         "auth",
         "authorization",
         "awsaccesskeyid",
+        "awssecretaccesskey",
+        "awssessiontoken",
         "clientsecret",
         "code",
         "codeverifier",
@@ -92,7 +95,10 @@ CREDENTIAL_KEYS = frozenset(
         "pwd",
         "refreshtoken",
         "secret",
+        "secretaccesskey",
+        "securitytoken",
         "session",
+        "sessiontoken",
         "setcookie",
         "sig",
         "signature",
@@ -131,14 +137,13 @@ CREDENTIAL_SUFFIXES = ("_auth", "_key", "_secret", "_token")
 MESSAGE_WITHHELD = "[message withheld]"
 
 MAX_TEXT = 8_192
-"""Characters of one string or rendered message inspected; the rest is cut."""
+"""Longest string or rendered message inspected; a longer one is withheld."""
 
 MAX_ITEMS = 1_000
 """Entries of one record's containers inspected; beyond, a placeholder."""
 
 _MAX_NAME = 256
-_CUT_WINDOW = 256
-_CUT_DELIMITERS = " \t\r\n,;&'\"{}()[]<>"
+_AUTHORIZATION_NAMES = frozenset({"authorization", "proxyauthorization"})
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _WORD_SPLIT_RE = re.compile(r"[\s.\-]+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
@@ -148,6 +153,11 @@ _FIELD_NAME_RE = re.compile(
 )
 _BARE_AFTER_COLON_RE = re.compile(r"""[^\r\n,;}'"]*""")
 _BARE_AFTER_EQUALS_RE = re.compile(r"""[^\s&#,;'"}\])]*""")
+# An authorization value is a scheme and a credential separated by a space
+# (``Bearer <token>``, ``Basic <base64>``): both are masked together.
+_BARE_AUTHORIZATION_RE = re.compile(
+    r"""(?:[A-Za-z][A-Za-z0-9\-]{0,31}[ ]+)?[^\s,;&'"}\])]*""",
+)
 _QUOTED_REST_RE = {
     "'": re.compile(r"(?:[^'\\]|\\.)*'", re.DOTALL),
     '"': re.compile(r'(?:[^"\\]|\\.)*"', re.DOTALL),
@@ -258,29 +268,44 @@ def reason_phrase(status: object) -> str:
     return phrase
 
 
-def cap_text(text: str) -> str:
-    """Cut text to :data:`MAX_TEXT` characters, at a delimiter if one is near.
+def is_oversized(text: str) -> bool:
+    """Return whether text is too long to inspect and must be withheld.
 
     Args:
         text: Any text.
 
     Returns:
-        str: The text, or its head and ``[N characters withheld]``.
+        bool: True past :data:`MAX_TEXT` characters.
     """
-    if len(text) <= MAX_TEXT:
-        return text
-    window = text[MAX_TEXT - _CUT_WINDOW : MAX_TEXT]
-    boundary = max(window.rfind(delimiter) for delimiter in _CUT_DELIMITERS)
-    cut = MAX_TEXT - _CUT_WINDOW + boundary if boundary >= 0 else MAX_TEXT
-    return f"{text[:cut]}[{len(text) - cut} characters withheld]"
+    return len(text) > MAX_TEXT
 
 
-def _value_end(text: str, start: int, colon: bool) -> tuple[int, str]:
+def redact_configured(text: str) -> str:
+    """Replace URL userinfo and the configured secret values in ``text``.
+
+    Args:
+        text: Text built by the boundary itself, such as a traceback.
+
+    Returns:
+        str: The text after the configured-value redactor.
+    """
+    redacted: str = _REDACTOR.redact(text)
+    return redacted
+
+
+def _value_end(
+    text: str,
+    start: int,
+    colon: bool,
+    authorization: bool,
+) -> tuple[int, str]:
     """Return where a field value starting at ``start`` ends, and its mask.
 
     A quoted (or ``b``-prefixed quoted) value runs to its closing quote, or
-    to the end if unclosed; a bare value after ``:`` runs to the end of the
-    line or a separator, after ``=`` to the next query or field separator.
+    to the end if unclosed. A bare authorization value keeps its scheme and
+    credential together and runs to a separator; another bare value after
+    ``:`` runs to the end of the line or a separator, after ``=`` to the
+    next query or field separator.
     """
     if text.startswith(REDACTED, start):
         return start, ""
@@ -294,10 +319,11 @@ def _value_end(text: str, start: int, colon: bool) -> tuple[int, str]:
         closed = _QUOTED_REST_RE[quote_char].match(text, position + 1)
         end = closed.end() if closed else len(text)
         return end, f"{prefix}{quote_char}{REDACTED}{quote_char}"
-    bare = (_BARE_AFTER_COLON_RE if colon else _BARE_AFTER_EQUALS_RE).match(
-        text,
-        start,
-    )
+    if authorization:
+        pattern = _BARE_AUTHORIZATION_RE
+    else:
+        pattern = _BARE_AFTER_COLON_RE if colon else _BARE_AFTER_EQUALS_RE
+    bare = pattern.match(text, start)
     return (bare.end() if bare else start), REDACTED
 
 
@@ -322,7 +348,13 @@ def mask_credential_fields(text: str) -> str:
         if field.start() < position or not is_credential_key(field.group("name")):
             continue
         start = field.end()
-        end, mask = _value_end(text, start, field.group("colon") is not None)
+        name = _text_name(field.group("name")) or ""
+        end, mask = _value_end(
+            text,
+            start,
+            field.group("colon") is not None,
+            _NON_ALNUM_RE.sub("", name.lower()) in _AUTHORIZATION_NAMES,
+        )
         if end == start:
             continue
         parts.append(text[position:start])
@@ -352,11 +384,13 @@ def sanitise_text(text: str) -> str:
         text: A rendered log message or argument.
 
     Returns:
-        str: The capped text without wire header values outside the
-            allowlist, exception messages, credential field values, URL
-            userinfo or configured secrets.
+        str: The text without wire header values outside the allowlist,
+            exception messages, credential field values, URL userinfo or
+            configured secrets; text past :data:`MAX_TEXT` characters is
+            withheld whole.
     """
-    text = cap_text(text)
+    if is_oversized(text):
+        return withheld(text)
     text = _HEADER_PAIR_RE.sub(_mask_header_pair, text)
     text = _EXCEPTION_REPR_RE.sub(rf"\g<head>({MESSAGE_WITHHELD})", text)
     redacted: str = _REDACTOR.redact(mask_credential_fields(text))
@@ -388,7 +422,8 @@ def safe_url(url: str) -> str:
     Returns:
         str: For example ``https://[redacted]@host/path?token=[redacted]&page=2``.
     """
-    url = cap_text(url)
+    if is_oversized(url):
+        return withheld(url)
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -471,9 +506,11 @@ def _safe_header_value(value: object) -> object:
     if isinstance(value, str):
         return sanitise_text(value)
     if isinstance(value, bytes):
-        text = value[:MAX_TEXT].decode("latin-1")
+        if len(value) > MAX_TEXT:
+            return withheld(value)
+        text = value.decode("latin-1")
         cleaned = sanitise_text(text)
-        return value if cleaned == text and len(value) <= MAX_TEXT else cleaned
+        return value if cleaned == text else cleaned
     return value if isinstance(value, int | float) else REDACTED
 
 
@@ -513,3 +550,43 @@ def header_value(name: str, value: object) -> object:
     if value is None:
         return None
     return _safe_header_value(value) if is_safe_header(name) else REDACTED
+
+
+def _attribute(value: object, name: str) -> object:
+    """Return an attribute, or None if it is missing or reading it fails."""
+    found: object = None
+    with contextlib.suppress(Exception):
+        found = getattr(value, name, None)
+    return found
+
+
+def message_object_skeleton(value: object) -> str | None:
+    """Render a request- or response-like object by its structure, if it is one.
+
+    An object with ``method``, ``url`` and ``headers`` (an SDK's prepared
+    request) prints its method, safe URL and allowlisted headers; one with
+    ``status_code`` and ``headers`` prints its status and headers. Bodies are
+    never printed.
+
+    Args:
+        value: Any object.
+
+    Returns:
+        str | None: The skeleton, or None if the object has neither shape.
+    """
+    headers = _attribute(value, "headers")
+    if headers is None:
+        return None
+    method = _attribute(value, "method")
+    url = _attribute(value, "url")
+    if method is not None and url is not None:
+        return (
+            f"<{type(value).__name__} method={sanitise_text(str(method))} "
+            f"url={safe_url(str(url))} headers={safe_headers(headers)}>"
+        )
+    status = _attribute(value, "status_code")
+    if isinstance(status, int):
+        return (
+            f"<{type(value).__name__} status={status} headers={safe_headers(headers)}>"
+        )
+    return None

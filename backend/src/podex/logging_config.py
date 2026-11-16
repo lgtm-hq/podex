@@ -196,17 +196,19 @@ def _sanitising_record(
 ) -> logging.LogRecord:
     """Create a record with the inner factory, then apply the boundaries.
 
-    Database text is withheld from every record; a record from a
-    third-party SDK logger also loses credentials, bodies, provider text and
-    error text. Never raises from sanitising: on any failure the record's
-    content is replaced by placeholders instead.
+    A record from a third-party SDK logger passes the SDK boundary, which
+    prints exceptions by class only and so also withholds database text;
+    every other record has database text withheld. Never raises from
+    sanitising: on any failure the record's content is replaced by
+    placeholders instead.
     """
     record: logging.LogRecord = inner(*args, **kwargs)
     sanitised = False
     with contextlib.suppress(Exception):
-        sanitise_database_errors(record)
         if is_sdk_logger(record.name):
             sanitise_sdk_record(record)
+        else:
+            sanitise_database_errors(record)
         sanitised = True
     if not sanitised:
         _replace_with_placeholder(record)

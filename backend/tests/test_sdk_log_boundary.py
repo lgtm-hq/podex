@@ -62,7 +62,7 @@ def test_internal_failure_yields_placeholder_and_no_content(
         try:
             raise httpx.ConnectError(f"refused: {secret}")
         except httpx.ConnectError:
-            logging.getLogger("httpx").debug(
+            logging.getLogger("httpx").warning(
                 "request to %s failed",
                 httpx.URL(f"https://reader:{secret}@api.example.test/"),
                 exc_info=True,
@@ -228,10 +228,10 @@ def test_record_shapes_are_rendered_safely(caplog: pytest.LogCaptureFixture) -> 
     secret = synthetic_secret("shapes")
     with debug_logging(caplog, (secret,)):
         sdk = logging.getLogger("botocore.endpoint")
-        sdk.debug("%(method)s %(token)s", {"method": "GET", "token": secret})
-        sdk.debug("params: %s", {"headers": {"Cookie": secret}, "body": secret})
-        sdk.debug(ValueError(secret))
-        sdk.debug(
+        sdk.warning("%(method)s %(token)s", {"method": "GET", "token": secret})
+        sdk.warning("params: %s", {"headers": {"Cookie": secret}, "body": secret})
+        sdk.warning(ValueError(secret))
+        sdk.warning(
             "response: %r and %s",
             httpx.Response(503, headers={"X-Trace": secret}),
             [secret.encode(), (secret, {"nested": [{"deep": {"deeper": secret}}]})],
@@ -309,7 +309,7 @@ def test_placeholders_inside_quotes_or_after_a_prefix_are_masked(
     """The rendered message is scanned whole, so split fields are masked."""
     secret = synthetic_secret("split")
     with debug_logging(caplog):
-        logging.getLogger(logger_name).debug(message, secret)
+        logging.getLogger(logger_name).warning(message, secret)
 
     record = caplog.records[-1]
     assert_that(logged(caplog)).does_not_contain(secret)
@@ -346,9 +346,9 @@ def test_former_spotify_filter_cases_hold_through_the_boundary(
     with debug_logging(caplog):
         spotify = logging.getLogger("spotipy.oauth2")
         if shape == "formatted":
-            spotify.debug(message)
+            spotify.warning(message)
         else:
-            spotify.debug("%s", message)
+            spotify.warning("%s", message)
 
     assert_that(caplog.records[-1].getMessage()).is_equal_to(expected)
     for value in ("YWJjOmRlZg==", "tok'", "r1", "c1"):
@@ -377,7 +377,7 @@ def test_failure_clears_cached_traceback_and_stack_text(
         install_log_boundaries()
         with debug_logging(caplog):
             monkeypatch.setattr(sdk_log_boundary, "sanitise_text", broken)
-            logging.getLogger("httpx").debug("request %s", secret)
+            logging.getLogger("httpx").warning("request %s", secret)
     finally:
         logging.setLogRecordFactory(previous)
 
@@ -411,7 +411,9 @@ _WIDE = 100_000
         pytest.param("items: %s", list(range(_WIDE)), id="wide-list"),
     ],
 )
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.WARNING])
 def test_wide_records_are_cleaned_in_bounded_time(
+    level: int,
     message: str,
     argument: object,
     caplog: pytest.LogCaptureFixture,
@@ -420,7 +422,7 @@ def test_wide_records_are_cleaned_in_bounded_time(
     sdk = logging.getLogger("botocore.endpoint")
 
     def log() -> None:
-        sdk.debug(message, argument)
+        sdk.log(level, message, argument)
 
     with debug_logging(caplog):
         log()
@@ -428,7 +430,7 @@ def test_wide_records_are_cleaned_in_bounded_time(
         log()
         elapsed = time.perf_counter() - started
 
-    assert_that(elapsed).is_less_than(0.1)
+    assert_that(elapsed).is_less_than(0.05)
     assert_that(len(caplog.records[-1].getMessage())).is_less_than(20_000)
 
 
@@ -487,7 +489,7 @@ def test_star_width_placeholders_keep_labels_aligned(
     secret = synthetic_secret("star")
     body = f"<Error>{secret}</Error>".encode()
     with debug_logging(caplog):
-        logging.getLogger("botocore.parsers").debug(
+        logging.getLogger("botocore.parsers").warning(
             "%*s %.*s Response body: %r",
             4,
             "id",

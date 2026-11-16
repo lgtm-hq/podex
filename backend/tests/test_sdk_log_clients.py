@@ -295,9 +295,9 @@ def test_connection_layer_masks_response_headers(
     assert_that(response.status_code).is_equal_to(200)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', "
-        "[(b'Content-Type', b'text/plain'), (b'Set-Cookie', b'[redacted]'), "
-        "(b'X-Provider-Trace', b'[redacted]')",
+        "receive_response_headers.complete protocol=HTTP/1.1 status=200 "
+        "headers={'Content-Type': 'text/plain', 'Set-Cookie': '[redacted]', "
+        "'X-Provider-Trace': '[redacted]'",
         f"connect_tcp.started host='{_API_HOST}'",
     )
 
@@ -318,8 +318,7 @@ def test_connection_layer_failure_withholds_error_text(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "receive_response_headers.failed exception=RemoteProtocolError("
-        "[message withheld])",
+        "receive_response_headers.failed exception=RemoteProtocolError",
     )
 
 
