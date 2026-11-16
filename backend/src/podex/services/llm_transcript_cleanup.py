@@ -29,6 +29,7 @@ DEFAULT_CLEANUP_MODEL = "claude-opus-4-8"
 _MAX_OUTPUT_TOKENS = 8000
 _MIN_TRANSCRIPT_CHARS = 100
 _MAX_TERMINOLOGY_TERMS = 50
+_MAX_LOOKBACK_CHARS = 1000
 
 
 @dataclass
@@ -44,23 +45,30 @@ class CleanupCorrection:
 class CleanupResult:
     """Outcome of one cleanup run: cleaned text plus corrections made.
 
-    ``cleaned_text`` always covers the whole input. When the input is longer
-    than the request limit, only its head is sent to the model; the rest is
-    appended verbatim after the cleaned head and counted in
-    ``uncleaned_chars``. On a failed request ``cleaned_text`` is the original
-    input and ``success`` is False.
+    Only the head of the input (at most the request limit) is sent to the
+    model. ``cleaned_text`` is the model's text for that head followed by the
+    original tail, or the whole original input when the model's text is not
+    used: the request failed, the reply omitted ``cleaned_text``, gave a
+    non-string, or gave blank text for a non-blank head. The tail is never
+    dropped. The model's text for the head is used as returned, so it may
+    differ from the head in length or wording. ``success`` only says that no
+    error occurred.
 
     Attributes:
-        cleaned_text: Cleaned head followed by any uncleaned tail.
-        corrections_made: Corrections the model reported for the head.
+        cleaned_text: Model-cleaned head plus original tail, or the input.
+        corrections_made: Corrections the model reported.
         errors: Allowlisted failure descriptors; empty on success.
-        uncleaned_chars: Trailing input characters never sent to the model.
+        uncleaned_chars: Characters of ``cleaned_text`` copied from the input
+            without cleaning: the tail when ``head_cleaned`` is true,
+            otherwise the whole input.
+        head_cleaned: Whether the model's text replaced the head.
     """
 
     cleaned_text: str
     corrections_made: list[CleanupCorrection] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     uncleaned_chars: int = 0
+    head_cleaned: bool = False
 
     @property
     def success(self) -> bool:
@@ -69,13 +77,13 @@ class CleanupResult:
 
     @property
     def partial(self) -> bool:
-        """Return True if the end of the input was not sent for cleanup."""
-        return self.uncleaned_chars > 0
+        """Return True if the head was cleaned but an uncleaned tail follows."""
+        return self.head_cleaned and self.uncleaned_chars > 0
 
     @property
     def fully_cleaned(self) -> bool:
-        """Return True if cleanup succeeded and covered the whole input."""
-        return self.success and not self.partial
+        """Return True if the model's text covers the whole input."""
+        return self.success and not self.partial and self.head_cleaned
 
     @property
     def correction_count(self) -> int:
@@ -87,25 +95,51 @@ def _split_at_limit(text: str, max_chars: int) -> tuple[str, str]:
     """Split text into the head sent for cleanup and the verbatim tail.
 
     Text within the limit is sent whole. Longer text is cut at the last
-    whitespace character at or before index ``max_chars``, so the tail starts
-    with that whitespace and no word is split between head and tail. Without
-    such whitespace the cut falls exactly at ``max_chars``.
+    character ``str.isspace`` accepts among indices ``max_chars - lookback``
+    to ``max_chars``, where ``lookback`` is ``min(max_chars // 10, 1000)``;
+    the tail then starts with that character. Without such a character the
+    cut falls exactly at ``max_chars``, which may split a word: a model that
+    completes the half word then yields a doubled fragment once the tail is
+    appended. A combining mark, or the ``\n`` of a CRLF line break, can also
+    end up on the other side of the cut from the character it belongs to.
 
     Args:
         text: Full transcript text.
         max_chars: Maximum characters sent to the model.
 
     Returns:
-        Tuple of (head, tail); the tail is empty when nothing is cut.
+        Tuple of (head, tail); ``head + tail == text``.
     """
     if len(text) <= max_chars:
         return text, ""
-    cut = max_chars
-    for index in range(max_chars, 0, -1):
+    lookback = min(max_chars // 10, _MAX_LOOKBACK_CHARS)
+    for index in range(max_chars, max_chars - lookback - 1, -1):
         if text[index].isspace():
-            cut = index
-            break
-    return text[:cut], text[cut:]
+            return text[:index], text[index:]
+    return text[:max_chars], text[max_chars:]
+
+
+def _apply_cleaned_head(
+    result: CleanupResult,
+    reply_head: object,
+    head: str,
+    tail: str,
+) -> None:
+    """Use the model's head when it is usable text; otherwise keep the input.
+
+    Args:
+        result: Result to update; it already holds the original input.
+        reply_head: ``cleaned_text`` value from the reply, if any.
+        head: Original head sent to the model.
+        tail: Original tail that was not sent.
+    """
+    if not isinstance(reply_head, str):
+        return
+    if head.strip() and not reply_head.strip():
+        return
+    result.cleaned_text = reply_head + tail
+    result.uncleaned_chars = len(tail)
+    result.head_cleaned = True
 
 
 def _cleanup_context(
@@ -182,13 +216,17 @@ class TranscriptCleaner:
             guest_name: Name of the guest (if any).
             terminology: Known terms that may be misspelled.
             max_chars: Maximum characters sent to the model. Longer input is
-                cleaned up to this limit and its remainder is returned
-                uncleaned; see :class:`CleanupResult`.
+                cleaned up to the cut described in :func:`_split_at_limit`
+                and its remainder is returned uncleaned; see
+                :class:`CleanupResult`.
 
         Returns:
             CleanupResult with cleaned text and corrections made.
         """
-        result = CleanupResult(cleaned_text=transcript_text)
+        result = CleanupResult(
+            cleaned_text=transcript_text,
+            uncleaned_chars=len(transcript_text),
+        )
 
         if len(transcript_text) < _MIN_TRANSCRIPT_CHARS:
             return result
@@ -200,7 +238,9 @@ class TranscriptCleaner:
                 len(transcript_text),
                 len(head),
             )
-            result.uncleaned_chars = len(tail)
+        if not head.strip() and transcript_text.strip():
+            logger.warning("Transcript head is blank; cleanup request skipped")
+            return result
 
         context = _cleanup_context(
             podcast_name=podcast_name,
@@ -230,7 +270,7 @@ class TranscriptCleaner:
             )
             return result
 
-        result.cleaned_text = str(parsed.get("cleaned_text", head)) + tail
+        _apply_cleaned_head(result, parsed.get("cleaned_text"), head, tail)
         for corr in parsed.get("corrections", []):
             if isinstance(corr, dict):
                 result.corrections_made.append(
