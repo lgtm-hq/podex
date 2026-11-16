@@ -22,6 +22,20 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.37] - 2026-11-16
+
+### Changed
+
+- **deps**: update lintro to 0.180.37 (patch) (#869) (654f6ec)
+- **backend**: raise coverage on modules that are about to run in production (#863)
+  (bae7e41)
+- **ci**: evaluate expressions and branch filters in the concurrency contract test as
+  GitHub does (#859) (178ca48)
+
+### Fixed
+
+- **billing**: consume paid API quota atomically (#861) (29c00d2)
+
 ## [0.41.36] - 2026-11-16
 
 ### Changed
