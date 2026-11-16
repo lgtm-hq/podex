@@ -19,13 +19,14 @@ removed in turn, after which its race must fail.
 import threading
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from functools import partial
-from typing import Any
+from typing import Any, TypeVar
 from unittest.mock import Mock
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import event
+from sqlalchemy import event, select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -36,12 +37,19 @@ from podex.models import (
     Media,
     MediaType,
     Mention,
+    Podcast,
     TakedownSubjectType,
     suppression_guard,
 )
-from podex.services import content_suppression, takedown_requests
+from podex.models.suppression_guard import lock_media_rows
+from podex.services import content_suppression, derivative_summaries, takedown_requests
+from podex.services.content_suppression import RetryableLockError
 from podex.services.derivative_generation import generate_episode_derivatives
-from podex.services.derivative_summaries import generate_episode_summary
+from podex.services.derivative_summaries import (
+    GeneratedSummaryData,
+    generate_episode_summary,
+    generate_media_summary,
+)
 from podex.services.ops_media_commands import merge_ops_media
 from podex.services.takedown_requests import execute_approved_takedown_request
 from tests.conftest import seed_catalog_graph
@@ -61,6 +69,8 @@ from tests.takedown_support import (
 )
 
 pytestmark = pytest.mark.postgres
+
+_Result = TypeVar("_Result")
 
 _WRITER_WAITS = ExpectedWait(
     statement_patterns=(r"\bFROM podcasts\b", r"\bFOR SHARE\b"),
@@ -380,7 +390,7 @@ def test_mention_takedown_waits_for_a_merge_of_its_media(
     """Takedown and merge take media locks first; neither deadlocks."""
     episode_id, target_id, unpublished = _merge_first(postgres)
 
-    assert_that(unpublished).is_equal_to(1)
+    assert_that(unpublished).is_equal_to(2)
     _assert_pair_suppressed(postgres, episode_id=episode_id, target_id=target_id)
 
 
@@ -399,6 +409,219 @@ def test_merge_waits_for_a_mention_takedown(postgres: PostgresDatabase) -> None:
     _assert_pair_suppressed(postgres, episode_id=episode_id, target_id=target_id)
 
 
+def _summarize_media(db: Session, *, media_id: int, provider: Mock) -> str:
+    """Generate a media summary without committing.
+
+    Returns:
+        The source text the provider received.
+    """
+    generate_media_summary(
+        db=db,
+        media=db.query(Media).filter(Media.id == media_id).one(),
+        provider=provider,
+        pipeline_version="v1",
+        prompt_version="p1",
+    )
+    source: str = provider.summarize.call_args.args[0].source_text
+    return source
+
+
+def _media_summary_waits(postgres: PostgresDatabase) -> str:
+    """Hold a derivatives takedown open; a media summary writer waits for it.
+
+    Returns:
+        The source text the provider received after the takedown committed.
+    """
+    with postgres.sessions() as db:
+        graph = seed_catalog_graph(db)
+        episode_id, media_id = graph.episode_id, graph.media_id
+    provider = Mock(model_name="model")
+    provider.summarize.return_value = GeneratedSummaryData(summary_text="summary")
+    _, source = run_overlapping(
+        postgres,
+        first=partial(_takedown, episode_id=episode_id),
+        second=partial(_summarize_media, media_id=media_id, provider=provider),
+        expected=_WRITER_WAITS,
+    )
+    return source
+
+
+def test_media_summary_waits_for_a_takedown_and_leaves_its_text_out(
+    postgres: PostgresDatabase,
+) -> None:
+    """The writer's podcast lock waits; its source then omits the episode."""
+    source = _media_summary_waits(postgres)
+
+    assert_that(source).does_not_contain("a great book")
+
+
+def _lock_podcast(db: Session, *, podcast_id: int) -> int:
+    """Hold a podcast row FOR UPDATE, as a takedown of that podcast does.
+
+    Returns:
+        The podcast id.
+    """
+    db.execute(
+        select(Podcast.id).where(Podcast.id == podcast_id).with_for_update(),
+    ).all()
+    return podcast_id
+
+
+@dataclass(frozen=True, slots=True)
+class _TwoPodcasts:
+    """Podcast A's id, the media both mention, and podcast B's episode."""
+
+    podcast_a: int
+    media_id: int
+    episode_b: int
+
+
+def _seed_two_podcasts(postgres: PostgresDatabase) -> _TwoPodcasts:
+    """Seed podcast A with a mention of the media and an empty podcast B.
+
+    Returns:
+        The ids the race needs.
+    """
+    with postgres.sessions() as db:
+        graph = seed_catalog_graph(db)
+        other = Podcast(name="Other show", slug="other-show")
+        db.add(other)
+        db.flush()
+        other_episode = Episode(podcast_id=other.id, title="Other")
+        db.add(other_episode)
+        db.commit()
+        return _TwoPodcasts(
+            podcast_a=graph.podcast_id,
+            media_id=graph.media_id,
+            episode_b=other_episode.id,
+        )
+
+
+def _blocking_provider(
+    dispatched: threading.Event,
+    release: threading.Event,
+) -> Mock:
+    """Return a summary provider that holds its call open until released."""
+
+    def summarize(_source: object) -> GeneratedSummaryData:
+        dispatched.set()
+        release.wait(LOCK_WAIT_TIMEOUT_SECONDS)
+        return GeneratedSummaryData(summary_text="summary")
+
+    provider = Mock(model_name="model")
+    provider.summarize.side_effect = summarize
+    return provider
+
+
+def _media_summary_rereads_after_locking(postgres: PostgresDatabase) -> None:
+    """A mention committed in another podcast during the wait is locked too.
+
+    1. A transaction holds podcast A, so the summary writer waits on it.
+    2. Meanwhile a mention of the same media in podcast B commits.
+    3. A is released. The writer re-reads, locks B as well, and calls the
+       provider with B's mention in the source.
+    4. While the writer's transaction is open, a takedown of B must wait.
+    """
+    seeded = _seed_two_podcasts(postgres)
+    dispatched = threading.Event()
+    release = threading.Event()
+    holder, writer, approver = (postgres.sessions() for _ in range(3))
+    pids = [backend_pid(session) for session in (holder, writer, approver)]
+    try:
+        _lock_podcast(holder, podcast_id=seeded.podcast_a)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            summary = pool.submit(
+                _commit_after,
+                writer,
+                partial(
+                    _summarize_media,
+                    media_id=seeded.media_id,
+                    provider=_blocking_provider(dispatched, release),
+                ),
+            )
+            wait_for_expected_lock(
+                postgres.engine,
+                waiter=pids[1],
+                blocker=pids[0],
+                expected=_WRITER_WAITS,
+            )
+            with postgres.sessions() as db:
+                db.add(Mention(episode_id=seeded.episode_b, media_id=seeded.media_id))
+                db.commit()
+            holder.commit()
+            try:
+                assert_that(dispatched.wait(LOCK_WAIT_TIMEOUT_SECONDS)).is_true()
+                takedown = pool.submit(
+                    _commit_after,
+                    approver,
+                    partial(_takedown, episode_id=seeded.episode_b),
+                )
+                wait_for_expected_lock(
+                    postgres.engine,
+                    waiter=pids[2],
+                    blocker=pids[1],
+                    expected=_TAKEDOWN_WAITS,
+                )
+            finally:
+                release.set()
+            summary.result(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
+            takedown.result(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
+    finally:
+        for session in (holder, writer, approver):
+            session.close()
+
+
+def test_media_summary_locks_episodes_that_appear_while_it_waits(
+    postgres: PostgresDatabase,
+) -> None:
+    """The writer re-reads after locking, so a late episode's takedown waits."""
+    _media_summary_rereads_after_locking(postgres)
+
+
+def _single_read(*, db: Session, media_id: int) -> None:
+    """Lock the media and its episodes once, without re-reading."""
+    lock_media_rows(session=db, media_ids=[media_id])
+    content_suppression.lock_episode_text(
+        db=db,
+        episode_ids=content_suppression.mentioning_episodes(db, media_id),
+    )
+
+
+def test_media_summary_without_the_reread_fails(
+    postgres: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without the re-read, the late episode is not locked and the race fails."""
+    monkeypatch.setattr(
+        derivative_summaries,
+        "authorize_media_summary_text",
+        _single_read,
+    )
+
+    with pytest.raises(AssertionError, match="never waited on the expected lock"):
+        _media_summary_rereads_after_locking(postgres)
+
+
+def test_takedown_gives_up_on_a_busy_lock_with_a_retryable_error(
+    postgres: PostgresDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A takedown behind a held share lock stops after the bounded wait."""
+    monkeypatch.setattr(takedown_requests, "TAKEDOWN_LOCK_TIMEOUT_MS", 200)
+    episode_id = _seed(postgres)
+    holder = postgres.sessions()
+    approver = postgres.sessions()
+    try:
+        content_suppression.authorize_episode_text(db=holder, episode_ids=[episode_id])
+        with pytest.raises(RetryableLockError, match="retry the decision"):
+            _takedown(approver, episode_id=episode_id)
+        approver.rollback()
+    finally:
+        holder.rollback()
+        holder.close()
+        approver.close()
+
+
 def _skip_lock(**_kwargs: object) -> None:
     """Stand in for a production lock and take none."""
 
@@ -414,12 +637,14 @@ def _skip_lock(**_kwargs: object) -> None:
         (_rebuild_first, takedown_requests, "lock_podcasts_for_takedown"),
         (_dispatch_first, content_suppression, "lock_episode_text"),
         (_merge_first, takedown_requests, "lock_media_for_takedown"),
+        (_media_summary_waits, content_suppression, "lock_episode_text"),
     ],
     ids=[
         "writer-share-lock",
         "takedown-update-lock",
         "dispatch-lock",
         "takedown-media-lock",
+        "media-summary-dispatch-lock",
     ],
 )
 def test_race_fails_without_its_production_lock(
@@ -441,7 +666,7 @@ def test_race_fails_without_its_production_lock(
         scenario(postgres)
 
 
-def _commit_after(db: Session, step: Callable[[Session], int]) -> int:
+def _commit_after(db: Session, step: Callable[[Session], _Result]) -> _Result:
     """Run a step and commit it, as a worker or request transaction would.
 
     Returns:

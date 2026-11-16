@@ -16,6 +16,7 @@ from podex.models import (
     Mention,
     Transcript,
 )
+from podex.models.suppression_guard import lock_media_rows
 from podex.services.content_suppression import authorize_episode_text
 from podex.services.derivative_summaries import (
     SummaryProvider,
@@ -85,6 +86,13 @@ def generate_episode_derivatives(
             takedown lock until this transaction ends, so no takedown of the
             episode commits while its text is with a provider.
     """
+    if summary_provider is not None:
+        # Media summaries lock their media rows; the shared order takes media
+        # rows before the podcast lock that authorising the episode takes.
+        lock_media_rows(
+            session=db,
+            media_ids=[media.id for media in _episode_media(db=db, episode=episode)],
+        )
     authorize_episode_text(db=db, episode_ids=[episode.id])
     config = config or DerivativeGenerationConfig()
     now = now or datetime.now(UTC)

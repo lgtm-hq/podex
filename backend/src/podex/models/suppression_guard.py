@@ -43,7 +43,7 @@ row, so a takedown executed in the same transaction applies to later writes.
 """
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy import event, inspect, select
@@ -98,11 +98,16 @@ _RELATION_CONTENT = (
 
 @dataclass(frozen=True, slots=True)
 class _Requirement:
-    """One scope a pending write must not be suppressed under."""
+    """One scope a pending write must not be suppressed under.
+
+    ``row`` names the write for the error message and takes no part in
+    equality, so writes sharing a check are looked up once.
+    """
 
     scope: ContentSuppressionScope
     episode_id: int
     media_id: int | None = None
+    row: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +119,13 @@ class _Pending:
 
 
 _Rule = Callable[[_Pending], Iterator[_Requirement]]
+
+
+def _label(pending: "_Pending", why: str) -> str:
+    """Name a refused row and the reason, for the error an operator sees."""
+    row_id = getattr(pending.row, "id", None)
+    name = type(pending.row).__name__
+    return f"{name} {row_id} ({why})" if row_id else f"new {name} ({why})"
 
 
 def _changed(row: object, *attributes: str) -> bool:
@@ -167,6 +179,7 @@ def _mention_rule(pending: _Pending) -> Iterator[_Requirement]:
             scope=ContentSuppressionScope.MENTIONS,
             episode_id=episode_id,
             media_id=_assigned_id(mention, "media_id", "media"),
+            row=_label(pending, "written into the pair"),
         )
 
 
@@ -188,6 +201,7 @@ def _mention_origin(pending: _Pending) -> Iterator[_Requirement]:
             scope=ContentSuppressionScope.MENTIONS,
             episode_id=episode_id,
             media_id=media_id,
+            row=_label(pending, "moved out of its suppressed pair"),
         )
 
 
@@ -198,6 +212,7 @@ def _episode_derivative_rule(pending: _Pending) -> Iterator[_Requirement]:
         yield _Requirement(
             scope=ContentSuppressionScope.DERIVATIVES,
             episode_id=episode_id,
+            row=_label(pending, "written for the episode"),
         )
 
 
@@ -210,6 +225,7 @@ def _episode_derivative_origin(pending: _Pending) -> Iterator[_Requirement]:
         yield _Requirement(
             scope=ContentSuppressionScope.DERIVATIVES,
             episode_id=episode_id,
+            row=_label(pending, "moved out of the episode"),
         )
 
 
@@ -232,6 +248,7 @@ def _provenance_rule(content: tuple[str, ...]) -> _Rule:
             yield _Requirement(
                 scope=ContentSuppressionScope.DERIVATIVES,
                 episode_id=episode_id,
+                row=_label(pending, "evidence written for the provenance episode"),
             )
 
     return rule
@@ -255,6 +272,7 @@ def _provenance_origin() -> _Rule:
             yield _Requirement(
                 scope=ContentSuppressionScope.DERIVATIVES,
                 episode_id=episode_id,
+                row=_label(pending, "evidence moved off the provenance episode"),
             )
 
     return origin
@@ -459,6 +477,7 @@ def check_requirements(
                 scope=requirement.scope,
                 episode_id=requirement.episode_id,
                 media_id=requirement.media_id,
+                row=requirement.row,
             )
     checked.update(pending)
 

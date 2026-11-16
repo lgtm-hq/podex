@@ -15,7 +15,6 @@ from sqlalchemy import insert, inspect
 from sqlalchemy.orm import Session
 
 from podex.models import (
-    AccountAlertEvent,
     AccountUser,
     Episode,
     Media,
@@ -23,7 +22,6 @@ from podex.models import (
     MediaType,
     Mention,
     TakedownRequest,
-    TakedownSubjectType,
 )
 from podex.services.account_alerts import create_alert_rule, evaluate_alert_rules
 from podex.services.account_digests import send_pending_digest
@@ -35,10 +33,11 @@ from podex.services.derivative_summaries import (
 from podex.services.ops_media_commands import merge_ops_media
 from tests.conftest import SeededGraph, seed_catalog_graph
 from tests.takedown_support import (
-    approve_takedown,
+    deliver_nothing,
     sign_in_reader_with_alert,
     take_down_episode,
     take_down_mention,
+    take_down_named,
 )
 
 
@@ -125,17 +124,15 @@ def test_takedown_drops_media_summaries_built_from_its_text(
         ],
     )
     db_session.commit()
-    subject_ids = {
-        "episode": graph.episode_id,
-        "podcast": graph.podcast_id,
-        "mention": graph.mention_id,
-    }
-
-    approve_takedown(
+    take_down_named(
         db_session,
-        subject_type=TakedownSubjectType(subject),
-        subject_id=subject_ids[subject],
-        actions=actions,
+        subject,
+        {
+            "episode": graph.episode_id,
+            "podcast": graph.podcast_id,
+            "mention": graph.mention_id,
+        },
+        actions,
     )
 
     remaining = [row.summary_text for row in db_session.query(MediaSummary)]
@@ -212,15 +209,8 @@ def test_pending_alert_for_taken_down_activity_is_not_delivered(
     assert_that(evaluate_alert_rules(db=db_session, user_id=user.id)).is_length(1)
     db_session.commit()
     take_down_mention(db_session, second.id)
-    sender = Mock()
 
-    digest = send_pending_digest(db=db_session, user=user, sender=sender)
-    db_session.commit()
-
-    assert_that(digest).is_none()
-    assert_that(sender.mock_calls).is_empty()
-    pending = db_session.query(AccountAlertEvent).one()
-    assert_that(pending.digest_id).is_none()
+    deliver_nothing(db_session, user)
 
 
 def test_account_api_hides_suppressed_activity(

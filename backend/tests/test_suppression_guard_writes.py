@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 import pytest
 from assertpy import assert_that
 from fastapi.testclient import TestClient
-from sqlalchemy import event
+from sqlalchemy import event, insert
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -40,7 +40,12 @@ from podex.services.graph_relations import (
 from podex.services.ops_media_commands import SplitOpsMediaInputData, split_ops_media
 from podex.services.takedown_requests import execute_approved_takedown_request
 from tests.conftest import seed_catalog_graph
-from tests.takedown_support import approve_takedown, submit_takedown, take_down_mention
+from tests.takedown_support import (
+    approve_takedown,
+    submit_takedown,
+    summary_values,
+    take_down_mention,
+)
 
 _AT = datetime(2026, 7, 1, tzinfo=UTC)
 
@@ -112,17 +117,7 @@ def _chunk(episode_id: int, transcript_id: int, key: str) -> SemanticChunk:
 
 
 def _summary(episode_id: int, key: str) -> EpisodeSummary:
-    return EpisodeSummary(
-        episode_id=episode_id,
-        summary_key=key,
-        summary_kind="overview",
-        pipeline_version="v1",
-        prompt_version="p1",
-        source_text_hash="d" * 64,
-        source_model="model",
-        summary_text="summary text",
-        generated_at=_AT,
-    )
+    return EpisodeSummary(**summary_values(episode_id, key, "summary text"))
 
 
 def _run(episode_id: int, key: str) -> DerivativeGenerationRun:
@@ -399,19 +394,27 @@ def test_split_cannot_move_a_hidden_mention(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    """Splitting a suppressed pair's surviving mention does not publish it."""
-    graph = seed_catalog_graph(db_session)
-    hidden = Mention(
-        episode_id=graph.episode_id,
-        media_id=graph.media_id,
-        context="hidden same-work text",
-    )
-    db_session.add(hidden)
-    db_session.commit()
-    hidden_id = hidden.id
-    take_down_mention(db_session, graph.mention_id)
+    """Splitting a hidden mention of a suppressed pair does not publish it.
 
-    with pytest.raises(ContentSuppressedError):
+    Execution deletes every mention of the pair, so the hidden row is
+    restored around the guard, as a bulk writer could leave one.
+    """
+    graph = seed_catalog_graph(db_session)
+    take_down_mention(db_session, graph.mention_id)
+    hidden_id = int(
+        db_session.execute(
+            insert(Mention)
+            .values(
+                episode_id=graph.episode_id,
+                media_id=graph.media_id,
+                context="hidden same-work text",
+            )
+            .returning(Mention.id),
+        ).scalar_one(),
+    )
+    db_session.commit()
+
+    with pytest.raises(ContentSuppressedError, match=f"Mention {hidden_id}"):
         split_ops_media(
             db=db_session,
             media_id=graph.media_id,
@@ -490,11 +493,22 @@ def test_suppression_moved_in_this_transaction_overrides_earlier_checks(
 
 
 @pytest.mark.parametrize("count", [1, 100, 1000])
+@pytest.mark.parametrize(
+    ("with_derivatives", "bound"),
+    [(False, 3), (True, 4)],
+    ids=["mentions-only", "mentions-and-derivatives"],
+)
 def test_guard_queries_do_not_grow_with_the_flush(
     db_session: Session,
     count: int,
+    with_derivatives: bool,
+    bound: int,
 ) -> None:
-    """One flush of many distinct pairs runs a bounded number of guard queries."""
+    """One flush of many rows runs a fixed number of guard statements.
+
+    Media locks, podcast locks and one pair check for mentions; one more
+    episode check when derivative rows are in the same flush.
+    """
     graph = seed_catalog_graph(db_session)
     media = [
         Media(type=MediaType.BOOK, title=f"Work {index}") for index in range(count)
@@ -512,10 +526,12 @@ def test_guard_queries_do_not_grow_with_the_flush(
     db_session.add_all(
         Mention(episode_id=graph.episode_id, media_id=item.id) for item in media
     )
+    if with_derivatives:
+        db_session.add(_summary(graph.episode_id, "mixed"))
     event.listen(engine, "before_cursor_execute", record)
     try:
         db_session.flush()
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
-    assert_that(len(selects)).is_less_than_or_equal_to(6)
+    assert_that(len(selects)).is_equal_to(bound)

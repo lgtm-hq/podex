@@ -5,10 +5,11 @@ aggregations against SQLAlchemy; the cached helper
 :func:`get_catalog_stats` wraps it in a :class:`~podex.services.cache.Cache`
 lookup keyed by :data:`CATALOG_STATS_CACHE_KEY`.
 
-Cache invalidation is TTL-based, except for takedowns: each cached value
-carries the suppression version it was computed under, and a value from an
-older version is recomputed, so the first read after a takedown commits is
-current in every process.
+Cache invalidation is TTL-based, except for suppression changes: each cached
+value carries the suppression change counter it was computed under, and a
+value from an older counter is recomputed. Takedowns, media merges and splits
+and the backfill bump the counter, so the first read after any of them is
+committed is current in every process.
 """
 
 from __future__ import annotations
@@ -116,5 +117,5 @@ def get_catalog_stats(
 class _VersionedStats:
     """Cached stats and the suppression version they were computed under."""
 
-    version: tuple[int, int]
+    version: int
     stats: CatalogStats

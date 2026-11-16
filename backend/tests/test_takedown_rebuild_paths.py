@@ -12,7 +12,7 @@ from unittest.mock import Mock
 import pytest
 from assertpy import assert_that
 from fastapi.testclient import TestClient
-from sqlalchemy import insert
+from sqlalchemy import Column, ForeignKey, Integer, MetaData, Table, insert
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -312,27 +312,29 @@ def _merge_fixture(db: Session) -> tuple[SeededGraph, Media, Episode]:
     return graph, duplicate, second
 
 
-def test_merge_cannot_move_a_mention_into_a_suppressed_pair(
+def test_merge_deletes_a_mention_a_suppressed_pair_now_covers(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    """Merging a duplicate record does not republish a taken-down pair."""
+    """Merging a duplicate record deletes its mention of the taken-down pair."""
     graph, duplicate, _ = _merge_fixture(db_session)
-    db_session.add(Mention(episode_id=graph.episode_id, media_id=duplicate.id))
+    covered = Mention(episode_id=graph.episode_id, media_id=duplicate.id)
+    db_session.add(covered)
     db_session.commit()
+    covered_id = covered.id
     take_down_mention(db_session, graph.mention_id)
 
-    with pytest.raises(ContentSuppressedError):
-        merge_ops_media(
-            db=db_session,
-            source_media_id=duplicate.id,
-            target_media_id=graph.media_id,
-        )
-    db_session.rollback()
+    merge_ops_media(
+        db=db_session,
+        source_media_id=duplicate.id,
+        target_media_id=graph.media_id,
+    )
+    db_session.commit()
 
     listed = client.get(f"/api/v2/media/{graph.media_id}/mentions")
     assert_that(listed.json()["total"]).is_zero()
-    assert_that(db_session.get(Media, duplicate.id)).is_not_none()
+    assert_that(db_session.get(Mention, covered_id)).is_none()
+    assert_that(db_session.get(Media, duplicate.id)).is_none()
 
 
 def test_merge_carries_pair_suppression_to_the_survivor(db_session: Session) -> None:
@@ -520,27 +522,62 @@ def test_unrelated_podcast_is_not_locked_or_refused(db_session: Session) -> None
     assert_that(db_session.query(Mention).count()).is_equal_to(1)
 
 
-_UNGUARDED_EPISODE_REFERENCES = {
-    "content_suppressions.episode_id": "the suppression records themselves",
-    "mention_candidates.episode_id": "review queue, not public; publication is",
-    "transcript_artifacts.episode_id": "raw retention, governed by retention rules",
-    "transcript_digests.episode_id": "purge proofs written by takedowns themselves",
+_UNGUARDED_EPISODE_TABLES = {
+    "content_suppressions": "the suppression records themselves",
+    "mention_candidates": "review queue, not public; publication is guarded",
+    "mention_candidate_provenance": "review history of candidates, not public",
+    "review_items": "review queue entries, not public",
+    "transcript_artifacts": "raw retention, governed by retention rules",
+    "transcript_digests": "purge proofs written by takedowns themselves",
 }
 
 
-def test_every_episode_reference_is_guarded_or_exempted() -> None:
-    """A new table that stores episode content must choose: guard or exempt."""
+def _reaches_episodes(table: Table, seen: frozenset[str] = frozenset()) -> bool:
+    """Return whether a table reaches ``episodes`` through foreign keys."""
+    for key in table.foreign_keys:
+        target = key.column.table
+        if target.name == "episodes":
+            return True
+        if target.name not in seen and _reaches_episodes(target, seen | {table.name}):
+            return True
+    return False
+
+
+def _unclassified_tables(metadata: MetaData) -> list[str]:
     guarded = {model.__table__.name for model in GUARDED_MODELS}
-    unclassified = sorted(
-        f"{table.name}.{column.name}"
-        for table in Base.metadata.sorted_tables
-        for column in table.columns
-        if any(fk.column.table.name == "episodes" for fk in column.foreign_keys)
+    return sorted(
+        table.name
+        for table in metadata.sorted_tables
+        if table.name != "episodes"
+        and _reaches_episodes(table)
         and table.name not in guarded
-        and f"{table.name}.{column.name}" not in _UNGUARDED_EPISODE_REFERENCES
+        and table.name not in _UNGUARDED_EPISODE_TABLES
     )
 
-    assert_that(unclassified).is_empty()
+
+def test_every_episode_content_table_is_guarded_or_exempted() -> None:
+    """A table reaching episodes through any foreign key path must be classified.
+
+    Following keys transitively catches a table keyed only by a transcript or
+    a mention. The test cannot see content tied to an episode without a
+    foreign key (for example an id kept in a JSON column).
+    """
+    assert_that(_unclassified_tables(Base.metadata)).is_empty()
+
+
+def test_classification_follows_keys_through_other_tables() -> None:
+    """A new table keyed only by a transcript is reported."""
+    metadata = MetaData()
+    for table in Base.metadata.sorted_tables:
+        table.to_metadata(metadata)
+    Table(
+        "transcript_notes",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("transcript_id", ForeignKey("transcripts.id")),
+    )
+
+    assert_that(_unclassified_tables(metadata)).is_equal_to(["transcript_notes"])
 
 
 def test_media_relation_with_suppressed_provenance_is_refused(

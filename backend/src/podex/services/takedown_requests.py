@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -12,10 +13,8 @@ from podex.models import (
     DerivativeGenerationRun,
     Episode,
     EpisodeSummary,
-    GraphTriple,
     MediaSummary,
     Mention,
-    MentionCandidate,
     Podcast,
     SemanticChunk,
     TakedownRequest,
@@ -25,6 +24,9 @@ from podex.models import (
     Transcript,
 )
 from podex.services.content_suppression import (
+    RetryableLockError,
+    bump_suppression_version,
+    delete_mentions,
     lock_media_for_takedown,
     lock_podcasts_for_takedown,
     record_suppression,
@@ -43,6 +45,19 @@ from podex.services.transcript_retention_policies import (
     to_retention_policy,
     upsert_transcript_source_retention_policy,
 )
+
+TAKEDOWN_LOCK_TIMEOUT_MS = 5000
+"""Longest a takedown waits for a lock before answering a retryable 409.
+
+SQLite uses the connection busy timeout instead (5 seconds by default).
+"""
+
+TAKEDOWN_BUSY_MESSAGE = (
+    "Content this takedown covers is busy (a writer or another takedown holds"
+    " its lock); nothing was changed, retry the decision"
+)
+
+_LOCK_SQLSTATES = frozenset({"55P03", "40P01"})
 
 SUPPRESSION_SCOPES_BY_ACTION: dict[str, ContentSuppressionScope] = {
     "unpublish_mentions": ContentSuppressionScope.MENTIONS,
@@ -174,9 +189,7 @@ def execute_approved_takedown_request(
     )
     transcripts_suppressed = 0
     derivatives_suppressed = 0
-    mentions_unpublished = 0
     source_opt_outs_registered = 0
-    media_ids: tuple[int, ...] = ()
 
     if "suppress_raw_transcript" in actions:
         transcripts_suppressed = _suppress_raw_transcripts(
@@ -190,8 +203,9 @@ def execute_approved_takedown_request(
             db=db,
             episode_ids=episode_ids,
         )
+    unpublished = _Unpublished()
     if "unpublish_mentions" in actions:
-        mentions_unpublished, media_ids = _unpublish_mentions(
+        unpublished = _unpublish_mentions(
             db=db,
             request=request,
             episode_ids=episode_ids,
@@ -206,10 +220,10 @@ def execute_approved_takedown_request(
 
     result = TakedownExecutionResultData(
         episode_ids=episode_ids,
-        media_ids=media_ids,
+        media_ids=unpublished.media_ids,
         transcripts_suppressed=transcripts_suppressed,
         derivatives_suppressed=derivatives_suppressed,
-        mentions_unpublished=mentions_unpublished,
+        mentions_unpublished=unpublished.count,
         source_opt_outs_registered=source_opt_outs_registered,
     )
     # The last destructive step drops media summaries that may quote the
@@ -221,12 +235,13 @@ def execute_approved_takedown_request(
         "derivatives_suppressed": result.derivatives_suppressed,
         "mentions_unpublished": result.mentions_unpublished,
         "source_opt_outs_registered": result.source_opt_outs_registered,
+        "pair_mentions_removed": unpublished.extra,
         "media_summaries_dropped": _drop_media_summaries(
             db=db,
             media_ids=summary_media_ids,
         ),
     }
-    db.flush()
+    bump_suppression_version(db)
     return result
 
 
@@ -250,18 +265,50 @@ def _lock_takedown_subject(
     Raises:
         ValueError: If covered mentions changed while the locks were taken.
     """
+    _bound_lock_waits(db)
     media_ids = _summary_media_ids(db=db, request=request, actions=actions)
-    lock_media_for_takedown(db=db, media_ids=media_ids)
-    lock_podcasts_for_takedown(
-        db=db,
-        podcast_ids=_podcast_ids_for_request(db=db, request=request),
-    )
+    try:
+        lock_media_for_takedown(db=db, media_ids=media_ids)
+        lock_podcasts_for_takedown(
+            db=db,
+            podcast_ids=_podcast_ids_for_request(db=db, request=request),
+        )
+    except OperationalError as error:
+        if is_lock_conflict(error):
+            raise RetryableLockError(TAKEDOWN_BUSY_MESSAGE) from error
+        raise
     current = _summary_media_ids(db=db, request=request, actions=actions)
     if not set(current) <= set(media_ids):
-        raise ValueError(
+        raise RetryableLockError(
             "Covered mentions changed while the takedown was executing; retry",
         )
     return current
+
+
+def _bound_lock_waits(db: Session) -> None:
+    """Bound how long this takedown waits for any lock in its transaction.
+
+    On PostgreSQL ``lock_timeout`` applies until the transaction ends. SQLite
+    waits for its write lock up to the connection's busy timeout.
+    """
+    if db.get_bind().dialect.name == "postgresql":
+        db.execute(text(f"SET LOCAL lock_timeout = '{TAKEDOWN_LOCK_TIMEOUT_MS}ms'"))
+
+
+def is_lock_conflict(error: BaseException) -> bool:
+    """Return whether a database error means a lock wait timed out or deadlocked.
+
+    Args:
+        error: Error raised by a statement or commit.
+
+    Returns:
+        ``True`` for PostgreSQL ``lock_not_available`` and ``deadlock_detected``
+        and for SQLite's ``database is locked``.
+    """
+    original = getattr(error, "orig", None)
+    if getattr(original, "sqlstate", None) in _LOCK_SQLSTATES:
+        return True
+    return "database is locked" in str(original)
 
 
 def _summary_media_ids(
@@ -502,33 +549,52 @@ def _suppress_derivatives(*, db: Session, episode_ids: tuple[int, ...]) -> int:
     return int(run_count + chunk_count + summary_count)
 
 
+@dataclass(frozen=True, slots=True)
+class _Unpublished:
+    """Mentions a takedown removed, their media, and the extra pair rows."""
+
+    count: int = 0
+    media_ids: tuple[int, ...] = ()
+    extra: int = 0
+
+
 def _unpublish_mentions(
     *,
     db: Session,
     request: TakedownRequest,
     episode_ids: tuple[int, ...],
-) -> tuple[int, tuple[int, ...]]:
-    """Remove published mentions and detach retained provenance references."""
+) -> _Unpublished:
+    """Remove published mentions and detach retained provenance references.
+
+    Suppression is per ``(episode, media)`` pair, so a mention takedown removes
+    every mention of the named mention's pair, not only the one named.
+
+    Returns:
+        Mentions removed, their media ids, and how many of them a mention
+        takedown removed besides the one it named.
+    """
     query = db.query(Mention)
     if request.subject_type == TakedownSubjectType.MENTION.value:
-        query = query.filter(Mention.id == request.subject_id)
+        named = db.query(Mention).filter(Mention.id == request.subject_id).first()
+        if named is None:
+            return _Unpublished()
+        query = query.filter(
+            Mention.episode_id == named.episode_id,
+            Mention.media_id == named.media_id,
+        )
     else:
         query = query.filter(Mention.episode_id.in_(episode_ids))
-    mentions = query.all()
+    mentions = query.order_by(Mention.id).all()
     if not mentions:
-        return 0, ()
-    mention_ids = [mention.id for mention in mentions]
+        return _Unpublished()
     media_ids = tuple(sorted({mention.media_id for mention in mentions}))
-    db.query(MentionCandidate).filter(
-        MentionCandidate.mention_id.in_(mention_ids)
-    ).update({MentionCandidate.mention_id: None}, synchronize_session=False)
-    db.query(GraphTriple).filter(
-        GraphTriple.provenance_mention_id.in_(mention_ids)
-    ).update({GraphTriple.provenance_mention_id: None}, synchronize_session=False)
-    for mention in mentions:
-        db.delete(mention)
-    db.flush()
-    return len(mentions), media_ids
+    removed = delete_mentions(db, mentions)
+    named_one = request.subject_type == TakedownSubjectType.MENTION.value
+    return _Unpublished(
+        count=len(removed),
+        media_ids=media_ids,
+        extra=len(removed) - 1 if named_one else 0,
+    )
 
 
 def _register_source_opt_outs(*, db: Session, transcripts: list[Transcript]) -> int:

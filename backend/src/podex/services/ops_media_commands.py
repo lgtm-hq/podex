@@ -23,6 +23,10 @@ from podex.models import (
     MediaType,
     Mention,
 )
+from podex.services.content_suppression import (
+    bump_suppression_version,
+    copy_pair_suppressions,
+)
 from podex.services.graph_relations import (
     GraphTripleInputData,
     stable_graph_triple_key,
@@ -31,7 +35,12 @@ from podex.services.graph_relations import (
 )
 from podex.services.media_alias_repository import ensure_media_alias
 from podex.services.media_aliases import normalize_media_alias
-from podex.services.media_merge_references import lock_merge_pair, move_media_references
+from podex.services.media_merge_references import (
+    delete_mentions_covered_after_merge,
+    lock_merge_pair,
+    merge_verification_sources,
+    move_media_references,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,30 +262,6 @@ def _get_ops_media_summary(
         mention_count=mention_count,
         episode_count=episode_count,
     )
-
-
-def _merge_verification_sources(
-    *,
-    source_values: list[str] | None,
-    target_values: list[str] | None,
-) -> list[str] | None:
-    """Merge verification source lists while preserving target precedence.
-
-    Args:
-        source_values: Verification sources from the source media record.
-        target_values: Verification sources from the target media record.
-
-    Returns:
-        Combined verification source list when any values exist.
-    """
-    if not source_values and not target_values:
-        return target_values
-
-    combined = list(target_values or [])
-    for value in source_values or []:
-        if value not in combined:
-            combined.append(value)
-    return combined
 
 
 def _merge_scalar_field_names() -> tuple[str, ...]:
@@ -601,6 +586,12 @@ def split_ops_media(
         source=MediaAliasSourceType.MANUAL,
         is_primary=True,
     )
+    if copy_pair_suppressions(
+        db=db,
+        source_media_id=source.id,
+        created_media_id=created_media.id,
+    ):
+        bump_suppression_version(db)
     for mention in mentions:
         mention.media = created_media
     db.flush()
@@ -799,6 +790,11 @@ def merge_ops_media(
     if source_media.type != target_media.type:
         raise ValueError("Media types must match for merge")
 
+    delete_mentions_covered_after_merge(
+        db=db,
+        source_media_id=source_media.id,
+        target_media_id=target_media.id,
+    )
     move_media_references(db=db, source_media=source_media, target_media=target_media)
 
     for field_name in _merge_scalar_field_names():
@@ -818,7 +814,7 @@ def merge_ops_media(
             **(target_media.metadata_json or {}),
         }
 
-    target_media.verification_sources = _merge_verification_sources(
+    target_media.verification_sources = merge_verification_sources(
         source_values=source_media.verification_sources,
         target_values=target_media.verification_sources,
     )
@@ -842,6 +838,7 @@ def merge_ops_media(
     )
     db.delete(source_media)
     db.flush()
+    bump_suppression_version(db)
 
     merged_target = _get_ops_media_summary(db=db, media_id=target_media.id)
     if merged_target is None:

@@ -17,12 +17,12 @@ import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine, event
+from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
-from podex.models import Mention
-from tests.conftest import SeededGraph, seed_catalog_graph
-from tests.takedown_support import sign_in_reader_with_alert
+from podex.models import Mention, Transcript
+from tests.conftest import SeededGraph, enable_ops, seed_catalog_graph
+from tests.takedown_support import recorded_statements, sign_in_reader_with_alert
 
 _PRIVATE_PREFIXES = (
     "/api/v2/ops",
@@ -30,7 +30,11 @@ _PRIVATE_PREFIXES = (
     "/api/v2/auth",
     "/api/v2/billing",
 )
-_READS_MENTIONS = re.compile(r"\b(?:FROM|JOIN)\s+mentions\b", re.IGNORECASE)
+# Any reference to the ``mentions`` table: ``FROM mentions``, ``JOIN mentions``,
+# ``FROM media, mentions`` or a ``mentions.`` column. Bound values never appear
+# in the statement text, and ``mention_candidates`` or ``ix_mentions_...`` do
+# not match.
+_READS_MENTIONS = re.compile(r"\bmentions\b", re.IGNORECASE)
 _SUPPRESSION_PREDICATE = "content_suppressions"
 
 
@@ -76,16 +80,8 @@ def statements_fixture(db_session: Session) -> Iterator[list[str]]:
     engine = db_session.get_bind()
     if not isinstance(engine, Engine):
         raise TypeError(type(engine))
-    recorded: list[str] = []
-
-    def record(*args: Any) -> None:
-        recorded.append(str(args[2]))
-
-    event.listen(engine, "before_cursor_execute", record)
-    try:
+    with recorded_statements(engine) as recorded:
         yield recorded
-    finally:
-        event.remove(engine, "before_cursor_execute", record)
 
 
 def test_public_mention_reads_apply_the_suppression_predicate(
@@ -172,4 +168,53 @@ def test_account_reads_and_notifications_apply_the_suppression_predicate(
     assert_that(mention_readers).contains(
         "/api/v2/me/alerts/evaluate",
         "/api/v2/me/digests/send",
+    )
+
+
+def test_ops_reads_apply_the_suppression_predicate(
+    client: TestClient,
+    db_session: Session,
+    statements: list[str],
+) -> None:
+    """Operator views count and list only what public reads show.
+
+    Every ``GET`` under ``/api/v2/ops`` and the root ``/metrics`` is called
+    with the ops key; a statement that reads ``mentions`` must carry the
+    predicate, so ops counts cannot disagree with public counts.
+    """
+    graph = seed_catalog_graph(db_session)
+    transcript = Transcript(
+        episode_id=graph.episode_id,
+        provider="podscripts",
+        raw_text="one two three",
+    )
+    db_session.add(transcript)
+    db_session.commit()
+    enable_ops(client, api_key="test-ops-key")
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise TypeError(type(app))
+    paths: dict[str, dict[str, Any]] = app.openapi()["paths"]
+    calls = [
+        path.replace("{transcript_id}", str(transcript.id))
+        for path, operations in paths.items()
+        if "get" in operations
+        and (path == "/metrics" or path.startswith("/api/v2/ops/"))
+    ]
+    unguarded: dict[str, list[str]] = {}
+    mention_readers: list[str] = []
+
+    for path in calls:
+        statements.clear()
+        response = client.get(_fill(path, graph), headers={"X-Ops-Key": "test-ops-key"})
+        assert_that(response.status_code).described_as(path).is_equal_to(200)
+        if any(_READS_MENTIONS.search(sql) for sql in statements):
+            mention_readers.append(path)
+        if _unguarded_reads(statements):
+            unguarded[path] = _unguarded_reads(statements)
+
+    assert_that(unguarded).is_empty()
+    assert_that(mention_readers).contains(
+        "/api/v2/ops/podcasts",
+        "/api/v2/ops/podcasts/{podcast_id}",
     )

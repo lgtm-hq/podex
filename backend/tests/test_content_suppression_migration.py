@@ -36,10 +36,19 @@ def _seed_cases(engine: Engine) -> None:
         (7, "mention", 502, ["unpublish_mentions"], _EXECUTED),
         (8, "episode", 11, ["suppress_raw_transcript"], _EXECUTED),
         (9, "episode", 11, ["unpublish_mentions"], _EXECUTED),
+        # Approved but never executed: nothing was removed, nothing to record.
+        (10, "podcast", 1, ["suppress_derivatives"], {"decided": True}),
+        # Ambiguous, gone and malformed evidence: unresolved, never guessed.
+        (11, "mention", 503, ["unpublish_mentions"], _EXECUTED),
+        (12, "mention", 504, ["unpublish_mentions"], _EXECUTED),
+        (13, "mention", 505, ["unpublish_mentions"], _EXECUTED),
     ]
-    audit_results = {
+    audit_results: dict[int, object] = {
         3: {"episode_ids": [11], "media_ids": [21], "mentions_unpublished": 1},
         7: {"episode_ids": [], "media_ids": [], "mentions_unpublished": 0},
+        11: {"episode_ids": [10, 11], "media_ids": [20], "mentions_unpublished": 2},
+        12: {"episode_ids": [10], "media_ids": [99], "mentions_unpublished": 1},
+        13: {"episode_ids": ["x"], "media_ids": [20], "mentions_unpublished": 1},
     }
     with engine.begin() as connection:
         connection.execute(
@@ -121,8 +130,9 @@ def test_backfill_records_resolvable_cases_and_reports_the_rest(
         ],
     )
     assert_that(output).contains(
-        "could not resolve takedown cases [4]",
-        "skipped takedown cases [6, 7]",
+        "could not resolve takedown cases [4, 11, 12, 13]",
+        "skipped takedown cases [6] whose subject no longer exists",
+        "and [7] whose takedown removed nothing",
     )
     engine.dispose()
 
@@ -162,3 +172,27 @@ def test_alert_event_mention_ids_round_trip(tmp_path: Path) -> None:
     assert_that(columns()).contains("mention_ids_json")
     _migrate(db_url, "0022", down=True)
     assert_that(columns()).does_not_contain("mention_ids_json")
+
+
+def test_migration_that_failed_part_way_can_be_retried(tmp_path: Path) -> None:
+    """Tables left by an interrupted run do not stop the retry or duplicate rows."""
+    db_url = f"sqlite:///{tmp_path / 'retry.db'}"
+    _migrate(db_url, "0021")
+    engine = create_engine(db_url)
+    _seed_cases(engine)
+    _migrate(db_url, "0022")
+    with engine.begin() as connection:
+        connection.execute(text("UPDATE alembic_version SET version_num = '0021'"))
+
+    _migrate(db_url, "0022")
+
+    with engine.connect() as connection:
+        count = connection.execute(
+            text("SELECT count(*) FROM content_suppressions"),
+        ).scalar_one()
+        stamped = connection.execute(
+            text("SELECT version_num FROM alembic_version"),
+        ).scalar_one()
+    assert_that(count).is_equal_to(6)
+    assert_that(stamped).is_equal_to("0022")
+    engine.dispose()

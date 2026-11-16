@@ -1,15 +1,21 @@
 """Shared helpers for approving takedowns in suppression tests."""
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from unittest.mock import Mock
 
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
 from podex.api.v2 import account_deps
 from podex.models import (
+    AccountAlertEvent,
+    AccountUser,
     ContentSuppressionScope,
     DerivativeGenerationRun,
     DerivativeSummaryKind,
@@ -22,6 +28,7 @@ from podex.models import (
     TakedownRequestStatus,
     TakedownSubjectType,
 )
+from podex.services.account_digests import send_pending_digest
 from podex.services.content_suppression import suppressed_episode_ids
 from podex.services.derivative_summaries import upsert_episode_summary
 from podex.services.takedown_requests import (
@@ -201,3 +208,60 @@ def sign_in_reader_with_alert(client: TestClient, *, media_id: int) -> SignedInR
     return SignedInReader(
         headers=headers, sender=sender, rule_id=int(rule.json()["id"])
     )
+
+
+def take_down_named(
+    db: Session,
+    subject: str,
+    subject_ids: dict[str, int],
+    actions: list[str],
+) -> None:
+    """Approve and execute a takedown of the subject named ``subject``."""
+    approve_takedown(
+        db,
+        subject_type=TakedownSubjectType(subject),
+        subject_id=subject_ids[subject],
+        actions=actions,
+    )
+
+
+def deliver_nothing(db: Session, user: AccountUser) -> AccountAlertEvent:
+    """Run a digest that must send nothing; return the one held-back event."""
+    sender = Mock()
+    digest = send_pending_digest(db=db, user=user, sender=sender)
+    db.commit()
+    assert_that(digest).is_none()
+    assert_that(sender.mock_calls).is_empty()
+    held: AccountAlertEvent = db.query(AccountAlertEvent).one()
+    assert_that(held.digest_id).is_none()
+    return held
+
+
+def summary_values(episode_id: int, key: str, text: str) -> dict[str, object]:
+    """Return the columns of one ready episode summary."""
+    return {
+        "episode_id": episode_id,
+        "summary_key": key,
+        "summary_kind": "overview",
+        "pipeline_version": "v1",
+        "prompt_version": "p1",
+        "source_text_hash": "d" * 64,
+        "source_model": "model",
+        "summary_text": text,
+        "generated_at": datetime(2026, 7, 1, tzinfo=UTC),
+    }
+
+
+@contextmanager
+def recorded_statements(engine: Engine) -> Iterator[list[str]]:
+    """Record the text of every statement ``engine`` runs inside the block."""
+    recorded: list[str] = []
+
+    def record(*args: object) -> None:
+        recorded.append(str(args[2]))
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        yield recorded
+    finally:
+        event.remove(engine, "before_cursor_execute", record)

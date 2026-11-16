@@ -58,6 +58,8 @@ class ContentSuppressedError(ValueError):
         scope: Suppression scope that covers the write.
         episode_id: Episode the refused content belongs to.
         media_id: Media of the refused mention, for mention writes.
+        row: The refused row and why, such as ``Mention 5 (moved out of
+            its pair)``, when a flush refused it.
     """
 
     def __init__(
@@ -66,16 +68,19 @@ class ContentSuppressedError(ValueError):
         scope: ContentSuppressionScope,
         episode_id: int,
         media_id: int | None = None,
+        row: str = "",
     ) -> None:
         subject = f"episode {episode_id}"
         if media_id is not None:
             subject = f"{subject} and media {media_id}"
-        super().__init__(
-            f"{scope.value} for {subject} are suppressed by an approved takedown",
-        )
+        message = f"{scope.value} for {subject} are suppressed by an approved takedown"
+        if row:
+            message = f"{message}; refused write: {row}"
+        super().__init__(message)
         self.scope = scope
         self.episode_id = episode_id
         self.media_id = media_id
+        self.row = row
 
 
 class ContentSuppression(Base):
@@ -122,6 +127,21 @@ class ContentSuppression(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
     )
+
+
+class ContentSuppressionVersion(Base):
+    """A counter every suppression-relevant write increases by one.
+
+    Takedown execution, media merges and splits that carry or delete
+    suppressed content, and the backfill bump it in their transaction. Caches
+    of user-facing aggregates key on it: unlike a count or highest id of
+    suppression rows it never repeats, even after rows are deleted.
+    """
+
+    __tablename__ = "content_suppression_versions"
+
+    id: "Mapped[int]" = mapped_column(primary_key=True)
+    version: "Mapped[int]" = mapped_column(Integer, default=0)
 
 
 def suppression_key(

@@ -1,10 +1,15 @@
-"""Reusable query helpers for common subquery patterns."""
+"""Reusable query helpers for common subquery patterns.
+
+Mention counts go through ``published_mention_clause``, so ops views count
+exactly what public reads show.
+"""
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import Subquery
 
 from podex.models import Episode, Mention
+from podex.services.content_suppression import published_mention_clause
 
 
 def mention_count_by_media_subquery(db: Session) -> Subquery:
@@ -21,6 +26,7 @@ def mention_count_by_media_subquery(db: Session) -> Subquery:
             Mention.media_id,
             func.count(Mention.id).label("mention_count"),
         )
+        .filter(published_mention_clause())
         .group_by(Mention.media_id)
         .subquery()
     )
@@ -40,6 +46,7 @@ def episode_count_by_media_subquery(db: Session) -> Subquery:
             Mention.media_id,
             func.count(func.distinct(Mention.episode_id)).label("episode_count"),
         )
+        .filter(published_mention_clause())
         .group_by(Mention.media_id)
         .subquery()
     )
@@ -59,6 +66,7 @@ def mention_count_by_episode_subquery(db: Session) -> Subquery:
             Mention.episode_id,
             func.count(Mention.id).label("mention_count"),
         )
+        .filter(published_mention_clause())
         .group_by(Mention.episode_id)
         .subquery()
     )
@@ -98,6 +106,7 @@ def mention_count_by_podcast_subquery(db: Session) -> Subquery:
             func.count(Mention.id).label("mention_count"),
         )
         .join(Mention, Mention.episode_id == Episode.id)
+        .filter(published_mention_clause())
         .group_by(Episode.podcast_id)
         .subquery()
     )

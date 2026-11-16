@@ -16,18 +16,23 @@ from typing import Any
 
 import pytest
 from assertpy import assert_that
+from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
-from podex.database import enable_sqlite_foreign_keys
+from podex.database import enable_sqlite_foreign_keys, get_db
+from podex.main import create_app
 from podex.models import (
     Base,
     ContentSuppressedError,
     DerivativeGenerationRun,
     Episode,
+    Media,
+    MediaType,
     Mention,
     SemanticChunk,
+    TakedownRequesterType,
     TakedownSubjectType,
     Transcript,
 )
@@ -36,8 +41,13 @@ from podex.services.content_suppression import (
 )
 from podex.services.derivative_generation import generate_episode_derivatives
 from podex.services.semantic_chunks import SemanticChunkingPolicy
-from podex.services.takedown_requests import execute_approved_takedown_request
-from tests.conftest import SeededGraph, seed_catalog_graph
+from podex.services.takedown_requests import (
+    TAKEDOWN_BUSY_MESSAGE,
+    TakedownRequestInputData,
+    create_takedown_request,
+    execute_approved_takedown_request,
+)
+from tests.conftest import SeededGraph, enable_ops, seed_catalog_graph
 from tests.takedown_support import (
     approve_takedown,
     assert_derivatives_taken_down,
@@ -285,3 +295,64 @@ def test_check_remembered_by_a_session_ends_with_its_transaction(
     with pytest.raises(ContentSuppressedError):
         writer.commit()
     writer.rollback()
+
+
+def test_takedown_during_a_held_write_lock_answers_a_retryable_409(
+    tmp_path: Path,
+    database: _Database,
+) -> None:
+    """A takedown that cannot get the write lock in time is a retryable 409.
+
+    1. A pending case exists. Another connection holds the write lock.
+    2. Approving the case answers 409 with the busy message; nothing changed.
+    3. Once the lock is released the same approval succeeds.
+    """
+    graph = database.graph
+    request = create_takedown_request(
+        db=database.approver,
+        payload=TakedownRequestInputData(
+            subject_type=TakedownSubjectType.EPISODE,
+            subject_id=graph.episode_id,
+            requester_type=TakedownRequesterType.RIGHTS_HOLDER,
+            requester_name="Rights Holder",
+            requester_email="rights@example.com",
+            basis="Synthetic basis for a lock test.",
+            requested_actions=["unpublish_mentions"],
+        ),
+    )
+    database.approver.commit()
+    request_id = request.id
+    app_engine = _engine(tmp_path / "suppression.db", _LOCK_TIMEOUT_SECONDS)
+    sessions = sessionmaker(bind=app_engine, autoflush=False)
+    app = create_app()
+
+    def app_db() -> Iterator[Session]:
+        with sessions() as db:
+            yield db
+
+    app.dependency_overrides[get_db] = app_db
+    client = TestClient(app)
+    enable_ops(client, api_key="test-ops-key")
+    database.rebuilder.add(Media(type=MediaType.MOVIE, title="Holding the lock"))
+    database.rebuilder.flush()
+
+    try:
+        busy = client.post(
+            f"/api/v2/ops/takedown-requests/{request_id}/decide",
+            json={"status": "approved", "note": "Verified."},
+            headers={"X-Ops-Key": "test-ops-key"},
+        )
+        database.rebuilder.commit()
+        retried = client.post(
+            f"/api/v2/ops/takedown-requests/{request_id}/decide",
+            json={"status": "approved", "note": "Verified."},
+            headers={"X-Ops-Key": "test-ops-key"},
+        )
+    finally:
+        app_engine.dispose()
+
+    assert_that(busy.status_code).is_equal_to(409)
+    assert_that(busy.json()["detail"]).is_equal_to(TAKEDOWN_BUSY_MESSAGE)
+    assert_that(retried.status_code).is_equal_to(200)
+    database.approver.expire_all()
+    assert_that(database.approver.query(Mention).count()).is_zero()

@@ -30,6 +30,7 @@ ignores ``FOR UPDATE``.
 
 from dataclasses import dataclass
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -45,8 +46,12 @@ from podex.models import (
     MentionCandidateProvenance,
     ReviewItem,
 )
-from podex.models.content_suppression import suppression_key
-from podex.services.content_suppression import count_published_mentions
+from podex.models.content_suppression import suppressed_clause, suppression_key
+from podex.services.content_suppression import (
+    count_published_mentions,
+    delete_mentions,
+    pair_suppressions_of,
+)
 
 MEDIA_ALERT_TARGET_TYPE = "media"
 
@@ -95,6 +100,42 @@ def lock_merge_pair(
         for media_id in sorted({source_media_id, target_media_id})
     }
     return locked[source_media_id], locked[target_media_id]
+
+
+def delete_mentions_covered_after_merge(
+    *,
+    db: Session,
+    source_media_id: int,
+    target_media_id: int,
+) -> int:
+    """Delete mentions of either record that a suppression of either covers.
+
+    After the merge both records are one work, so a suppression of
+    ``(episode, source)`` or ``(episode, target)`` covers every mention of
+    either record in that episode. Those mentions are deleted, as a mention
+    takedown deletes its whole pair, instead of refusing the merge. Call it
+    before alert baselines are read, so baselines count what stays published.
+
+    Returns:
+        The number of mentions deleted.
+    """
+    covered = or_(
+        *(
+            suppressed_clause(
+                scope=ContentSuppressionScope.MENTIONS,
+                episode_id=Mention.episode_id,
+                media_id=media_id,
+            )
+            for media_id in (source_media_id, target_media_id)
+        ),
+    )
+    mentions = (
+        db.query(Mention)
+        .filter(Mention.media_id.in_((source_media_id, target_media_id)), covered)
+        .order_by(Mention.id)
+        .all()
+    )
+    return len(delete_mentions(db, mentions))
 
 
 def move_media_references(
@@ -188,16 +229,7 @@ def _move_mention_pair_suppressions(
         .filter(ContentSuppression.media_id == target_media_id)
         .all()
     }
-    for suppression in (
-        db.query(ContentSuppression)
-        .filter(ContentSuppression.media_id == source_media_id)
-        .order_by(ContentSuppression.id)
-        .all()
-    ):
-        episode_id = suppression.episode_id
-        if episode_id is None:
-            # Unreachable: the check constraint gives every pair row an episode.
-            continue
+    for suppression, episode_id in pair_suppressions_of(db, source_media_id):
         moved_key = suppression_key(
             subject_type=ContentSuppressionSubjectType.MENTION_PAIR,
             scope=ContentSuppressionScope(suppression.scope),
@@ -347,3 +379,27 @@ def _move_media_alert_rules(
 
     for source_rule in collapsed_rules:
         db.delete(source_rule)
+
+
+def merge_verification_sources(
+    *,
+    source_values: list[str] | None,
+    target_values: list[str] | None,
+) -> list[str] | None:
+    """Merge verification source lists while preserving target precedence.
+
+    Args:
+        source_values: Verification sources from the source media record.
+        target_values: Verification sources from the target media record.
+
+    Returns:
+        Combined verification source list when any values exist.
+    """
+    if not source_values and not target_values:
+        return target_values
+
+    combined = list(target_values or [])
+    for value in source_values or []:
+        if value not in combined:
+            combined.append(value)
+    return combined

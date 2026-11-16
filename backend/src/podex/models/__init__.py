@@ -21,6 +21,7 @@ from podex.models.content_suppression import (
     ContentSuppression,
     ContentSuppressionScope,
     ContentSuppressionSubjectType,
+    ContentSuppressionVersion,
 )
 from podex.models.derivative_generation_run import (
     DerivativeGenerationRun,
@@ -93,6 +94,7 @@ __all__ = [
     "ContentSuppression",
     "ContentSuppressionScope",
     "ContentSuppressionSubjectType",
+    "ContentSuppressionVersion",
     "DerivativeGenerationRun",
     "DerivativeGenerationRunStatus",
     "DerivativeSummaryKind",

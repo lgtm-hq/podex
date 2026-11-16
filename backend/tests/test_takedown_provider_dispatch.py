@@ -7,7 +7,7 @@ takedown runs and removes what was written. A takedown committed first makes
 the writer refuse before any text is read.
 """
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -23,15 +23,17 @@ from podex.database import enable_sqlite_foreign_keys
 from podex.models import (
     Base,
     ContentSuppressedError,
+    ContentSuppressionScope,
     Episode,
     EpisodeSummary,
     Media,
     MediaSummary,
+    MediaType,
     SemanticChunk,
     TakedownSubjectType,
     Transcript,
 )
-from podex.services import derivative_summaries, semantic_chunks
+from podex.services import content_suppression, derivative_summaries, semantic_chunks
 from podex.services.derivative_summaries import (
     GeneratedSummaryData,
     generate_episode_summary,
@@ -220,3 +222,64 @@ def test_takedown_committed_first_stops_the_writer_before_any_text(
     sides.writer.rollback()
 
     assert_that(provider.mock_calls).is_empty()
+
+
+@pytest.mark.parametrize(
+    "lane",
+    [_LANES["episode-summary"], _LANES["chunks"]],
+    ids=["episode-summary", "chunks"],
+)
+def test_refused_writer_does_not_keep_the_database_locked(
+    sides: _Sides,
+    lane: _Lane,
+) -> None:
+    """After a refusal, other connections can write without waiting for a rollback."""
+    _take_down(sides)
+
+    with pytest.raises(ContentSuppressedError):
+        lane.run(sides, _provider())
+
+    sides.approver.add(Media(type=MediaType.MOVIE, title="Written meanwhile"))
+    sides.approver.commit()
+    sides.writer.rollback()
+
+
+def test_refusal_under_the_lock_releases_it(
+    sides: _Sides,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A takedown committed between the two checks: the refusal frees the lock.
+
+    1. The writer's first check, without a lock, finds nothing.
+    2. The takedown commits in that gap.
+    3. The writer takes the lock, checks again, refuses, and releases it, so
+       another connection can write at once.
+    """
+    original = content_suppression.suppressed_episode_ids
+    calls: list[int] = []
+
+    def commit_takedown_after_first_check(
+        *,
+        db: Session,
+        scope: ContentSuppressionScope,
+        episode_ids: Iterable[int],
+    ) -> set[int]:
+        found: set[int] = original(db=db, scope=scope, episode_ids=episode_ids)
+        calls.append(len(found))
+        if len(calls) == 1:
+            _take_down(sides)
+        return found
+
+    monkeypatch.setattr(
+        content_suppression,
+        "suppressed_episode_ids",
+        commit_takedown_after_first_check,
+    )
+
+    with pytest.raises(ContentSuppressedError):
+        _episode_summary(sides, _provider())
+
+    sides.approver.add(Media(type=MediaType.MOVIE, title="Written meanwhile"))
+    sides.approver.commit()
+    sides.writer.rollback()
+    assert_that(calls).is_equal_to([0, 1])
