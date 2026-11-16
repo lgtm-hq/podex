@@ -188,6 +188,44 @@ def test_anonymous_decision_keeps_reviewer_and_clears_note(
     assert_that(item.decided_at).is_equal_to(_DECIDED)
 
 
+@pytest.mark.parametrize(
+    ("act", "expected_status"),
+    [
+        (lambda item: item.assign(actor_name="second-reviewer"), "in_review"),
+        (lambda item: item.approve(actor_name="second-reviewer"), "approved"),
+        (lambda item: item.reject(actor_name="second-reviewer"), "rejected"),
+        (lambda item: item.mark_split(actor_name="second-reviewer"), "split"),
+        (
+            lambda item: item.mark_merged(
+                actor_name="second-reviewer",
+                target_media_id=item.target_media_id or 0,
+            ),
+            "merged",
+        ),
+    ],
+    ids=["assign", "approve", "reject", "split", "merge"],
+)
+def test_named_actor_replaces_the_existing_reviewer(
+    db_session: Session,
+    seeded_graph: SeededGraph,
+    clock: _Clock,
+    act: Decision,
+    expected_status: str,
+) -> None:
+    """When an actor is named, that actor becomes the reviewer of record."""
+    item = _pending_item(db_session, seeded_graph, assigned_to="first-reviewer")
+    clock.current = _DECIDED
+
+    act(item)
+
+    assert_that(item.status).is_equal_to(expected_status)
+    assert_that(item.assigned_to).is_equal_to("second-reviewer")
+    db_session.commit()
+    assert_that(_stored(db_session, item.id).assigned_to).is_equal_to(
+        "second-reviewer",
+    )
+
+
 def test_mark_merged_records_the_canonical_target(
     db_session: Session,
     seeded_graph: SeededGraph,

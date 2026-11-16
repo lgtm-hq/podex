@@ -62,11 +62,17 @@ def test_retries_retryable_status_then_succeeds(
     assert_that(body).is_equal_to("body-200")
     assert_that(handler.requests).is_length(3)
     assert_that(sleeps).is_equal_to([2.0, 4.0])
-    warnings = [record.getMessage() for record in caplog.records]
-    assert_that(warnings).is_equal_to(
+    logged = [(record.levelno, record.getMessage()) for record in caplog.records]
+    assert_that(logged).is_equal_to(
         [
-            f"Transient Podscripts request failure; retrying {_URL} in 2.0s",
-            f"Transient Podscripts request failure; retrying {_URL} in 4.0s",
+            (
+                logging.WARNING,
+                f"Transient Podscripts request failure; retrying {_URL} in 2.0s",
+            ),
+            (
+                logging.WARNING,
+                f"Transient Podscripts request failure; retrying {_URL} in 4.0s",
+            ),
         ],
     )
 
@@ -149,3 +155,27 @@ def test_rejects_zero_attempts(max_attempts: int, sleeps: list[float]) -> None:
     assert_that(str(caught.value)).is_equal_to("max_attempts must be at least one")
     assert_that(handler.requests).is_empty()
     assert_that(sleeps).is_empty()
+
+
+@pytest.mark.parametrize("status", [429, 503])
+def test_single_attempt_raises_the_first_retryable_failure(
+    status: int,
+    sleeps: list[float],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """With one attempt allowed, a retryable failure is raised without a retry."""
+    handler = _ScriptedHandler([status, 200])
+    caplog.set_level(logging.WARNING, logger=podscripts_client.__name__)
+
+    with _client(handler) as client, pytest.raises(httpx.HTTPStatusError) as caught:
+        fetch_podscripts_html(
+            client=client,
+            url=_URL,
+            retry_delay_seconds=1.0,
+            max_attempts=1,
+        )
+
+    assert_that(caught.value.response.status_code).is_equal_to(status)
+    assert_that(handler.requests).is_length(1)
+    assert_that(sleeps).is_empty()
+    assert_that(caplog.records).is_empty()

@@ -6,7 +6,11 @@ from secrets import token_hex
 import pytest
 from assertpy import assert_that
 
-from podex.services.notification_delivery import SmtpDigestSender
+from podex.config import AuthSettings, Settings
+from podex.services.notification_delivery import (
+    SmtpDigestSender,
+    build_digest_sender,
+)
 
 _SMTP_CREDENTIAL = f"synthetic-smtp-{token_hex(8)}"
 
@@ -108,3 +112,39 @@ def test_send_digest_negotiates_tls_and_authenticates_when_configured(
         ("mailer", _SMTP_CREDENTIAL),
     )
     assert_that(connection.messages[0]["To"]).is_equal_to("reader@example.com")
+
+
+@pytest.mark.parametrize(
+    ("host", "from_email"),
+    [("smtp.example.com", ""), ("", "digests@example.com"), ("", "")],
+    ids=["host-only", "sender-only", "neither"],
+)
+def test_no_digest_sender_without_both_host_and_sender_address(
+    host: str,
+    from_email: str,
+) -> None:
+    """Digest delivery needs both an SMTP host and a From address."""
+    settings = Settings(auth=AuthSettings(smtp_host=host, smtp_from_email=from_email))
+
+    assert_that(build_digest_sender(settings=settings)).is_none()
+
+
+def test_digest_sender_uses_the_configured_smtp_settings() -> None:
+    """With host and From address set, the sender carries the SMTP settings."""
+    settings = Settings(
+        auth=AuthSettings(
+            smtp_host="smtp.example.com",
+            smtp_port=2525,
+            smtp_from_email="digests@example.com",
+            smtp_username="mailer",
+            smtp_starttls=False,
+        ),
+    )
+
+    sender = build_digest_sender(settings=settings)
+
+    if not isinstance(sender, SmtpDigestSender):
+        raise AssertionError(f"expected an SMTP digest sender, got {sender!r}")
+    assert_that(
+        (sender.host, sender.port, sender.from_email, sender.username, sender.starttls),
+    ).is_equal_to(("smtp.example.com", 2525, "digests@example.com", "mailer", False))

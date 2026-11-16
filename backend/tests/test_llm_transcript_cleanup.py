@@ -42,11 +42,15 @@ class _Model:
             },
         )
 
-    def transcript_sent(self) -> str:
-        """Return the transcript text inside the single request's delimiters."""
-        assert_that(self.sent).is_length(1)
-        content: str = self.sent[0]["messages"][0]["content"]
-        return content.split("<transcript>\n", 1)[1].split("\n</transcript>", 1)[0]
+    def transcripts_sent(self) -> list[str]:
+        """Return the transcript text inside each request's delimiters."""
+        transcripts: list[str] = []
+        for body in self.sent:
+            content: str = body["messages"][0]["content"]
+            transcripts.append(
+                content.split("<transcript>\n", 1)[1].split("\n</transcript>", 1)[0],
+            )
+        return transcripts
 
 
 @pytest.fixture(autouse=True)
@@ -63,12 +67,13 @@ def _clean(reply: str, text: str = _TRANSCRIPT, **kwargs: Any) -> tuple[
 ]:
     """Run cleanup against a model that answers ``reply``."""
     model = _Model(reply)
-    client: anthropic.Anthropic = anthropic.Anthropic(
-        api_key=f"synthetic-{token_hex(4)}",
-        http_client=httpx2.Client(transport=httpx2.MockTransport(model)),
-        max_retries=0,
-    )
-    result = TranscriptCleaner(client=client).cleanup_transcript(text, **kwargs)
+    with httpx2.Client(transport=httpx2.MockTransport(model)) as http_client:
+        client: anthropic.Anthropic = anthropic.Anthropic(
+            api_key=f"synthetic-{token_hex(4)}",
+            http_client=http_client,
+            max_retries=0,
+        )
+        result = TranscriptCleaner(client=client).cleanup_transcript(text, **kwargs)
     return result, model
 
 
@@ -168,16 +173,20 @@ def test_object_without_cleaned_text_keeps_the_original() -> None:
 def test_long_transcript_is_truncated_before_sending(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Only ``max_chars`` characters reach the model, and the cut is logged."""
+    """No request carries more than ``max_chars`` characters, and the cut is logged."""
     long_text = "a" * 150 + "TAIL-MARKER" + "b" * 50
     caplog.set_level(logging.WARNING, logger=_LOGGER)
 
     _result, model = _clean(json.dumps({"corrections": []}), long_text, max_chars=150)
 
-    assert_that(model.transcript_sent()).is_equal_to("a" * 150)
+    sent = model.transcripts_sent()
+    assert_that(sent).is_not_empty()
+    assert_that([len(transcript) <= 150 for transcript in sent]).does_not_contain(
+        False,
+    )
     assert_that(
-        [r.getMessage() for r in caplog.records if r.name == _LOGGER],
-    ).is_equal_to(["Transcript truncated from 211 to 150 chars"])
+        [(r.levelno, r.getMessage()) for r in caplog.records if r.name == _LOGGER],
+    ).is_equal_to([(logging.WARNING, "Transcript truncated from 211 to 150 chars")])
 
 
 def test_transcript_at_the_limit_is_sent_whole(
@@ -192,7 +201,7 @@ def test_transcript_at_the_limit_is_sent_whole(
         max_chars=len(_TRANSCRIPT),
     )
 
-    assert_that(model.transcript_sent()).is_equal_to(_TRANSCRIPT)
+    assert_that(model.transcripts_sent()).is_equal_to([_TRANSCRIPT])
     assert_that([r for r in caplog.records if r.name == _LOGGER]).is_empty()
 
 
@@ -213,3 +222,32 @@ def test_request_without_context_says_so() -> None:
 
     content: str = model.sent[0]["messages"][0]["content"]
     assert_that(content).starts_with("CONTEXT:\nNo additional context.\n\n")
+
+
+@pytest.mark.parametrize(
+    ("length", "requests"),
+    [(99, 0), (100, 1)],
+    ids=["below-minimum", "at-minimum"],
+)
+def test_transcripts_shorter_than_a_hundred_characters_are_not_sent(
+    length: int,
+    requests: int,
+) -> None:
+    """Text under 100 characters is returned untouched without a request."""
+    text = "x" * length
+
+    result, model = _clean(json.dumps({"cleaned_text": "y" * length}), text)
+
+    assert_that(model.sent).is_length(requests)
+    assert_that(result.cleaned_text).is_equal_to(
+        text if requests == 0 else "y" * length
+    )
+    assert_that(result.success).is_true()
+
+
+def test_non_text_cleaned_value_is_returned_as_text() -> None:
+    """A non-string ``cleaned_text`` in the reply is converted to a string."""
+    result, _model = _clean(json.dumps({"cleaned_text": 12345, "corrections": []}))
+
+    assert_that(result.cleaned_text).is_instance_of(str)
+    assert_that(result.cleaned_text).is_equal_to("12345")

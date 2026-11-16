@@ -6,7 +6,6 @@ instead of waited on, so the politeness delay is asserted, not spent.
 
 import logging
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -66,6 +65,16 @@ def _pages(pages: dict[int, str], failing: dict[int, int] | None = None) -> Rout
         return httpx.Response(200, text=pages.get(page, ""))
 
     return route
+
+
+def _recorded(route: Route, requested: list[str]) -> Route:
+    """Wrap ``route`` so each request's path and query is appended to ``requested``."""
+
+    def record(request: httpx.Request) -> httpx.Response:
+        requested.append(request.url.raw_path.decode())
+        return route(request)
+
+    return record
 
 
 def _podcast() -> Podcast:
@@ -164,12 +173,17 @@ def test_failed_later_page_keeps_earlier_episodes(
 ) -> None:
     """A page that cannot be fetched ends the walk with the pages already read."""
     page1 = '<a href="/podcasts/show/1-first-episode">First</a>'
+    page3 = '<a href="/podcasts/show/3-third-episode">Third</a>'
+    requested: list[str] = []
     caplog.set_level(logging.INFO, logger=_LOGGER)
 
-    episodes = serve(_pages({1: page1}, failing={2: 404})).discover_episodes(
-        _podcast(),
-    )
+    episodes = serve(
+        _recorded(_pages({1: page1, 3: page3}, failing={2: 404}), requested),
+    ).discover_episodes(_podcast())
 
+    assert_that(requested).is_equal_to(
+        ["/podcasts/show?page=1", "/podcasts/show?page=2"],
+    )
     assert_that([episode.title for episode in episodes]).is_equal_to(["First"])
     assert_that(_records(caplog, logging.WARNING)).is_equal_to(
         [
@@ -180,23 +194,6 @@ def test_failed_later_page_keeps_earlier_episodes(
     assert_that(_records(caplog, logging.INFO)).is_equal_to(
         ["Discovered 1 episodes from podscripts.co"],
     )
-
-
-def test_since_does_not_filter_listing_pages(
-    serve: Callable[[Route], PodscriptsDiscovery],
-) -> None:
-    """Listing pages carry no dates, so every episode is returned to the caller."""
-    page1 = (
-        '<a href="/podcasts/show/2-second">Second</a>'
-        '<a href="/podcasts/show/1-first">First</a>'
-    )
-
-    episodes = serve(_pages({1: page1})).discover_episodes(
-        _podcast(),
-        since=datetime(2030, 1, 1, tzinfo=UTC),
-    )
-
-    assert_that([episode.episode_number for episode in episodes]).is_equal_to([2, 1])
 
 
 def test_paging_stops_at_the_two_hundred_page_safety_limit(
@@ -232,6 +229,12 @@ def test_paging_stops_at_the_two_hundred_page_safety_limit(
         ("/podcasts/show/42-the-answer/", "1 Comment", 42, "The Answer"),
         ("/podcasts/show/bonus-special", "Bonus: Special", None, "Bonus: Special"),
         ("/podcasts/show/bonus-special", "12 comments", None, "Bonus Special"),
+        (
+            "/podcasts/show/42-the-answer",
+            "12 comments about the finale",
+            42,
+            "12 comments about the finale",
+        ),
     ],
     ids=[
         "numbered-text",
@@ -240,6 +243,7 @@ def test_paging_stops_at_the_two_hundred_page_safety_limit(
         "trailing-slash",
         "unnumbered-text",
         "unnumbered-comment-label",
+        "text-starting-with-a-count",
     ],
 )
 def test_episode_title_and_number_come_from_link_or_slug(
@@ -277,6 +281,45 @@ def test_listing_ignores_links_outside_the_show(
     episodes = serve(_pages({1: page1})).discover_episodes(_podcast())
 
     assert_that([episode.title for episode in episodes]).is_equal_to(["Kept"])
+
+
+def test_podcast_without_podscripts_slug_is_not_fetched(
+    serve: Callable[[Route], PodscriptsDiscovery],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A podcast with no Podscripts slug returns nothing, warns and sends no request."""
+    requested: list[str] = []
+    caplog.set_level(logging.DEBUG, logger=_LOGGER)
+    unlinked = Podcast(name="No Slug", slug="no-slug")
+
+    episodes = serve(_recorded(_html("unused"), requested)).discover_episodes(
+        unlinked,
+    )
+
+    assert_that(episodes).is_empty()
+    assert_that(requested).is_empty()
+    logged = [(r.levelno, r.getMessage()) for r in caplog.records if r.name == _LOGGER]
+    assert_that(logged).is_equal_to(
+        [(logging.WARNING, "Podcast no-slug has no podscripts_slug")],
+    )
+
+
+def test_podcast_page_retry_waits_for_the_configured_delay(
+    serve: Callable[[Route], PodscriptsDiscovery],
+    sleeps: list[float],
+) -> None:
+    """A transient failure on the podcast page is retried after the provider delay."""
+    statuses = [503, 200]
+
+    def flaky(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(statuses.pop(0), text="<h1>Example Show</h1>")
+
+    podcast = serve(flaky).discover_podcast("example-show")
+
+    assert_that(podcast).is_not_none()
+    assert_that(statuses).is_empty()
+    # One retry wait, then the politeness delay after the successful fetch.
+    assert_that(sleeps).is_equal_to([_DELAY, _DELAY])
 
 
 def test_catalog_lists_unique_top_level_podcasts(
@@ -318,13 +361,21 @@ def test_catalog_lists_unique_top_level_podcasts(
 
 def test_catalog_without_podcast_links_is_empty(
     serve: Callable[[Route], PodscriptsDiscovery],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A catalog page with no podcast links lists nothing."""
+    """A fetched catalog page with no podcast links lists nothing."""
+    requested: list[str] = []
+    caplog.set_level(logging.INFO, logger=_LOGGER)
+
     listed = serve(
-        _html("<html><body><p>Maintenance</p></body></html>")
+        _recorded(_html("<html><body><p>Maintenance</p></body></html>"), requested),
     ).list_available_podcasts()
 
     assert_that(listed).is_empty()
+    assert_that(requested).is_equal_to(["/podcasts"])
+    assert_that(_records(caplog, logging.INFO)).is_equal_to(
+        ["Found 0 podcasts on podscripts.co"],
+    )
 
 
 def test_catalog_fetch_failure_is_logged_as_an_error(

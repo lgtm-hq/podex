@@ -139,12 +139,16 @@ def _page(items: list[dict[str, Any]], *, more: bool) -> dict[str, Any]:
 
 
 def _failure_lines(caplog: pytest.LogCaptureFixture) -> list[str]:
-    """Return warning-or-worse lines from the Spotify provider."""
-    return [
-        record.getMessage()
+    """Return the provider's warning-or-worse lines, each checked to be a WARNING."""
+    records = [
+        record
         for record in caplog.records
         if record.name == _LOGGER and record.levelno >= logging.WARNING
     ]
+    assert_that([record.levelname for record in records]).is_equal_to(
+        ["WARNING"] * len(records),
+    )
+    return [record.getMessage() for record in records]
 
 
 def test_episodes_follow_next_links_with_growing_offsets(sdk: _Sdk) -> None:
@@ -169,6 +173,28 @@ def test_episodes_follow_next_links_with_growing_offsets(sdk: _Sdk) -> None:
     assert_that({call["id"] for call in client.episode_calls}).is_equal_to(
         {_SHOW_ID},
     )
+    assert_that({call["market"] for call in client.episode_calls}).is_equal_to(
+        {"US"},
+    )
+
+
+def test_short_page_with_a_next_link_advances_by_the_items_received(
+    sdk: _Sdk,
+) -> None:
+    """The next offset counts the items actually returned, not the page size."""
+    client = _PagedSpotify(
+        [
+            _page([_episode(1), _episode(2)], more=True),
+            _page([_episode(3)], more=False),
+        ],
+    )
+
+    episodes = sdk.install(client).discover_episodes(_podcast(), limit=50)
+
+    assert_that([call["offset"] for call in client.episode_calls]).is_equal_to(
+        [0, 2],
+    )
+    assert_that(episodes).is_length(3)
 
 
 def test_episode_page_size_is_capped_at_the_api_maximum(sdk: _Sdk) -> None:
@@ -320,6 +346,50 @@ def test_release_date_precision_is_parsed_or_ignored(
     assert_that(episodes[0].published_at).is_equal_to(expected)
 
 
+@pytest.mark.parametrize(
+    ("length", "expected_length", "suffixed"),
+    [(1000, 1000, False), (1001, 1003, True)],
+    ids=["at-limit", "over-limit"],
+)
+def test_description_is_cut_after_a_thousand_characters(
+    sdk: _Sdk,
+    length: int,
+    expected_length: int,
+    suffixed: bool,
+) -> None:
+    """Descriptions up to 1,000 characters are kept; longer ones are cut and marked."""
+    item = _episode(1)
+    item["description"] = "".join(str(index % 10) for index in range(length))
+    client = _PagedSpotify([_page([item], more=False)])
+
+    episodes = sdk.install(client).discover_episodes(_podcast())
+
+    description = episodes[0].description or ""
+    assert_that(len(description)).is_equal_to(expected_length)
+    assert_that(description[:1000]).is_equal_to(item["description"][:1000])
+    assert_that(description.endswith("...")).is_equal_to(suffixed)
+
+
+@pytest.mark.parametrize(
+    ("client_id", "client_secret"),
+    [(_CLIENT_ID, None), (None, _CLIENT_SECRET), (None, None)],
+    ids=["id-only", "secret-only", "neither"],
+)
+def test_partial_credentials_are_not_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    client_id: str | None,
+    client_secret: str | None,
+) -> None:
+    """Both the client id and the secret are needed; one alone is not enough."""
+    monkeypatch.delenv("SPOTIFY_CLIENT_ID", raising=False)
+    monkeypatch.delenv("SPOTIFY_CLIENT_SECRET", raising=False)
+
+    spotify = SpotifyDiscovery(client_id=client_id, client_secret=client_secret)
+
+    assert_that(spotify.is_configured).is_false()
+    assert_that(spotify.discover_podcast(_SHOW_ID)).is_none()
+
+
 def test_optional_episode_fields_default_to_none(sdk: _Sdk) -> None:
     """Missing duration, links, images and description stay unset."""
     client = _PagedSpotify([_page([{"name": "Bare episode"}], more=False)])
@@ -435,7 +505,7 @@ def test_search_failure_returns_no_results(
     )
 
 
-def test_missing_sdk_is_reported_as_a_configuration_failure(
+def test_missing_sdk_logs_import_error_and_returns_nothing(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:

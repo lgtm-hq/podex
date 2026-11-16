@@ -200,7 +200,8 @@ def _stored_row(db: Session, podcast_id: int) -> dict[str, Any]:
     """Read the podcast row with SQL, bypassing the session's pending changes."""
     row = db.execute(
         text(
-            "SELECT name, slug, status, discovery_source, cover_url, rss_url "
+            "SELECT name, slug, status, description, discovery_source, cover_url, "
+            "rss_url, spotify_id, apple_id, youtube_channel_id, podscripts_slug "
             "FROM podcasts WHERE id = :podcast_id",
         ),
         {"podcast_id": podcast_id},
@@ -222,6 +223,7 @@ def _existing_podcast(db: Session) -> int:
             name="The Example Show",
             slug="example-show",
             status=PodcastStatus.ACTIVE,
+            description="Original description.",
             cover_url="https://cdn.example/cover.jpg",
             discovery_source="rss",
             sources=OpsPodcastSourceInputData(
@@ -255,6 +257,62 @@ def test_create_rejects_unknown_discovery_source_without_writing(
 
     assert_that(db_session.new).is_empty()
     assert_that(_podcast_count(db_session)).is_zero()
+
+
+def test_create_stores_description_and_cover(db_session: Session) -> None:
+    """Description and cover URL given on creation are stored and returned."""
+    podcast_id = _existing_podcast(db_session)
+
+    row = _stored_row(db_session, podcast_id)
+    created = get_ops_podcast_by_id(db=db_session, podcast_id=podcast_id)
+
+    assert_that((row["description"], row["cover_url"])).is_equal_to(
+        ("Original description.", "https://cdn.example/cover.jpg"),
+    )
+    if created is None:
+        raise AssertionError("expected the podcast to be found")
+    assert_that((created.description, created.cover_url)).is_equal_to(
+        ("Original description.", "https://cdn.example/cover.jpg"),
+    )
+
+
+def test_create_leaves_the_transaction_to_the_caller(db_session: Session) -> None:
+    """Creation only flushes; a caller that rolls back keeps no row."""
+    created = create_ops_podcast(
+        db=db_session,
+        payload=CreateOpsPodcastInputData(
+            name="The Example Show",
+            slug="example-show",
+            status=PodcastStatus.WATCHLIST,
+        ),
+    )
+    assert_that(created.id).is_not_none()
+
+    db_session.rollback()
+
+    assert_that(_podcast_count(db_session)).is_zero()
+
+
+def test_update_leaves_the_transaction_to_the_caller(db_session: Session) -> None:
+    """An update only flushes; a caller that rolls back keeps the stored row."""
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    updated = update_ops_podcast(
+        db=db_session,
+        podcast_id=podcast_id,
+        payload=UpdateOpsPodcastInputData(
+            provided_fields=frozenset({"name"}),
+            source_fields=frozenset({"rss_url"}),
+            name="Renamed Show",
+            sources=OpsPodcastSourceInputData(rss_url="https://example.com/new.xml"),
+        ),
+    )
+    assert_that(updated.name if updated else None).is_equal_to("Renamed Show")
+
+    db_session.rollback()
+
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
 def test_create_without_discovery_source_stores_none(db_session: Session) -> None:
@@ -302,8 +360,10 @@ def test_update_rejects_clearing_a_required_field(
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
-def test_rejected_update_writes_none_of_its_valid_fields(db_session: Session) -> None:
-    """A valid rename in the same payload as a cleared slug is not written."""
+def test_rejected_update_flushes_none_of_its_valid_fields(
+    db_session: Session,
+) -> None:
+    """A valid rename sent with a cleared slug is not flushed to the database."""
     podcast_id = _existing_podcast(db_session)
     before = _stored_row(db_session, podcast_id)
 
@@ -320,10 +380,6 @@ def test_rejected_update_writes_none_of_its_valid_fields(db_session: Session) ->
         )
 
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
-    db_session.rollback()
-    assert_that(_stored_row(db_session, podcast_id)["name"]).is_equal_to(
-        "The Example Show",
-    )
 
 
 def test_update_rejects_unknown_discovery_source(db_session: Session) -> None:
@@ -394,6 +450,10 @@ def test_update_writes_status_and_slug(db_session: Session) -> None:
         raise AssertionError("expected the podcast to be found")
     assert_that(updated.status).is_equal_to(PodcastStatus.PAUSED)
     assert_that(updated.slug).is_equal_to("example-show-renamed")
+    assert_that(updated.description).is_equal_to("Original description.")
+    assert_that(_stored_row(db_session, podcast_id)["description"]).is_equal_to(
+        "Original description.",
+    )
     assert_that(_stored_row(db_session, podcast_id)["status"]).is_equal_to(
         PodcastStatus.PAUSED.name,
     )
@@ -464,13 +524,27 @@ def test_source_field_names_without_sources_change_nothing(
     podcast_id = _existing_podcast(db_session)
     before = _stored_row(db_session, podcast_id)
 
-    update_ops_podcast(
+    updated = update_ops_podcast(
         db=db_session,
         podcast_id=podcast_id,
         payload=UpdateOpsPodcastInputData(source_fields=frozenset(_SOURCE_FIELDS)),
     )
     db_session.commit()
 
+    if updated is None:
+        raise AssertionError("expected the podcast to be found")
+    assert_that(updated.id).is_equal_to(podcast_id)
+    assert_that(
+        {name: getattr(updated.sources, name) for name in _SOURCE_FIELDS},
+    ).is_equal_to(
+        {
+            "rss_url": "https://example.com/feed.xml",
+            "spotify_id": "spotify-original",
+            "apple_id": "apple-original",
+            "youtube_channel_id": "youtube-original",
+            "podscripts_slug": "podscripts-original",
+        },
+    )
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
