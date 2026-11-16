@@ -10,7 +10,12 @@ from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
 from podex.config import BillingSettings, Settings
-from podex.models import AccountSubscription, AccountUser
+from podex.models import (
+    AccountQuotaUsage,
+    AccountSavedMedia,
+    AccountSubscription,
+    AccountUser,
+)
 from podex.services.account_subscriptions import (
     API_REQUESTS,
     AccountQuotaExceededError,
@@ -193,3 +198,34 @@ def test_paid_enforcement_blocks_personalization_writes(
 
     allowed = client.put(f"/api/v2/me/saves/{graph.media_id}", headers=cookie)
     assert_that(allowed.status_code).is_equal_to(200)
+
+
+def test_spent_quota_refuses_personalization_writes(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """At the monthly limit a write gets 429, is not saved and uses no unit."""
+    graph = seed_catalog_graph(db_session)
+    cookie = {"Cookie": f"podex_session={_sign_in(client)}"}
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise AssertionError("Expected a FastAPI test app")
+    app.dependency_overrides[get_app_settings] = lambda: Settings(
+        billing=BillingSettings(paid_tier_enforced=True, paid_api_requests_per_month=1),
+    )
+    user = db_session.query(AccountUser).one()
+    get_account_subscription(db=db_session, user_id=user.id).tier = "paid"
+    db_session.commit()
+
+    allowed = client.put(f"/api/v2/me/follows/{graph.podcast_id}", headers=cookie)
+    refused = client.put(f"/api/v2/me/saves/{graph.media_id}", headers=cookie)
+
+    assert_that(allowed.status_code).is_equal_to(200)
+    assert_that(refused.status_code).is_equal_to(429)
+    assert_that(refused.json()["detail"]).is_equal_to(
+        "Monthly personalization quota exceeded",
+    )
+    assert_that(db_session.query(AccountSavedMedia).count()).is_equal_to(0)
+    assert_that(
+        [usage.units for usage in db_session.query(AccountQuotaUsage).all()],
+    ).is_equal_to([1])
