@@ -36,8 +36,11 @@ terminal:
 (cd backend && uv run python -m podex.scheduler_runner)
 ```
 
-The scheduler runs episode discovery, digest delivery and retention sweeps.
-Neither process needs an external service to start; see
+The scheduler runs episode discovery, digest delivery and retention sweeps. A
+healthy scheduler logs `scheduler_runner_started`, one
+`scheduler_tick planned=... discovery=... digests=... retention=...` line per
+tick (every 60 seconds by default) and `scheduler_runner_stopped`, all on
+stderr. Neither process needs an external service to start; see
 [docs/configuration.md](docs/configuration.md) for the settings that enable each
 provider and what happens without them.
 

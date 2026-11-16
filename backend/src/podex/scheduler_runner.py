@@ -32,7 +32,7 @@ from podex.services.recurring_notifications import (
 )
 from podex.services.scheduled_work import plan_due_scheduled_work
 
-logger = get_logger(__name__)
+logger = get_logger("podex.scheduler_runner")
 
 
 @dataclass(frozen=True, slots=True)

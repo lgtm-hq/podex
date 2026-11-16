@@ -95,12 +95,17 @@ def test_scheduler_process_logs_lifecycle_at_default_level(
     )
 
     assert_that(stdout).contains(_NOT_IMPORTED)
-    assert_that(stderr.count("scheduler_runner_started tick_seconds=0")).is_equal_to(1)
+    assert_that(stderr.count("scheduler_runner_started tick_seconds=1")).is_equal_to(1)
+    assert_that(stderr).contains(
+        "INFO podex.scheduler_runner scheduler_runner_started tick_seconds=1",
+    )
     assert_that(stderr.count("scheduler_tick planned=")).is_equal_to(1)
     assert_that(stderr).matches(
-        r"scheduler_tick planned=\d+ discovery=\d+ digests=\d+ retention=\d+",
+        r"INFO podex.scheduler_runner scheduler_tick "
+        r"planned=\d+ discovery=\d+ digests=\d+ retention=\d+",
     )
     assert_that(stderr.count("scheduler_runner_stopped")).is_equal_to(1)
+    assert_that(stderr).contains("INFO podex.scheduler_runner scheduler_runner_stopped")
     assert_that(stderr).does_not_contain("scheduler_tick_failed")
     assert_that(stderr).contains("database failure:", SQLSTATE_DESCRIPTOR)
     assert_that(stdout + stderr).does_not_contain(row_value)
