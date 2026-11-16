@@ -176,15 +176,19 @@ def sanitise_database_errors(record: logging.LogRecord) -> None:
 def _replace_with_placeholder(record: logging.LogRecord) -> None:
     """Replace a record's content after sanitising it failed.
 
-    The message, arguments and traceback text become placeholders naming the
-    message type and the exception classes; nothing original is printed.
+    The message and any traceback text (attached or cached) become
+    placeholders naming the message type and the exception classes; the
+    arguments, the attached exception and the stack text are cleared.
+    Nothing original is printed, whatever the record held.
     """
     error = record.exc_info[1] if isinstance(record.exc_info, tuple) else None
     classes = exception_class_names(error) if isinstance(error, BaseException) else []
+    traced = error if isinstance(error, BaseException) else record.exc_text
     record.msg = placeholder(record.msg, classes=classes)
     record.args = ()
-    if isinstance(error, BaseException):
-        record.exc_text = placeholder(error, classes=classes)
+    record.exc_text = None if traced is None else placeholder(traced, classes=classes)
+    record.exc_info = None
+    record.stack_info = None
 
 
 def _sanitising_record(
@@ -193,23 +197,19 @@ def _sanitising_record(
     """Create a record with the inner factory, then apply the boundaries.
 
     Database text is withheld from every record; a record from a
-    third-party SDK logger also loses credentials, bodies and error text.
-    Never raises from sanitising: on any failure the record's content is
-    replaced by placeholders instead, and an SDK record's exception is
-    detached.
+    third-party SDK logger also loses credentials, bodies, provider text and
+    error text. Never raises from sanitising: on any failure the record's
+    content is replaced by placeholders instead.
     """
     record: logging.LogRecord = inner(*args, **kwargs)
-    from_sdk = is_sdk_logger(record.name)
     sanitised = False
     with contextlib.suppress(Exception):
         sanitise_database_errors(record)
-        if from_sdk:
+        if is_sdk_logger(record.name):
             sanitise_sdk_record(record)
         sanitised = True
     if not sanitised:
         _replace_with_placeholder(record)
-        if from_sdk:
-            record.exc_info = None
     return record
 
 

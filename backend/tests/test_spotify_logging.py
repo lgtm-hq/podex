@@ -18,13 +18,14 @@ from assertpy import assert_that
 from spotipy.cache_handler import MemoryCacheHandler
 
 from podex.logging_config import configure_logging
-from podex.sdk_log_boundary import mask_credential_fields
+from podex.sdk_log_rules import mask_credential_fields
 from podex.services.discovery_spotify import SpotifyDiscovery
 
 _CLIENT_ID = f"spotify-client-{token_hex(6)}"
 _CLIENT_SECRET = f"spotify-secret-{token_hex(8)}"
 _ACCESS_TOKEN = f"spotify-token-{token_hex(8)}"
 _SHOW_ID = "4rOoJ6Egrf8K2IrywzwOMk"
+_PROVIDER_TEXT = f"provider-text-{token_hex(8)}"
 
 
 class _JsonResponse:
@@ -60,7 +61,18 @@ def _answer(
             url,
             {"access_token": _ACCESS_TOKEN, "expires_in": 3600},
         )
-    return _JsonResponse(url, {"id": _SHOW_ID, "name": "Example Show"})
+    return _JsonResponse(
+        url,
+        {"id": _SHOW_ID, "name": "Example Show", "description": _PROVIDER_TEXT},
+    )
+
+
+def _everything(caplog: pytest.LogCaptureFixture) -> str:
+    """Return the formatted output and every record's raw parts."""
+    parts = [caplog.text]
+    for record in caplog.records:
+        parts.extend((repr(record.msg), repr(record.args), str(record.exc_text)))
+    return "\n".join(parts)
 
 
 def test_spotify_debug_lines_mask_credentials(
@@ -82,8 +94,13 @@ def test_spotify_debug_lines_mask_credentials(
     assert_that(discovered).is_not_none()
     assert_that(caplog.text).contains("Sending POST request")
     assert_that(caplog.text).contains("'Authorization': '[redacted]'")
-    for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN):
-        assert_that(caplog.text).does_not_contain(credential)
+    assert_that(caplog.text).contains(
+        f"Sending GET to https://api.spotify.com/v1/shows/{_SHOW_ID} with Params: "
+        "{'market': '[withheld]'}",
+        "RESULTS: [withheld response body",
+    )
+    for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN, _PROVIDER_TEXT):
+        assert_that(_everything(caplog)).does_not_contain(credential)
 
 
 def _refuse_show(
@@ -97,7 +114,7 @@ def _refuse_show(
         return _answer(_session, method, url)
     return _JsonResponse(
         url,
-        {"error": {"status": 401, "message": "The access token expired"}},
+        {"error": {"status": 401, "message": f"Token expired: {_PROVIDER_TEXT}"}},
         status=401,
     )
 
@@ -119,13 +136,16 @@ def test_spotify_failure_lines_mask_credentials(
 
     basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
     assert_that(discovered).is_none()
-    assert_that(caplog.text).contains(
-        f"HTTP Error for GET to https://api.spotify.com/v1/shows/{_SHOW_ID}",
-        "returned 401",
-        "'Authorization': '[redacted]'",
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert_that(errors).is_length(1)
+    assert_that(errors[0].getMessage()).is_equal_to(
+        f"HTTP Error for GET to https://api.spotify.com/v1/shows/{_SHOW_ID} with "
+        "Params: {'market': '[withheld]'} returned 401 due to "
+        "[provider message withheld]",
     )
-    for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN):
-        assert_that(caplog.text).does_not_contain(credential)
+    assert_that(caplog.text).contains("'Authorization': '[redacted]'")
+    for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN, _PROVIDER_TEXT):
+        assert_that(_everything(caplog)).does_not_contain(credential)
 
 
 @pytest.mark.parametrize(

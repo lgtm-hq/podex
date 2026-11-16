@@ -33,6 +33,7 @@ from uvicorn.config import Config
 from uvicorn.protocols.http.h11_impl import H11Protocol
 from uvicorn.server import ServerState
 
+from podex.redaction import REDACTED
 from tests.sdk_log_support import (
     CREDENTIAL_QUERY_KEYS,
     debug_logging,
@@ -595,4 +596,166 @@ def test_request_options_body_is_withheld_not_dropped(
     assert_that(output).contains(
         "Request options: {'method': 'post', 'url': '/v1/messages'",
         "'params': {'token': '[redacted]'}",
+    )
+
+
+# --- Record forms found in review of the boundary --------------------------------
+
+
+def _records(caplog: pytest.LogCaptureFixture, start: str) -> list[Any]:
+    """Return the captured records whose message starts with ``start``."""
+    return [record for record in caplog.records if str(record.msg).startswith(start)]
+
+
+def test_llm_request_options_mask_mixed_case_credential_names(
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """Credential names in any case or spelling are masked in structured args."""
+    client = _llm_client(secrets, lambda _request: _llm_response(200, secrets))
+
+    client.messages.create(
+        model="claude-test",
+        max_tokens=16,
+        messages=[{"role": "user", "content": "hello"}],
+        extra_query={"ToKeN": secrets["query"], "AWSAccessKeyId": secrets["api-key"]},
+    )
+
+    output = logged(sdk_logs)
+    _assert_clean(output, secrets)
+    options = _records(sdk_logs, "Request options")
+    assert_that(options).is_not_empty()
+    assert_that(options[0].args[0]["params"]).is_equal_to(
+        {"ToKeN": REDACTED, "AWSAccessKeyId": REDACTED},
+    )
+
+
+def test_llm_standalone_header_records_follow_the_header_allowlist(
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """The SDK's one-header records keep the request id and mask the rest."""
+
+    def answer(_request: httpx2.Request) -> httpx2.Response:
+        response = _llm_response(200, secrets)
+        response.headers["anthropic-workspace-id"] = secrets["response-header"]
+        return response
+
+    _ask(_llm_client(secrets, answer), secrets)
+
+    output = logged(sdk_logs)
+    _assert_clean(output, secrets)
+    assert_that(output).contains("request_id: req_test", "workspace_id: [redacted]")
+    assert_that(_records(sdk_logs, "workspace_id")[0].args).is_equal_to(
+        ("[redacted]",),
+    )
+
+
+@pytest.mark.parametrize("client_module", [httpx, httpx2], ids=["httpx", "httpx2"])
+def test_request_line_replaces_provider_reason_phrase(
+    client_module: Any,
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """The request line prints the standard phrase, not the provider's."""
+    reason = f"Internal {secrets['response-body']}".encode()
+    transport = client_module.MockTransport(
+        lambda request: client_module.Response(
+            500,
+            request=request,
+            extensions={"reason_phrase": reason},
+        ),
+    )
+    with client_module.Client(transport=transport) as client:
+        response = client.get(f"https://{_API_HOST}/v1/items")
+
+    output = logged(sdk_logs)
+    assert_that(response.reason_phrase).contains(secrets["response-body"])
+    _assert_clean(output, secrets)
+    assert_that(output).contains(
+        f'HTTP Request: GET https://{_API_HOST}/v1/items "HTTP/1.1 500 '
+        'Internal Server Error"',
+    )
+    line = _records(sdk_logs, "HTTP Request")[0]
+    assert_that(line.args[3:]).is_equal_to((500, "Internal Server Error"))
+
+
+def test_connection_pool_decodes_query_names(
+    monkeypatch: pytest.MonkeyPatch,
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """A percent-encoded credential query name is recognised in a request line."""
+    monkeypatch.setattr(
+        "urllib3.connection.HTTPConnection._new_conn",
+        _socket_connection(_wire_response(secrets)),
+    )
+    with urllib3.PoolManager() as pool:
+        response = pool.request(
+            "GET",
+            f"http://{_API_HOST}/v1/items?api%5Fkey={secrets['query']}&page=2",
+        )
+
+    output = logged(sdk_logs)
+    assert_that(response.status).is_equal_to(200)
+    _assert_clean(output, secrets)
+    assert_that(output).contains(
+        f'http://{_API_HOST}:80 "GET /v1/items?api%5Fkey=[redacted]&page=2 HTTP/1.1"'
+        " 200",
+    )
+
+
+def test_server_access_log_decodes_query_names(
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """The access line masks ``%63ode`` and keeps its five arguments."""
+    request = (
+        f"GET /auth/callback?%63ode={secrets['query']}&state=x HTTP/1.1\r\n"
+        f"Host: {_API_HOST}\r\n\r\n"
+    ).encode()
+
+    asyncio.run(_serve_once(request))
+
+    output = logged(sdk_logs)
+    _assert_clean(output, secrets)
+    access = [r for r in sdk_logs.records if r.name == "uvicorn.access"]
+    assert_that(access).is_length(1)
+    assert_that(access[0].args).is_equal_to(
+        (
+            "127.0.0.1:5000",
+            "GET",
+            "/auth/callback?%63ode=[redacted]&state=x",
+            "1.1",
+            204,
+        ),
+    )
+
+
+def test_storage_signing_dump_follows_the_header_allowlist(
+    sdk_logs: pytest.LogCaptureFixture,
+    secrets: dict[str, str],
+) -> None:
+    """Canonical request header lines keep only allowlisted values."""
+    client = _storage_client(secrets)
+
+    def answer(request: Any, **_kwargs: object) -> AWSResponse:
+        response: AWSResponse = AWSResponse(request.url, 200, {}, _RawBody(b""))
+        return response
+
+    client.meta.events.register("before-send.s3.PutObject", answer)
+    client.put_object(
+        Bucket="artifacts",
+        Key="k",
+        Body=b"x",
+        Metadata={"private": secrets["request-body"]},
+    )
+
+    output = logged(sdk_logs)
+    _assert_clean(output, secrets)
+    assert_that(output).contains(
+        "CanonicalRequest:\nPUT\n/artifacts/k",
+        f"host:{_STORAGE_HOST}",
+        "x-amz-meta-private:[redacted]",
+        "x-amz-security-token:[redacted]",
     )

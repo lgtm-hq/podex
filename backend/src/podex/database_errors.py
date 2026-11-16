@@ -274,6 +274,30 @@ def stand_in(error: BaseException, message: str) -> BaseException:
     return replacement
 
 
+def stand_in_group(
+    error: BaseExceptionGroup[BaseException],
+    message: str,
+    members: list[BaseException],
+) -> BaseException:
+    """Return an exception group printing ``error``'s class with ``message``.
+
+    Args:
+        error: The group whose module and class name are printed.
+        message: The text printed in place of its message.
+        members: The (non-empty) member exceptions to print.
+
+    Returns:
+        BaseException: The group stand-in, without traceback or links.
+    """
+    base: type[BaseException] = (
+        ExceptionGroup
+        if all(isinstance(member, Exception) for member in members)
+        else BaseExceptionGroup
+    )
+    group: BaseException = _stand_in_type(type(error), base)(message, members)
+    return group
+
+
 def _rebuilt(
     error: BaseException,
     memo: dict[int, BaseException],
