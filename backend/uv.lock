@@ -1633,7 +1633,7 @@ wheels = [
 
 [[package]]
 name = "podex"
-version = "0.41.30"
+version = "0.41.31"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
