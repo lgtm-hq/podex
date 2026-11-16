@@ -478,3 +478,26 @@ def test_wide_header_container_is_not_enumerated(
         "url=https://storage.example.test/artifacts/k "
         "headers=<unprintable: sanitiser limit reached on _CountingHeaders>>",
     )
+
+
+def test_star_width_placeholders_keep_labels_aligned(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``%*s`` and ``%.*s`` consume extra arguments without shifting labels."""
+    secret = synthetic_secret("star")
+    body = f"<Error>{secret}</Error>".encode()
+    with debug_logging(caplog):
+        logging.getLogger("botocore.parsers").debug(
+            "%*s %.*s Response body: %r",
+            4,
+            "id",
+            2,
+            "ok",
+            body,
+        )
+
+    record = caplog.records[-1]
+    assert_that(logged(caplog)).does_not_contain(secret)
+    assert_that(record.getMessage()).is_equal_to(
+        f"  id ok Response body: '[withheld bytes ({len(body)})]'",
+    )

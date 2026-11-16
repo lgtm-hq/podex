@@ -92,8 +92,8 @@ _LABEL_TAIL = 96
 _SCALARS = (int, float, bool, type(None), type)
 _UNHANDLED = object()
 _FORMAT_RE = re.compile(
-    r"%(?:\((?P<key>[^)]{0,128})\))?[#0 +\-]{0,4}(?:\*|\d{1,4})?"
-    r"(?:\.(?:\*|\d{1,4}))?[hlL]?(?P<conversion>[diouxXeEfFgGcrsa%])",
+    r"%(?:\((?P<key>[^)]{0,128})\))?[#0 +\-]{0,4}(?P<width>\*|\d{1,4})?"
+    r"(?:\.(?P<precision>\*|\d{1,4}))?[hlL]?(?P<conversion>[diouxXeEfFgGcrsa%])",
 )
 _LABEL_RE = re.compile(r"([A-Za-z][A-Za-z0-9 _.\-]{0,63}?)[ \t]*[:=][ \t\r\n]*$")
 
@@ -149,12 +149,17 @@ def _placeholders(message: str) -> list[tuple[str | None, str, str | None]]:
 
     The label is the name written just before the placeholder: ``"Response
     headers: %r"`` labels its argument ``Response headers``. Only the last
-    characters before each placeholder are examined. ``%%`` is skipped.
+    characters before each placeholder are examined. ``%%`` is skipped. A
+    ``*`` width or precision consumes an integer argument of its own, which
+    gets an entry before its placeholder's.
     """
     found: list[tuple[str | None, str, str | None]] = []
     position = 0
     for match in _FORMAT_RE.finditer(message):
         conversion = match.group("conversion")
+        for part in ("width", "precision"):
+            if match.group(part) == "*":
+                found.append((None, "d", None))
         if conversion != "%":
             tail = message[max(position, match.start() - _LABEL_TAIL) : match.start()]
             label = _LABEL_RE.search(tail)
