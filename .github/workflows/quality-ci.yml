@@ -37,7 +37,7 @@ jobs:
       # reach anyway.
       lintro-tool-options: "semgrep:config=.semgrep/prompt-boundary.yaml"
       # yamllint disable-line rule:line-length
-      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.35@sha256:b0257a9575e1091ca5e0fa84019b7d80107a30051109ec24d67f4d57834f110b
+      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.36@sha256:22d8e26bd6e614fdd6356c7cd926dce6e23a7040d30f2888b0462c93da72c55c
       egress-policy: block
       egress-preset: quality
 
@@ -62,7 +62,7 @@ jobs:
       upload-report: false
       upload-json-report: false
       # yamllint disable-line rule:line-length
-      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.35@sha256:b0257a9575e1091ca5e0fa84019b7d80107a30051109ec24d67f4d57834f110b
+      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.36@sha256:22d8e26bd6e614fdd6356c7cd926dce6e23a7040d30f2888b0462c93da72c55c
       egress-policy: block
       egress-preset: quality
 
