@@ -14,6 +14,7 @@ from podex.models import (
     Episode,
     Mention,
 )
+from podex.services.content_suppression import count_published_mentions
 
 AlertTargetType = Literal["media", "podcast"]
 AlertEventType = Literal["new_mention", "new_episode"]
@@ -218,5 +219,6 @@ def _observed_count(
 ) -> int:
     """Measure published events represented by a rule target."""
     if target_type == "media":
-        return int(db.query(Mention).filter(Mention.media_id == target_id).count())
+        published: int = count_published_mentions(db, Mention.media_id == target_id)
+        return published
     return int(db.query(Episode).filter(Episode.podcast_id == target_id).count())

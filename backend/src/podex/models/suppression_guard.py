@@ -1,74 +1,99 @@
-"""Refuse ORM writes that would recreate suppressed content.
+"""Refuse ORM writes that would recreate, rewrite or move suppressed content.
 
 Session events on every :class:`~sqlalchemy.orm.Session` check each flush, so
 a writer cannot skip the check by calling a lower-level function or by being
 written after this module. Importing ``podex.models`` installs the events.
+Writes that bypass the ORM flush (Core statements, raw SQL, ``bulk_*``) are
+not seen here; ``tests/test_guarded_table_writes.py`` forbids them for these
+tables.
 
-Guarded writes (``GUARDED_MODELS``):
+Guarded writes (``GUARDED_MODELS``, one rule per model in ``_RULES``):
 
-- a ``Mention`` inserted, or moved to another episode or media, is checked
-  against the ``mentions`` scope for its episode and its ``(episode, media)``
-  pair;
-- a ``SemanticChunk``, ``EpisodeSummary`` or ``DerivativeGenerationRun``
-  inserted or changed, a ``GraphTriple`` or ``MediaRelation`` inserted with a
-  provenance episode, and a ``Transcript`` whose cleaned or digest text is set,
-  are checked against the ``derivatives`` scope for their episode.
+- ``Mention``: an insert, and a move to another episode or media record, is
+  checked against the ``mentions`` scope at its destination and, for a move,
+  at its origin, so a hidden mention can neither appear nor be carried out of
+  its suppressed pair;
+- ``SemanticChunk``, ``EpisodeSummary``, ``DerivativeGenerationRun``: any
+  insert or change, at the row's episode and, when it moves, its old one;
+- ``GraphTriple``, ``MediaRelation``: an insert with a provenance episode,
+  and a change to evidence, content or provenance, unless the change only
+  removes them. Repointing the media records and the key (a media merge) is
+  identity maintenance and allowed;
+- ``Transcript``: an insert, text change or episode change while it carries
+  cleaned or digest text.
 
-Ordering with a concurrent takedown, which locks the podcast rows it covers
-``FOR UPDATE`` before reading what to delete:
+Lock order, the same as the media merge (media rows before podcast rows):
 
-- before the flush writes, the podcast rows of the episodes it touches are
-  locked ``FOR SHARE`` (ascending id). On PostgreSQL a takedown that holds the
-  lock makes the writer wait; a writer that holds it makes the takedown wait
-  until the writer commits, after which the takedown deletes what was written.
-  Locking before writing means a writer never holds a row the takedown is
-  about to delete while it waits for the podcast lock;
-- after the flush writes, the suppression check runs. On SQLite, which ignores
-  ``FOR SHARE`` and has one writer, the writer holds the database write lock by
-  then, so a takedown committed while the writer waited for that lock is seen
-  and no takedown can commit until the writer ends.
+1. media rows of guarded mentions, ``FOR KEY SHARE``, ascending id;
+2. podcast rows of every episode touched, ``FOR SHARE``, ascending id.
 
-A check that passed is remembered until the transaction ends: the locks above
-keep its answer valid until then.
+Both are taken before the flush writes, so a writer never holds a row a
+takedown will delete while it waits. A takedown takes the same media rows and
+then its podcast rows ``FOR UPDATE``. On PostgreSQL a writer and a takedown of
+the same podcast therefore run one after the other. The check itself runs
+after the flush writes: on SQLite, which ignores row locks and has one writer,
+the writer then holds the database write lock, so a takedown that committed
+while it waited for that lock is seen.
+
+Checks are batched: each flush runs a bounded number of statements
+(``SUPPRESSION_BATCH_SIZE`` ids or pairs each), independent of how many rows
+it writes. A check that passed is remembered until the transaction or
+savepoint ends, and forgotten as soon as this session writes a suppression
+row, so a takedown executed in the same transaction applies to later writes.
 """
 
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import event, inspect, select
-from sqlalchemy.orm import Session, SessionTransaction, UOWTransaction
+from sqlalchemy.orm import (
+    ORMExecuteState,
+    Session,
+    SessionTransaction,
+    UOWTransaction,
+)
 
 from podex.models.content_suppression import (
+    SUPPRESSION_BATCH_SIZE,
     ContentSuppressedError,
+    ContentSuppression,
     ContentSuppressionScope,
-    suppressed_clause,
+    suppressed_episodes_statement,
+    suppressed_pairs_statement,
 )
 from podex.models.derivative_generation_run import DerivativeGenerationRun
 from podex.models.episode import Episode
 from podex.models.episode_summary import EpisodeSummary
 from podex.models.graph_triple import GraphTriple
+from podex.models.media import Media
 from podex.models.media_relation import MediaRelation
 from podex.models.mention import Mention
 from podex.models.podcast import Podcast
 from podex.models.semantic_chunk import SemanticChunk
 from podex.models.transcript import Transcript
 
-GUARDED_MODELS: tuple[type[Any], ...] = (
-    Mention,
-    SemanticChunk,
-    EpisodeSummary,
-    DerivativeGenerationRun,
-    GraphTriple,
-    MediaRelation,
-    Transcript,
-)
-"""Models whose writes are checked against content suppressions."""
-
-_EPISODE_DERIVATIVES = (SemanticChunk, EpisodeSummary, DerivativeGenerationRun)
-_DERIVED_TRANSCRIPT_TEXT = ("cleaned_text", "digest_text")
-_LOCKED_PODCASTS = "podex_suppression_locked_podcasts"
+_LOCKED_EPISODES = "podex_suppression_locked_episodes"
+_LOCKED_MEDIA = "podex_suppression_locked_media"
 _CHECKED = "podex_suppression_checked"
+_ORIGINS = "podex_suppression_origins"
+
+_DERIVED_TRANSCRIPT_TEXT = ("cleaned_text", "digest_text")
+_TRIPLE_CONTENT = (
+    "evidence_text",
+    "object_value",
+    "predicate",
+    "confidence",
+    "metadata_json",
+    "provenance_episode_id",
+)
+_RELATION_CONTENT = (
+    "evidence_text",
+    "relation_type",
+    "confidence",
+    "metadata_json",
+    "provenance_episode_id",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,58 +105,95 @@ class _Requirement:
     media_id: int | None = None
 
 
-def _changed(instance: object, *attributes: str) -> bool:
+@dataclass(frozen=True, slots=True)
+class _Pending:
+    """A guarded row in the flush and whether it is new."""
+
+    row: Any
+    inserted: bool
+
+
+_Rule = Callable[[_Pending], Iterator[_Requirement]]
+
+
+def _changed(row: object, *attributes: str) -> bool:
     """Return whether any named attribute of a pending row has changed."""
-    state = inspect(instance)
+    state = inspect(row)
     return any(state.attrs[name].history.has_changes() for name in attributes)
 
 
-def _episode_id(instance: object, attribute: str, relationship: str) -> int | None:
-    """Return a row's episode id, from its column or its related episode."""
-    value: int | None = getattr(instance, attribute)
-    if value is None:
-        related: Episode | None = getattr(instance, relationship, None)
-        value = related.id if related is not None else None
+def _previous(row: object, column: str) -> Any:
+    """Return a column's value before this flush.
+
+    Before the flush a relationship-only change has not reached the column,
+    which then still holds the old value.
+    """
+    history = inspect(row).attrs[column].history
+    if history.deleted:
+        return history.deleted[0]
+    return getattr(row, column)
+
+
+def _assigned_id(row: object, column: str, relationship: str) -> int | None:
+    """Return the id a row points at, preferring a newly assigned relationship.
+
+    A relationship assignment reaches its column only during the flush, while
+    a column assignment leaves a loaded relationship stale; so the
+    relationship counts only when it was itself assigned.
+    """
+    added = inspect(row).attrs[relationship].history.added
+    if added and added[0] is not None and added[0].id is not None:
+        assigned: int = added[0].id
+        return assigned
+    value: int | None = getattr(row, column)
     return value
 
 
-def _media_id(mention: Mention) -> int | None:
-    """Return a mention's media id, from its column or its related media."""
-    value: int | None = mention.media_id
-    if value is None and mention.media is not None:
-        value = mention.media.id
-    return value
-
-
-def _requirements(session: Session) -> Iterator[_Requirement]:
-    """Yield the suppression checks the pending inserts and updates need."""
-    for instance in session.new:
-        yield from _row_requirements(instance, inserted=True)
-    for instance in session.dirty:
-        if session.is_modified(instance):
-            yield from _row_requirements(instance, inserted=False)
-
-
-def _row_requirements(instance: object, *, inserted: bool) -> Iterator[_Requirement]:
-    """Yield the checks one pending row needs; unguarded rows need none."""
-    if isinstance(instance, Mention):
-        if not inserted and not _changed(
-            instance,
-            "episode_id",
-            "media_id",
-            "episode",
-            "media",
-        ):
-            return
-        episode_id = _episode_id(instance, "episode_id", "episode")
-        if episode_id is not None:
-            yield _Requirement(
-                scope=ContentSuppressionScope.MENTIONS,
-                episode_id=episode_id,
-                media_id=_media_id(instance),
-            )
+def _mention_rule(pending: _Pending) -> Iterator[_Requirement]:
+    """A new or moved mention may not land in, or leave, a suppressed pair."""
+    mention: Mention = pending.row
+    moved = not pending.inserted and _changed(
+        mention,
+        "episode_id",
+        "media_id",
+        "episode",
+        "media",
+    )
+    if not pending.inserted and not moved:
         return
-    episode_id = _derived_episode_id(instance, inserted=inserted)
+    episode_id = _assigned_id(mention, "episode_id", "episode")
+    if episode_id is not None:
+        yield _Requirement(
+            scope=ContentSuppressionScope.MENTIONS,
+            episode_id=episode_id,
+            media_id=_assigned_id(mention, "media_id", "media"),
+        )
+
+
+def _mention_origin(pending: _Pending) -> Iterator[_Requirement]:
+    """A moved mention's old pair, read before the flush changes it."""
+    mention: Mention = pending.row
+    if pending.inserted or not _changed(
+        mention,
+        "episode_id",
+        "media_id",
+        "episode",
+        "media",
+    ):
+        return
+    episode_id = _previous(mention, "episode_id")
+    media_id = _previous(mention, "media_id")
+    if episode_id is not None:
+        yield _Requirement(
+            scope=ContentSuppressionScope.MENTIONS,
+            episode_id=episode_id,
+            media_id=media_id,
+        )
+
+
+def _episode_derivative_rule(pending: _Pending) -> Iterator[_Requirement]:
+    """Episode derivatives may not be written for a suppressed episode."""
+    episode_id = _assigned_id(pending.row, "episode_id", "episode")
     if episode_id is not None:
         yield _Requirement(
             scope=ContentSuppressionScope.DERIVATIVES,
@@ -139,24 +201,164 @@ def _row_requirements(instance: object, *, inserted: bool) -> Iterator[_Requirem
         )
 
 
-def _derived_episode_id(instance: object, *, inserted: bool) -> int | None:
-    """Return the episode a pending derived row belongs to, if it is guarded."""
-    if isinstance(instance, _EPISODE_DERIVATIVES):
-        return _episode_id(instance, "episode_id", "episode")
-    if isinstance(instance, (GraphTriple, MediaRelation)):
-        return instance.provenance_episode_id if inserted else None
-    if isinstance(instance, Transcript) and any(
-        getattr(instance, name) is not None for name in _DERIVED_TRANSCRIPT_TEXT
+def _episode_derivative_origin(pending: _Pending) -> Iterator[_Requirement]:
+    """An episode derivative moved out of an episode, checked at its origin."""
+    if pending.inserted or not _changed(pending.row, "episode_id", "episode"):
+        return
+    episode_id = _previous(pending.row, "episode_id")
+    if episode_id is not None:
+        yield _Requirement(
+            scope=ContentSuppressionScope.DERIVATIVES,
+            episode_id=episode_id,
+        )
+
+
+def _provenance_rule(content: tuple[str, ...]) -> _Rule:
+    """Build the rule for a row whose evidence comes from a provenance episode.
+
+    Inserting it with a provenance episode, or changing its content or
+    provenance to anything but ``None``, is checked at the provenance episode.
+    Changes that only remove content, and media repoints, are not.
+    """
+
+    def rule(pending: _Pending) -> Iterator[_Requirement]:
+        row = pending.row
+        if not pending.inserted:
+            changed = [name for name in content if _changed(row, name)]
+            if all(getattr(row, name) is None for name in changed):
+                return
+        episode_id: int | None = row.provenance_episode_id
+        if episode_id is not None:
+            yield _Requirement(
+                scope=ContentSuppressionScope.DERIVATIVES,
+                episode_id=episode_id,
+            )
+
+    return rule
+
+
+def _provenance_origin() -> _Rule:
+    """Build the origin check for evidence text moved off a provenance episode.
+
+    Detaching provenance is allowed once the evidence text is gone; moving or
+    detaching it while the text stays would carry the text away.
+    """
+
+    def origin(pending: _Pending) -> Iterator[_Requirement]:
+        row = pending.row
+        if pending.inserted or not _changed(row, "provenance_episode_id"):
+            return
+        if row.evidence_text is None:
+            return
+        episode_id = _previous(row, "provenance_episode_id")
+        if episode_id is not None:
+            yield _Requirement(
+                scope=ContentSuppressionScope.DERIVATIVES,
+                episode_id=episode_id,
+            )
+
+    return origin
+
+
+def _carries_derived_text(transcript: Transcript) -> bool:
+    return any(
+        getattr(transcript, name) is not None for name in _DERIVED_TRANSCRIPT_TEXT
+    )
+
+
+def _transcript_rule(pending: _Pending) -> Iterator[_Requirement]:
+    """Derived transcript text may not be set on or moved to a suppressed episode."""
+    transcript: Transcript = pending.row
+    if not _carries_derived_text(transcript):
+        return
+    if pending.inserted or _changed(
+        transcript,
+        *_DERIVED_TRANSCRIPT_TEXT,
+        "episode_id",
+        "episode",
     ):
-        if inserted or _changed(instance, *_DERIVED_TRANSCRIPT_TEXT):
-            return _episode_id(instance, "episode_id", "episode")
-    return None
+        yield from _episode_derivative_rule(pending)
+
+
+def _transcript_origin(pending: _Pending) -> Iterator[_Requirement]:
+    """Derived transcript text moved out of an episode, checked at its origin."""
+    if _carries_derived_text(pending.row):
+        yield from _episode_derivative_origin(pending)
+
+
+_RULES: dict[type[Any], tuple[_Rule, _Rule]] = {
+    Mention: (_mention_rule, _mention_origin),
+    SemanticChunk: (_episode_derivative_rule, _episode_derivative_origin),
+    EpisodeSummary: (_episode_derivative_rule, _episode_derivative_origin),
+    DerivativeGenerationRun: (_episode_derivative_rule, _episode_derivative_origin),
+    GraphTriple: (
+        _provenance_rule(_TRIPLE_CONTENT),
+        _provenance_origin(),
+    ),
+    MediaRelation: (
+        _provenance_rule(_RELATION_CONTENT),
+        _provenance_origin(),
+    ),
+    Transcript: (_transcript_rule, _transcript_origin),
+}
+
+GUARDED_MODELS: tuple[type[Any], ...] = tuple(_RULES)
+"""Models whose writes are checked against content suppressions."""
+
+
+def _pending_rows(session: Session) -> Iterator[_Pending]:
+    """Yield the guarded rows this flush inserts or materially changes."""
+    for row in session.new:
+        if type(row) in _RULES:
+            yield _Pending(row=row, inserted=True)
+    for row in session.dirty:
+        if type(row) in _RULES and session.is_modified(row):
+            yield _Pending(row=row, inserted=False)
+
+
+def _requirements(session: Session, *, origins: bool) -> set[_Requirement]:
+    """Collect destination checks, or origin checks, for the pending rows."""
+    side = 1 if origins else 0
+    return {
+        requirement
+        for pending in _pending_rows(session)
+        for requirement in _RULES[type(pending.row)][side](pending)
+    }
 
 
 def _transaction_cache(session: Session, key: str) -> set[Any]:
     """Return a per-transaction set stored on the session."""
     cache: set[Any] = session.info.setdefault(key, set())
     return cache
+
+
+def _batches(values: Iterable[Any]) -> Iterator[list[Any]]:
+    """Split sorted values into statements of ``SUPPRESSION_BATCH_SIZE``."""
+    ordered = sorted(set(values))
+    for start in range(0, len(ordered), SUPPRESSION_BATCH_SIZE):
+        yield ordered[start : start + SUPPRESSION_BATCH_SIZE]
+
+
+def lock_media_rows(*, session: Session, media_ids: Iterable[int]) -> None:
+    """Lock media rows ``FOR KEY SHARE`` in ascending id order.
+
+    This is the first lock of the shared order: it orders a writer after a
+    media merge, which holds both records ``FOR UPDATE``. Rows already locked
+    in this transaction are skipped; SQLite ignores the clause.
+
+    Args:
+        session: Session whose transaction takes the locks.
+        media_ids: Media records about to gain or lose guarded rows.
+    """
+    locked = _transaction_cache(session, _LOCKED_MEDIA)
+    for batch in _batches(set(media_ids) - locked):
+        session.execute(
+            select(Media.id)
+            .where(Media.id.in_(batch))
+            .order_by(Media.id)
+            .with_for_update(key_share=True),
+        ).all()
+        locked.update(batch)
 
 
 def lock_podcasts_of_episodes(
@@ -168,51 +370,109 @@ def lock_podcasts_of_episodes(
 
     A takedown locks the same rows ``FOR UPDATE``, so a writer and a takedown
     covering the same podcast run one after the other. SQLite ignores the
-    clause. Rows already locked in this transaction are skipped.
+    clause. Episodes already covered in this transaction are skipped.
 
     Args:
         session: Session whose transaction takes the locks.
-        episode_ids: Episodes about to receive guarded writes.
+        episode_ids: Episodes about to receive or lose guarded content.
     """
-    locked = _transaction_cache(session, _LOCKED_PODCASTS)
-    pending = set(episode_ids) - {episode for _, episode in locked}
-    if not pending:
-        return
-    rows = session.execute(
-        select(Podcast.id, Episode.id)
-        .join(Episode, Episode.podcast_id == Podcast.id)
-        .where(Episode.id.in_(sorted(pending)))
-        .order_by(Podcast.id)
-        .with_for_update(read=True, of=Podcast),
-    ).all()
-    locked.update((podcast_id, episode_id) for podcast_id, episode_id in rows)
+    locked = _transaction_cache(session, _LOCKED_EPISODES)
+    for batch in _batches(set(episode_ids) - locked):
+        session.execute(
+            select(Podcast.id)
+            .join(Episode, Episode.podcast_id == Podcast.id)
+            .where(Episode.id.in_(batch))
+            .order_by(Podcast.id)
+            .with_for_update(read=True, of=Podcast),
+        ).all()
+        locked.update(batch)
 
 
-def check_requirement(*, session: Session, requirement: _Requirement) -> None:
-    """Raise when ``requirement``'s content is suppressed.
+def lock_requirements(session: Session, requirements: Iterable[_Requirement]) -> None:
+    """Take media then podcast locks for a set of checks."""
+    pending = list(requirements)
+    lock_media_rows(
+        session=session,
+        media_ids={item.media_id for item in pending if item.media_id is not None},
+    )
+    lock_podcasts_of_episodes(
+        session=session,
+        episode_ids={item.episode_id for item in pending},
+    )
+
+
+def _suppressed(session: Session, requirements: Sequence[_Requirement]) -> set[Any]:
+    """Return which requirements an approved takedown covers, batched."""
+    found: set[Any] = set()
+    for scope in ContentSuppressionScope:
+        episodes = {
+            item.episode_id
+            for item in requirements
+            if item.scope == scope and item.media_id is None
+        }
+        for batch in _batches(episodes):
+            found.update(
+                (scope, episode_id)
+                for episode_id in session.scalars(
+                    suppressed_episodes_statement(scope=scope, episode_ids=batch),
+                )
+            )
+    pairs = {
+        (item.episode_id, item.media_id)
+        for item in requirements
+        if item.media_id is not None
+    }
+    for batch in _batches(pairs):
+        found.update(
+            (ContentSuppressionScope.MENTIONS, episode_id, media_id)
+            for episode_id, media_id in session.execute(
+                suppressed_pairs_statement(batch),
+            )
+        )
+    return found
+
+
+def check_requirements(
+    *,
+    session: Session,
+    requirements: Iterable[_Requirement],
+) -> None:
+    """Raise for the first requirement an approved takedown covers.
 
     Raises:
-        ContentSuppressedError: If an approved takedown covers the write.
+        ContentSuppressedError: If any write is covered by a suppression.
     """
     checked = _transaction_cache(session, _CHECKED)
-    if requirement in checked:
+    pending = sorted(
+        set(requirements) - checked,
+        key=lambda item: (item.scope.value, item.episode_id, item.media_id or 0),
+    )
+    if not pending:
         return
-    suppressed = session.execute(
-        select(
-            suppressed_clause(
+    found = _suppressed(session, pending)
+    for requirement in pending:
+        key: tuple[Any, ...] = (requirement.scope, requirement.episode_id)
+        if requirement.media_id is not None:
+            key = (*key, requirement.media_id)
+        if key in found:
+            raise ContentSuppressedError(
                 scope=requirement.scope,
                 episode_id=requirement.episode_id,
                 media_id=requirement.media_id,
-            ),
-        ),
-    ).scalar_one()
-    if suppressed:
-        raise ContentSuppressedError(
-            scope=requirement.scope,
-            episode_id=requirement.episode_id,
-            media_id=requirement.media_id,
-        )
-    checked.add(requirement)
+            )
+    checked.update(pending)
+
+
+def forget_checks(session: Session) -> None:
+    """Drop remembered checks after this session changed suppression rows."""
+    session.info.pop(_CHECKED, None)
+
+
+def _touches_suppressions(session: Session) -> bool:
+    return any(
+        isinstance(row, ContentSuppression)
+        for row in (*session.new, *session.dirty, *session.deleted)
+    )
 
 
 def lock_before_guarded_writes(
@@ -220,10 +480,12 @@ def lock_before_guarded_writes(
     _flush_context: UOWTransaction,
     _instances: object,
 ) -> None:
-    """Take the podcast locks before the flush writes any guarded row."""
-    episode_ids = {requirement.episode_id for requirement in _requirements(session)}
-    if episode_ids:
-        lock_podcasts_of_episodes(session=session, episode_ids=episode_ids)
+    """Take locks and read origins before the flush writes any guarded row."""
+    if _touches_suppressions(session):
+        forget_checks(session)
+    origins = _requirements(session, origins=True)
+    session.info[_ORIGINS] = origins
+    lock_requirements(session, origins | _requirements(session, origins=False))
 
 
 def refuse_suppressed_writes(
@@ -231,18 +493,23 @@ def refuse_suppressed_writes(
     _flush_context: UOWTransaction,
 ) -> None:
     """Check each guarded row the flush wrote; raising rolls the flush back."""
-    requirements = set(_requirements(session))
+    requirements = _requirements(session, origins=False) | session.info.pop(
+        _ORIGINS,
+        set(),
+    )
     if not requirements:
         return
-    lock_podcasts_of_episodes(
-        session=session,
-        episode_ids={requirement.episode_id for requirement in requirements},
-    )
-    for requirement in sorted(
-        requirements,
-        key=lambda item: (item.scope.value, item.episode_id, item.media_id or 0),
-    ):
-        check_requirement(session=session, requirement=requirement)
+    lock_requirements(session, requirements)
+    check_requirements(session=session, requirements=requirements)
+
+
+def _forget_bulk_suppression_changes(state: ORMExecuteState) -> None:
+    """Forget checks when a bulk statement changes suppression rows."""
+    if not (state.is_insert or state.is_update or state.is_delete):
+        return
+    mapper = state.bind_mapper
+    if mapper is not None and mapper.class_ is ContentSuppression:
+        forget_checks(state.session)
 
 
 def _forget_transaction_checks(
@@ -256,12 +523,13 @@ def _forget_transaction_checks(
     neither, and keeps them.
     """
     if transaction.parent is None or transaction.nested:
-        session.info.pop(_LOCKED_PODCASTS, None)
-        session.info.pop(_CHECKED, None)
+        for key in (_LOCKED_EPISODES, _LOCKED_MEDIA, _CHECKED, _ORIGINS):
+            session.info.pop(key, None)
 
 
 # Registered as plain calls: the listens_for decorator is untyped under the
 # dep-less CI mypy image and would mark these functions untyped.
 event.listen(Session, "before_flush", lock_before_guarded_writes)
 event.listen(Session, "after_flush", refuse_suppressed_writes)
+event.listen(Session, "do_orm_execute", _forget_bulk_suppression_changes)
 event.listen(Session, "after_transaction_end", _forget_transaction_checks)

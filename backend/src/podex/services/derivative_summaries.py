@@ -10,7 +10,6 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from podex.models import (
-    ContentSuppressionScope,
     DerivativeSummaryKind,
     DerivativeSummaryStatus,
     Episode,
@@ -22,8 +21,9 @@ from podex.models import (
     Transcript,
 )
 from podex.services.content_suppression import (
-    published_mention_clause,
-    require_episode_not_suppressed,
+    authorize_episode_text,
+    authorize_media_summary_text,
+    summary_source_mentions,
 )
 from podex.services.field_normalization import (
     normalize_optional as _normalize_optional,
@@ -105,13 +105,10 @@ def generate_episode_summary(
 
     Raises:
         ContentSuppressedError: If an approved takedown suppresses the
-            episode's derivatives; the provider is not called.
+            episode's derivatives; the provider is not called. The check
+            holds the takedown lock until this transaction ends.
     """
-    require_episode_not_suppressed(
-        db=db,
-        episode_id=episode.id,
-        scope=ContentSuppressionScope.DERIVATIVES,
-    )
+    authorize_episode_text(db=db, episode_ids=[episode.id])
     source = build_episode_summary_source(db=db, episode=episode)
     generated = provider.summarize(source)
     return upsert_episode_summary(
@@ -159,7 +156,14 @@ def generate_media_summary(
 
     Returns:
         Persisted media summary.
+
+    The media row and the podcasts of every episode it is mentioned in are
+    locked before the source is read, and stay locked until this transaction
+    ends, so no takedown of that text commits while it is with the provider.
+    Mentions of episodes whose mentions or derivatives are suppressed are left
+    out of the source.
     """
+    authorize_media_summary_text(db=db, media_id=media.id)
     source = build_media_summary_source(db=db, media=media)
     generated = provider.summarize(source)
     return upsert_media_summary(
@@ -447,11 +451,13 @@ def build_media_summary_source(
     if media.description:
         identity_parts.append(f"Description: {media.description}")
 
-    mentions = (
-        db.query(Mention)
-        .filter(Mention.media_id == media.id, published_mention_clause())
-        .order_by(Mention.episode_id, Mention.timestamp_seconds)
-        .all()
+    mentions = list(
+        db.scalars(
+            summary_source_mentions(Mention.media_id == media.id).order_by(
+                Mention.episode_id,
+                Mention.timestamp_seconds,
+            ),
+        ),
     )
     mention_contexts = [
         mention.context.strip()

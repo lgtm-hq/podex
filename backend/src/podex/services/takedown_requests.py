@@ -13,6 +13,7 @@ from podex.models import (
     Episode,
     EpisodeSummary,
     GraphTriple,
+    MediaSummary,
     Mention,
     MentionCandidate,
     Podcast,
@@ -24,6 +25,7 @@ from podex.models import (
     Transcript,
 )
 from podex.services.content_suppression import (
+    lock_media_for_takedown,
     lock_podcasts_for_takedown,
     record_suppression,
 )
@@ -162,10 +164,7 @@ def execute_approved_takedown_request(
 
     effective_now = now or datetime.now(UTC)
     actions = set(request.requested_actions_json)
-    lock_podcasts_for_takedown(
-        db=db,
-        podcast_ids=_podcast_ids_for_request(db=db, request=request),
-    )
+    summary_media_ids = _lock_takedown_subject(db=db, request=request, actions=actions)
     episode_ids = _episode_ids_for_request(db=db, request=request)
     _record_suppressions(db=db, request=request, actions=actions)
     transcripts = (
@@ -213,6 +212,8 @@ def execute_approved_takedown_request(
         mentions_unpublished=mentions_unpublished,
         source_opt_outs_registered=source_opt_outs_registered,
     )
+    # The last destructive step drops media summaries that may quote the
+    # covered text; like every other step it runs after the suppressions exist.
     request.metadata_json = {
         **(request.metadata_json or {}),
         "executed_at": effective_now.isoformat(),
@@ -220,9 +221,95 @@ def execute_approved_takedown_request(
         "derivatives_suppressed": result.derivatives_suppressed,
         "mentions_unpublished": result.mentions_unpublished,
         "source_opt_outs_registered": result.source_opt_outs_registered,
+        "media_summaries_dropped": _drop_media_summaries(
+            db=db,
+            media_ids=summary_media_ids,
+        ),
     }
     db.flush()
     return result
+
+
+def _lock_takedown_subject(
+    *,
+    db: Session,
+    request: TakedownRequest,
+    actions: set[str],
+) -> tuple[int, ...]:
+    """Take the takedown's locks in the shared order, media before podcasts.
+
+    The media records whose summaries quote the covered text (which include a
+    mention subject's media) are locked first, as a media merge locks its
+    records first, then the covered podcast rows. Mentions published between
+    the two reads would need a media lock taken out of order, so the
+    takedown refuses and the operator retries.
+
+    Returns:
+        Media records whose summaries the takedown drops.
+
+    Raises:
+        ValueError: If covered mentions changed while the locks were taken.
+    """
+    media_ids = _summary_media_ids(db=db, request=request, actions=actions)
+    lock_media_for_takedown(db=db, media_ids=media_ids)
+    lock_podcasts_for_takedown(
+        db=db,
+        podcast_ids=_podcast_ids_for_request(db=db, request=request),
+    )
+    current = _summary_media_ids(db=db, request=request, actions=actions)
+    if not set(current) <= set(media_ids):
+        raise ValueError(
+            "Covered mentions changed while the takedown was executing; retry",
+        )
+    return current
+
+
+def _summary_media_ids(
+    *,
+    db: Session,
+    request: TakedownRequest,
+    actions: set[str],
+) -> tuple[int, ...]:
+    """Resolve the media records whose summaries may quote the covered text.
+
+    A mention-only takedown of one mention covers its own media record; any
+    other suppression covers every record mentioned in the covered episodes.
+    Raw retention actions cover none.
+    """
+    if not actions & set(SUPPRESSION_SCOPES_BY_ACTION):
+        return ()
+    if request.subject_type == TakedownSubjectType.MENTION.value:
+        mention = db.query(Mention).filter(Mention.id == request.subject_id).first()
+        if mention is None:
+            return ()
+        if "suppress_derivatives" not in actions:
+            return (mention.media_id,)
+        episodes = select(Episode.id).where(Episode.id == mention.episode_id)
+    elif request.subject_type == TakedownSubjectType.EPISODE.value:
+        episodes = select(Episode.id).where(Episode.id == request.subject_id)
+    else:
+        episodes = select(Episode.id).where(Episode.podcast_id == request.subject_id)
+    rows = db.execute(
+        select(Mention.media_id)
+        .where(Mention.episode_id.in_(episodes))
+        .distinct()
+        .order_by(Mention.media_id),
+    ).all()
+    return tuple(int(row[0]) for row in rows)
+
+
+def _drop_media_summaries(*, db: Session, media_ids: tuple[int, ...]) -> int:
+    """Delete media summaries that may quote the covered text.
+
+    The next summary generation reads only unsuppressed mentions.
+    """
+    if not media_ids:
+        return 0
+    return int(
+        db.query(MediaSummary)
+        .filter(MediaSummary.media_id.in_(media_ids))
+        .delete(synchronize_session=False),
+    )
 
 
 def _podcast_ids_for_request(

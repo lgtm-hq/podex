@@ -506,6 +506,15 @@ def _require_rule(rule: AccountAlertRule | None) -> AccountAlertRule:
 def test_merge_resolves_every_media_reference(db_session: Session) -> None:
     """Every media foreign key and alert target has a merge policy and no orphan."""
     episode, source, target = _seed_merge_pair(db_session)
+    take_down_new_mention(
+        db_session,
+        episode_id=persist_episode(
+            db_session,
+            podcast=episode.podcast,
+            title="Taken Down",
+        ).id,
+        media_id=source.id,
+    )
     other = Media(type=MediaType.MOVIE, title="Dune (1984)")
     db_session.add(other)
     db_session.flush()
@@ -570,15 +579,6 @@ def test_merge_resolves_every_media_reference(db_session: Session) -> None:
     user = _create_saving_user(db_session, source)
     _require_rule(
         create_media_alert_rule(db=db_session, user_id=user.id, media_id=source.id),
-    )
-    take_down_new_mention(
-        db_session,
-        episode_id=persist_episode(
-            db_session,
-            podcast=episode.podcast,
-            title="Taken Down",
-        ).id,
-        media_id=source.id,
     )
     columns = _media_reference_columns()
     assert_that(sorted(columns)).is_equal_to(sorted(_MERGE_POLICY_BY_MEDIA_COLUMN))

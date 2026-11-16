@@ -21,7 +21,6 @@ from podex.models import (
     ContentSuppressedError,
     ContentSuppressionScope,
     DerivativeGenerationRun,
-    DerivativeSummaryKind,
     Episode,
     EpisodeSummary,
     GraphTriple,
@@ -44,7 +43,6 @@ from podex.services.derivative_generation import generate_episode_derivatives
 from podex.services.derivative_summaries import (
     build_media_summary_source,
     generate_episode_summary,
-    upsert_episode_summary,
 )
 from podex.services.extraction import materialize_mentions
 from podex.services.extraction_review import persist_extracted_candidates
@@ -60,6 +58,7 @@ from tests.takedown_support import (
     approve_takedown,
     take_down_mention,
     take_down_new_mention,
+    write_episode_summary,
 )
 
 _TEXT = "one two three four five six"
@@ -167,17 +166,7 @@ def test_direct_derived_writes_are_refused_at_flush(db_session: Session) -> None
     _suppress(db_session, graph, "suppress_derivatives")
     episode = _episode(db_session, graph.episode_id)
     writes: list[Callable[[], object]] = [
-        lambda: upsert_episode_summary(
-            db=db_session,
-            episode=episode,
-            summary_kind=DerivativeSummaryKind.OVERVIEW,
-            pipeline_version="v1",
-            prompt_version="p1",
-            source_model="model",
-            source_text_hash="a" * 64,
-            summary_text="Regenerated summary.",
-            generated_at=_GENERATED_AT,
-        ),
+        lambda: write_episode_summary(db_session, episode, "Regenerated summary."),
         lambda: upsert_graph_triple(
             db=db_session,
             payload=GraphTripleInputData(

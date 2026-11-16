@@ -46,6 +46,7 @@ from podex.models import (
     ReviewItem,
 )
 from podex.models.content_suppression import suppression_key
+from podex.services.content_suppression import count_published_mentions
 
 MEDIA_ALERT_TARGET_TYPE = "media"
 
@@ -279,8 +280,9 @@ def _plan_media_alert_rules(
 
 
 def _mention_count(*, db: Session, media_id: int) -> int:
-    """Count published mentions of one media record."""
-    return int(db.query(Mention).filter(Mention.media_id == media_id).count())
+    """Count published mentions of one media record, as alert evaluation does."""
+    published: int = count_published_mentions(db, Mention.media_id == media_id)
+    return published
 
 
 def _seen_count(*, rule: AccountAlertRule | None, mention_count: int) -> int:

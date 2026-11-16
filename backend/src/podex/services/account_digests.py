@@ -10,8 +10,10 @@ from podex.models import (
     AccountDigest,
     AccountUser,
     Media,
+    Mention,
     Podcast,
 )
+from podex.services.content_suppression import count_published_mentions
 from podex.services.notification_delivery import DigestSender
 
 
@@ -43,6 +45,7 @@ def send_pending_digest(
         .order_by(AccountAlertEvent.created_at.asc(), AccountAlertEvent.id.asc())
         .all()
     )
+    events = _published_activity(db=db, events=events)
     if not events:
         return None
     body_lines = ["New activity from your Podex alerts", ""]
@@ -70,6 +73,38 @@ def send_pending_digest(
         event.digest_id = digest.id
     db.flush()
     return digest
+
+
+def _published_activity(
+    *,
+    db: Session,
+    events: list[AccountAlertEvent],
+) -> list[AccountAlertEvent]:
+    """Limit pending media events to activity that is still published.
+
+    An event counts mentions published when it was raised. If a takedown has
+    since hidden some of them, the event is reduced to what is still public,
+    and an event with nothing left is removed rather than delivered.
+    """
+    kept: list[AccountAlertEvent] = []
+    for event in events:
+        rule = (
+            db.query(AccountAlertRule)
+            .filter(AccountAlertRule.id == event.rule_id)
+            .one()
+        )
+        if rule.target_type == "media":
+            published = count_published_mentions(
+                db,
+                Mention.media_id == rule.target_id,
+            )
+            if published <= event.previous_count:
+                db.delete(event)
+                continue
+            event.observed_count = min(event.observed_count, published)
+        kept.append(event)
+    db.flush()
+    return kept
 
 
 def _event_summary(

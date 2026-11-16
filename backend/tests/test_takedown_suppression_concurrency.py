@@ -258,3 +258,30 @@ def test_publication_whose_write_waits_for_the_takedown_commit_is_refused(
 
     database.approver.expire_all()
     assert_that(database.approver.query(Mention).count()).is_zero()
+
+
+def test_check_remembered_by_a_session_ends_with_its_transaction(
+    database: _Database,
+) -> None:
+    """A pair checked in one transaction is checked again in the next.
+
+    1. The writer publishes a mention of the pair and commits.
+    2. The approver takes the pair's episode down and commits.
+    3. The writer, in a new transaction on the same session, publishes the
+       pair again: refused, not let through on the earlier answer.
+    """
+    graph = database.graph
+    writer = database.rebuilder
+    writer.add(Mention(episode_id=graph.episode_id, media_id=graph.media_id))
+    writer.commit()
+    approve_takedown(
+        database.approver,
+        subject_type=TakedownSubjectType.EPISODE,
+        subject_id=graph.episode_id,
+        actions=["unpublish_mentions"],
+    )
+
+    writer.add(Mention(episode_id=graph.episode_id, media_id=graph.media_id))
+    with pytest.raises(ContentSuppressedError):
+        writer.commit()
+    writer.rollback()

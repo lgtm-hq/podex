@@ -1,11 +1,20 @@
 """Shared helpers for approving takedowns in suppression tests."""
 
+from dataclasses import dataclass
+from datetime import UTC, datetime
+
 from assertpy import assert_that
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from podex.api.v2 import account_deps
 from podex.models import (
     ContentSuppressionScope,
     DerivativeGenerationRun,
+    DerivativeSummaryKind,
+    Episode,
+    EpisodeSummary,
     Mention,
     SemanticChunk,
     TakedownRequest,
@@ -14,6 +23,7 @@ from podex.models import (
     TakedownSubjectType,
 )
 from podex.services.content_suppression import suppressed_episode_ids
+from podex.services.derivative_summaries import upsert_episode_summary
 from podex.services.takedown_requests import (
     TakedownDecisionInputData,
     TakedownExecutionResultData,
@@ -22,6 +32,7 @@ from podex.services.takedown_requests import (
     decide_takedown_request,
     execute_approved_takedown_request,
 )
+from tests.test_api_auth import CapturingDigestSender, _sign_in
 
 
 def submit_takedown(
@@ -123,3 +134,70 @@ def assert_derivatives_taken_down(db: Session, episode_id: int) -> None:
     ).is_equal_to({episode_id})
     assert_that(db.query(SemanticChunk).count()).is_zero()
     assert_that(db.query(DerivativeGenerationRun).count()).is_zero()
+
+
+def take_down_episode(db: Session, episode_id: int, *actions: str) -> None:
+    """Approve and execute an episode-level takedown with ``actions``."""
+    approve_takedown(
+        db,
+        subject_type=TakedownSubjectType.EPISODE,
+        subject_id=episode_id,
+        actions=list(actions),
+    )
+
+
+def write_episode_summary(db: Session, episode: Episode, text: str) -> EpisodeSummary:
+    """Upsert an episode summary directly, without authorising its text.
+
+    Returns:
+        The written summary.
+    """
+    return upsert_episode_summary(
+        db=db,
+        episode=episode,
+        summary_kind=DerivativeSummaryKind.OVERVIEW,
+        pipeline_version="v1",
+        prompt_version="p1",
+        source_model="model",
+        source_text_hash="a" * 64,
+        summary_text=text,
+        generated_at=datetime(2026, 7, 1, tzinfo=UTC),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SignedInReader:
+    """A signed-in account with a media alert and a capturing digest sender."""
+
+    headers: dict[str, str]
+    sender: CapturingDigestSender
+    rule_id: int
+
+
+def sign_in_reader_with_alert(client: TestClient, *, media_id: int) -> SignedInReader:
+    """Sign in, capture digests, save ``media_id`` and alert on new mentions.
+
+    Returns:
+        The request headers, the digest sender and the alert rule id.
+    """
+    headers = {"Cookie": f"podex_session={_sign_in(client)}"}
+    sender = CapturingDigestSender()
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise TypeError(type(app))
+    app.dependency_overrides[account_deps.get_digest_sender] = lambda: sender
+    saved = client.put(f"/api/v2/me/saves/{media_id}", headers=headers)
+    assert_that(saved.status_code).is_equal_to(200)
+    rule = client.post(
+        "/api/v2/me/alerts",
+        headers=headers,
+        json={
+            "target_type": "media",
+            "target_id": media_id,
+            "event_type": "new_mention",
+        },
+    )
+    assert_that(rule.status_code).is_equal_to(200)
+    return SignedInReader(
+        headers=headers, sender=sender, rule_id=int(rule.json()["id"])
+    )

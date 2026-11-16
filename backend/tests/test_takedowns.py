@@ -1,5 +1,6 @@
 """Tests for takedown intake, decision, and coordinated suppression."""
 
+from collections.abc import Callable
 from unittest.mock import Mock
 
 import pytest
@@ -25,13 +26,18 @@ from podex.models import (
     TakedownSubjectType,
     Transcript,
 )
+from podex.services import takedown_requests
 from podex.services.derivative_generation import generate_episode_derivatives
 from podex.services.semantic_chunks import (
     SemanticChunkingPolicy,
     sync_semantic_chunks_for_transcript,
 )
 from tests.conftest import seed_catalog_graph
-from tests.takedown_support import approve_takedown, take_down_mention
+from tests.takedown_support import (
+    approve_takedown,
+    take_down_episode,
+    take_down_mention,
+)
 
 _OPS_HEADERS = {"X-Ops-Key": "test-ops-key"}
 
@@ -217,12 +223,7 @@ def test_derivatives_are_not_regenerated_after_takedown(
     """A derivative re-run after the takedown writes nothing and calls no provider."""
     graph = seed_catalog_graph(db_session)
     transcript = _seed_episode_derivatives(db_session, graph.episode_id)
-    approve_takedown(
-        db_session,
-        subject_type=TakedownSubjectType.EPISODE,
-        subject_id=graph.episode_id,
-        actions=["suppress_derivatives"],
-    )
+    take_down_episode(db_session, graph.episode_id, "suppress_derivatives")
     db_session.query(Transcript).filter(Transcript.id == transcript.id).update(
         {Transcript.raw_text: "one two three four five six"},
     )
@@ -273,12 +274,7 @@ def test_suppression_rows_written_per_requested_scope(db_session: Session) -> No
         subject_id=graph.podcast_id,
         actions=["unpublish_mentions", "suppress_raw_transcript"],
     )
-    approve_takedown(
-        db_session,
-        subject_type=TakedownSubjectType.EPISODE,
-        subject_id=graph.episode_id,
-        actions=["suppress_raw_transcript"],
-    )
+    take_down_episode(db_session, graph.episode_id, "suppress_raw_transcript")
 
     assert_that(_suppression_rows(db_session)).is_equal_to(
         [
@@ -298,12 +294,7 @@ def test_repeated_takedown_of_one_subject_keeps_one_row(db_session: Session) -> 
     """A second approval of the same subject and scope adds no duplicate row."""
     graph = seed_catalog_graph(db_session)
     for _ in range(2):
-        approve_takedown(
-            db_session,
-            subject_type=TakedownSubjectType.EPISODE,
-            subject_id=graph.episode_id,
-            actions=["suppress_derivatives"],
-        )
+        take_down_episode(db_session, graph.episode_id, "suppress_derivatives")
 
     assert_that(_suppression_rows(db_session)).is_length(1)
 
@@ -396,3 +387,55 @@ def test_mention_pair_suppression_survives_candidate_detach(
     assert_that(db_session.query(Mention).count()).is_zero()
     listed = client.get(f"/api/v2/media/{graph.media_id}/mentions")
     assert_that(listed.json()["items"]).is_empty()
+
+
+_DESTRUCTIVE_STEPS = (
+    "_suppress_raw_transcripts",
+    "_suppress_derivatives",
+    "_unpublish_mentions",
+    "_drop_media_summaries",
+)
+
+
+@pytest.mark.parametrize("subject_type", list(TakedownSubjectType))
+def test_suppressions_are_recorded_before_anything_is_deleted(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    subject_type: TakedownSubjectType,
+) -> None:
+    """Every destructive step runs after the case's suppression rows exist."""
+    graph = seed_catalog_graph(db_session)
+    _seed_episode_derivatives(db_session, graph.episode_id)
+    subject_ids = {
+        TakedownSubjectType.PODCAST: graph.podcast_id,
+        TakedownSubjectType.EPISODE: graph.episode_id,
+        TakedownSubjectType.MENTION: graph.mention_id,
+    }
+    observed: dict[str, int] = {}
+
+    def spy(name: str) -> Callable[..., object]:
+        step = getattr(takedown_requests, name)
+
+        def recorded(**kwargs: object) -> object:
+            db_session.flush()
+            observed[name] = db_session.query(ContentSuppression).count()
+            return step(**kwargs)
+
+        return recorded
+
+    for name in _DESTRUCTIVE_STEPS:
+        monkeypatch.setattr(takedown_requests, name, spy(name))
+
+    approve_takedown(
+        db_session,
+        subject_type=subject_type,
+        subject_id=subject_ids[subject_type],
+        actions=[
+            "suppress_raw_transcript",
+            "suppress_derivatives",
+            "unpublish_mentions",
+        ],
+    )
+
+    assert_that(sorted(observed)).is_equal_to(sorted(_DESTRUCTIVE_STEPS))
+    assert_that(set(observed.values())).is_equal_to({2})

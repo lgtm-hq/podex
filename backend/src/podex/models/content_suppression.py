@@ -10,6 +10,7 @@ uses it to refuse writes, so a reader and a writer cannot disagree about what
 a suppression covers.
 """
 
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 
@@ -19,13 +20,17 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
+    Select,
     String,
     and_,
-    exists,
+    literal,
     or_,
     select,
+    union_all,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, aliased, mapped_column
+from sqlalchemy.sql import Subquery
 
 from podex.models.base import Base
 from podex.models.episode import Episode
@@ -154,6 +159,11 @@ def suppressed_clause(
     discovered after the approval), of the episode itself, or, when
     ``media_id`` is given, of that ``(episode, media)`` mention pair.
 
+    The episode's podcast is read through its own alias, joined inside the
+    ``EXISTS``, so a column of the enclosing query (a ``Mention`` or an
+    ``Episode`` column) correlates to the outer row instead of the lookup
+    comparing a table with itself; a literal id works the same way.
+
     Args:
         scope: Suppression scope to test.
         episode_id: Episode id column (for reads) or value (for writes).
@@ -162,19 +172,17 @@ def suppressed_clause(
     Returns:
         A boolean ``EXISTS`` expression usable in ``WHERE`` or ``SELECT``.
     """
-    podcast_of_episode = (
-        select(Episode.podcast_id).where(Episode.id == episode_id).scalar_subquery()
-    )
+    covered = aliased(Episode, name="suppression_covered_episode")
     covering = [
         and_(
             ContentSuppression.subject_type
             == ContentSuppressionSubjectType.PODCAST.value,
-            ContentSuppression.podcast_id == podcast_of_episode,
+            ContentSuppression.podcast_id == covered.podcast_id,
         ),
         and_(
             ContentSuppression.subject_type
             == ContentSuppressionSubjectType.EPISODE.value,
-            ContentSuppression.episode_id == episode_id,
+            ContentSuppression.episode_id == covered.id,
         ),
     ]
     if media_id is not None:
@@ -182,11 +190,92 @@ def suppressed_clause(
             and_(
                 ContentSuppression.subject_type
                 == ContentSuppressionSubjectType.MENTION_PAIR.value,
-                ContentSuppression.episode_id == episode_id,
+                ContentSuppression.episode_id == covered.id,
                 ContentSuppression.media_id == media_id,
             ),
         )
-    return exists().where(
-        ContentSuppression.scope == scope.value,
-        or_(*covering),
+    return (
+        select(ContentSuppression.id)
+        .join(covered, covered.id == episode_id)
+        .where(ContentSuppression.scope == scope.value, or_(*covering))
+        .exists()
     )
+
+
+SUPPRESSION_BATCH_SIZE = 5000
+"""Ids or pairs checked per statement.
+
+At two bound parameters per pair this stays well under SQLite's and
+PostgreSQL's parameter limits.
+"""
+
+_UNION_GROUP_SIZE = 400
+"""Literal rows per ``UNION ALL`` group, under SQLite's 500-term limit."""
+
+
+def suppressed_episodes_statement(
+    *,
+    scope: ContentSuppressionScope,
+    episode_ids: Sequence[int],
+) -> Select[int]:
+    """Return a select of the given episodes that ``scope`` suppresses.
+
+    Args:
+        scope: Suppression scope to test.
+        episode_ids: At most ``SUPPRESSION_BATCH_SIZE`` episode ids.
+
+    Returns:
+        A select of the suppressed subset's ids.
+    """
+    return select(Episode.id).where(
+        Episode.id.in_(episode_ids),
+        suppressed_clause(scope=scope, episode_id=Episode.id),
+    )
+
+
+def suppressed_pairs_statement(
+    pairs: Sequence[tuple[int, int]],
+) -> Select[int, int]:
+    """Return a select of the given ``(episode, media)`` pairs that are hidden.
+
+    The pairs become a ``UNION ALL`` of literal rows, so the check is the same
+    ``suppressed_clause`` public reads use, on SQLite and PostgreSQL alike.
+
+    Args:
+        pairs: At most ``SUPPRESSION_BATCH_SIZE`` pairs.
+
+    Returns:
+        A select of the suppressed pairs.
+    """
+    rows: list[Select[int, int]] = []
+    for episode_id, media_id in pairs:
+        row: Select[int, int] = select(
+            literal(episode_id, Integer).label("episode_id"),
+            literal(media_id, Integer).label("media_id"),
+        )
+        rows.append(row)
+    groups = [
+        _union(rows[start : start + _UNION_GROUP_SIZE], name=f"pairs_{start}")
+        for start in range(0, len(rows), _UNION_GROUP_SIZE)
+    ]
+    regrouped: list[Select[int, int]] = [
+        select(group.c.episode_id, group.c.media_id) for group in groups
+    ]
+    pending = _union(
+        regrouped,
+        name="pending_pairs",
+    )
+    return select(pending.c.episode_id, pending.c.media_id).where(
+        suppressed_clause(
+            scope=ContentSuppressionScope.MENTIONS,
+            episode_id=pending.c.episode_id,
+            media_id=pending.c.media_id,
+        ),
+    )
+
+
+def _union(selects: Sequence[Select[int, int]], *, name: str) -> Subquery:
+    """Return one select, or a ``UNION ALL`` of several, as a named subquery."""
+    if len(selects) == 1:
+        return selects[0].subquery(name)
+    return union_all(*selects).subquery(name)

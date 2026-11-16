@@ -1,11 +1,12 @@
-"""Every public read of mentions applies the suppression predicate.
+"""Every public and account read of mentions applies the suppression predicate.
 
-The test calls each public ``GET`` route in the OpenAPI schema and records the
-SQL it runs. A statement that reads the ``mentions`` table without the
-``content_suppressions`` predicate fails the test, so a new public route or
-query cannot forget it. Routes are discovered from the schema, so a new public
-route is covered without editing this file; a route whose path parameters this
-file cannot fill fails until it is taught them.
+The first test calls each public ``GET`` route in the OpenAPI schema, the
+second every signed-in account route plus alert evaluation and the digest
+email, and both record the SQL they run. A statement that reads the
+``mentions`` table without the ``content_suppressions`` predicate fails the
+test, so a new route or query cannot forget it. Routes are discovered from
+the schema, so a new route is covered without editing this file; a route
+whose path parameters this file cannot fill fails until it is taught them.
 """
 
 import re
@@ -19,7 +20,9 @@ from fastapi.testclient import TestClient
 from sqlalchemy import Engine, event
 from sqlalchemy.orm import Session
 
+from podex.models import Mention
 from tests.conftest import SeededGraph, seed_catalog_graph
+from tests.takedown_support import sign_in_reader_with_alert
 
 _PRIVATE_PREFIXES = (
     "/api/v2/ops",
@@ -111,4 +114,62 @@ def test_public_mention_reads_apply_the_suppression_predicate(
         "/api/v2/episodes/{episode_id}/mentions",
         "/api/v2/media/{media_id}/mentions",
         "/api/v2/stats",
+    )
+
+
+def _unguarded_reads(statements: list[str]) -> list[str]:
+    """Return statements that read ``mentions`` without the predicate."""
+    return [
+        sql
+        for sql in statements
+        if _READS_MENTIONS.search(sql) and _SUPPRESSION_PREDICATE not in sql
+    ]
+
+
+def test_account_reads_and_notifications_apply_the_suppression_predicate(
+    client: TestClient,
+    db_session: Session,
+    statements: list[str],
+) -> None:
+    """Signed-in reads, alert evaluation, digest email and export are filtered.
+
+    Every ``GET`` under ``/api/v2/me`` is called, plus the two operations that
+    count mentions and render the digest email. The scheduler drives the same
+    alert and digest services.
+    """
+    graph = seed_catalog_graph(db_session)
+    reader = sign_in_reader_with_alert(client, media_id=graph.media_id)
+    headers = reader.headers
+    client.put(f"/api/v2/me/follows/{graph.podcast_id}", headers=headers)
+    app = client.app
+    if not isinstance(app, FastAPI):
+        raise TypeError(type(app))
+    db_session.add(Mention(episode_id=graph.episode_id, media_id=graph.media_id))
+    db_session.commit()
+    paths: dict[str, dict[str, Any]] = app.openapi()["paths"]
+    calls = [
+        ("get", path.replace("{rule_id}", str(reader.rule_id)))
+        for path, operations in paths.items()
+        if path.startswith("/api/v2/me") and "get" in operations
+    ]
+    calls += [
+        ("post", "/api/v2/me/alerts/evaluate"),
+        ("post", "/api/v2/me/digests/send"),
+    ]
+    unguarded: dict[str, list[str]] = {}
+    mention_readers: list[str] = []
+
+    for method, path in calls:
+        statements.clear()
+        response = client.request(method, _fill(path, graph), headers=headers)
+        assert_that(response.status_code).described_as(path).is_less_than(400)
+        if any(_READS_MENTIONS.search(sql) for sql in statements):
+            mention_readers.append(path)
+        if _unguarded_reads(statements):
+            unguarded[path] = _unguarded_reads(statements)
+
+    assert_that(unguarded).is_empty()
+    assert_that(mention_readers).contains(
+        "/api/v2/me/alerts/evaluate",
+        "/api/v2/me/digests/send",
     )
