@@ -4,11 +4,20 @@ Implements the subset of the expression language that workflow concurrency
 blocks use, with GitHub's semantics: literals (strings, numbers, true, false,
 null), context property access, ``!``, ``==``, ``!=``, ``&&``, ``||``,
 parentheses and the functions ``format``, ``startsWith``, ``endsWith`` and
-``contains``. ``&&`` and ``||`` return an operand, not a boolean, string
-comparison ignores case, operands of different types compare as numbers, and
-a missing property is null, which renders as an empty string. Anything outside
-the subset is an error, so an unsupported construct fails the test instead of
-being guessed at.
+``contains``. An expression is parsed in full before it is evaluated: syntax,
+unknown functions, wrong argument counts and unknown contexts are errors even
+in an operand that is never evaluated. ``&&`` and ``||`` short-circuit and
+return an operand, not a boolean: ``a && b`` is ``a`` when ``a`` is falsy and
+otherwise ``b``; ``a || b`` is ``a`` when ``a`` is truthy and otherwise ``b``.
+The falsy values are ``false``, ``0``, ``NaN``, ``''`` and ``null``. String
+comparison ignores case, and operands of different types compare as numbers:
+null is 0, booleans are 1 and 0, a string is its JSON number (after trimming
+whitespace; empty is 0) or NaN, and an object or array is NaN; NaN equals
+nothing. A missing property is null, which renders as an empty string.
+Anything outside the subset is an error, so an unsupported construct fails the
+test instead of being guessed at. That includes strings the runner reads as
+numbers beyond the documented JSON format (``'+1'``, ``'.5'``, ``'007'``,
+``'0x10'``, ``'0o7'``, ``'Infinity'``) when they are compared with a non-string.
 
 Usage:
     github_expression.py render TEMPLATE CONTEXT_JSON
@@ -30,6 +39,7 @@ import sys
 from collections.abc import Callable
 
 Value = str | float | bool | None | dict[str, object] | list[object]
+Thunk = Callable[[], Value]
 
 _TOKEN_RE = re.compile(
     r"""
@@ -43,6 +53,12 @@ _TOKEN_RE = re.compile(
     re.VERBOSE,
 )
 _FORMAT_RE = re.compile(r"\{\{|\}\}|\{(\d+)\}")
+_JSON_NUMBER_RE = re.compile(r"-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?")
+# Read as numbers by the runner but not by the documented JSON number format.
+_UNDOCUMENTED_NUMBER_RE = re.compile(
+    r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?|0x[0-9a-fA-F]+|0o[0-7]+"
+    r"|[+-]?(?i:infinity)",
+)
 _KEYWORDS: dict[str, Value] = {"true": True, "false": False, "null": None}
 
 
@@ -70,10 +86,14 @@ def _to_number(value: Value) -> float:
         return value
     if not isinstance(value, str):
         return math.nan
-    try:
-        return float(value.strip() or 0)
-    except ValueError:
-        return math.nan
+    text = value.strip()
+    if not text:
+        return 0.0
+    if _JSON_NUMBER_RE.fullmatch(text):
+        return float(text)
+    if _UNDOCUMENTED_NUMBER_RE.fullmatch(text):
+        raise ExpressionError(f"undocumented string-to-number coercion: {value!r}")
+    return math.nan
 
 
 def _to_string(value: Value) -> str:
@@ -127,36 +147,85 @@ def _format(template: Value, *args: Value) -> Value:
 
 
 def _string_test(test: Callable[[str, str], bool]) -> Callable[..., Value]:
-    def apply(*args: Value) -> Value:
-        if len(args) != 2:
-            raise ExpressionError("function takes two arguments")
-        return test(_to_string(args[0]).casefold(), _to_string(args[1]).casefold())
+    def apply(left: Value, right: Value) -> Value:
+        return test(_to_string(left).casefold(), _to_string(right).casefold())
 
     return apply
 
 
-_FUNCTIONS: dict[str, Callable[..., Value]] = {
-    "format": _format,
-    "startswith": _string_test(str.startswith),
-    "endswith": _string_test(str.endswith),
-    "contains": _string_test(lambda haystack, needle: needle in haystack),
+# Name (lower case) -> (implementation, minimum and maximum argument count).
+_FUNCTIONS: dict[str, tuple[Callable[..., Value], int, float]] = {
+    "format": (_format, 1, math.inf),
+    "startswith": (_string_test(str.startswith), 2, 2),
+    "endswith": (_string_test(str.endswith), 2, 2),
+    "contains": (_string_test(lambda haystack, needle: needle in haystack), 2, 2),
 }
 
 
+def _constant(value: Value) -> Thunk:
+    return lambda: value
+
+
+def _either(left: Thunk, right: Thunk) -> Thunk:
+    """``left || right``: RIGHT is evaluated only when LEFT is falsy."""
+
+    def run() -> Value:
+        value = left()
+        return value if _truthy(value) else right()
+
+    return run
+
+
+def _both(left: Thunk, right: Thunk) -> Thunk:
+    """``left && right``: RIGHT is evaluated only when LEFT is truthy."""
+
+    def run() -> Value:
+        value = left()
+        return right() if _truthy(value) else value
+
+    return run
+
+
+def _compare(left: Thunk, right: Thunk, *, negate: bool) -> Thunk:
+    return lambda: _equal(left(), right()) != negate
+
+
+def _negation(operand: Thunk) -> Thunk:
+    return lambda: not _truthy(operand())
+
+
+def _call(function: Callable[..., Value], args: list[Thunk]) -> Thunk:
+    return lambda: function(*(arg() for arg in args))
+
+
+def _lookup(root: object, keys: list[str], name: str) -> Thunk:
+    def run() -> Value:
+        value = root
+        for key in keys:
+            value = value.get(key) if isinstance(value, dict) else None
+        if isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        if value is None or isinstance(value, str | float | bool | dict | list):
+            return value
+        raise ExpressionError(f"unsupported context value for {name}")
+
+    return run
+
+
 class _Parser:
-    """Recursive-descent evaluator over one tokenized expression."""
+    """Recursive-descent parser from one token list to an unevaluated thunk."""
 
     def __init__(self, tokens: list[tuple[str, str]], context: dict[str, Value]):
         self._tokens = tokens
         self._index = 0
         self._context = context
 
-    def evaluate(self) -> Value:
-        """Evaluate the whole token list; trailing tokens are an error."""
-        value = self._or()
+    def parse(self) -> Thunk:
+        """Parse the whole token list; trailing tokens are an error."""
+        thunk = self._or()
         if self._index != len(self._tokens):
             raise ExpressionError(f"unexpected token: {self.peek()[1]!r}")
-        return value
+        return thunk
 
     def peek(self) -> tuple[str, str]:
         """Return the next token without consuming it."""
@@ -176,88 +245,87 @@ class _Parser:
         if not self.accept(operator):
             raise ExpressionError(f"expected {operator!r}, got {self.peek()[1]!r}")
 
-    def _or(self) -> Value:
-        value = self._and()
+    def _or(self) -> Thunk:
+        thunk = self._and()
         while self.accept("||"):
-            right = self._and()
-            value = value if _truthy(value) else right
-        return value
+            thunk = _either(thunk, self._and())
+        return thunk
 
-    def _and(self) -> Value:
-        value = self._equality()
+    def _and(self) -> Thunk:
+        thunk = self._equality()
         while self.accept("&&"):
-            right = self._equality()
-            value = right if _truthy(value) else value
-        return value
+            thunk = _both(thunk, self._equality())
+        return thunk
 
-    def _equality(self) -> Value:
-        value = self._unary()
+    def _equality(self) -> Thunk:
+        thunk = self._unary()
         while self.peek() in (("op", "=="), ("op", "!=")):
-            operator = self.peek()[1]
+            negate = self.peek()[1] == "!="
             self._index += 1
-            right = self._unary()
-            value = _equal(value, right) == (operator == "==")
-        return value
+            thunk = _compare(thunk, self._unary(), negate=negate)
+        return thunk
 
-    def _unary(self) -> Value:
+    def _unary(self) -> Thunk:
         if self.accept("!"):
-            return not _truthy(self._unary())
+            return _negation(self._unary())
         return self._primary()
 
-    def _primary(self) -> Value:
+    def _primary(self) -> Thunk:
         kind, text = self.peek()
         self._index += 1
         if kind == "string":
-            return text[1:-1].replace("''", "'")
+            return _constant(text[1:-1].replace("''", "'"))
         if kind == "number":
-            return float(text)
+            return _constant(float(text))
         if kind == "op" and text == "(":
-            value = self._or()
+            thunk = self._or()
             self.expect(")")
-            return value
+            return thunk
         if kind == "name":
             if text in _KEYWORDS:
-                return _KEYWORDS[text]
+                return _constant(_KEYWORDS[text])
             if self.accept("("):
                 return self._call(text)
             return self._property(text)
         raise ExpressionError(f"unexpected token: {text!r}")
 
-    def _call(self, name: str) -> Value:
-        function = _FUNCTIONS.get(name.lower())
-        if function is None:
+    def _call(self, name: str) -> Thunk:
+        if name.lower() not in _FUNCTIONS:
             raise ExpressionError(f"unsupported function: {name}")
-        args: list[Value] = []
+        function, minimum, maximum = _FUNCTIONS[name.lower()]
+        args: list[Thunk] = []
         if not self.accept(")"):
             args.append(self._or())
             while self.accept(","):
                 args.append(self._or())
             self.expect(")")
-        return function(*args)
+        if not minimum <= len(args) <= maximum:
+            raise ExpressionError(f"wrong number of arguments for {name}")
+        return _call(function, args)
 
-    def _property(self, name: str) -> Value:
+    def _property(self, name: str) -> Thunk:
         if name not in self._context:
             raise ExpressionError(f"unknown context: {name}")
-        value: object = self._context[name]
+        keys: list[str] = []
         while self.accept("."):
             kind, key = self.peek()
             if kind != "name":
                 raise ExpressionError(f"expected a property name after {name!r}")
             self._index += 1
-            value = value.get(key) if isinstance(value, dict) else None
-        if isinstance(value, int) and not isinstance(value, bool):
-            return float(value)
-        if value is None or isinstance(value, str | float | bool | dict | list):
-            return value
-        raise ExpressionError(f"unsupported context value for {name}")
+            keys.append(key)
+        return _lookup(self._context[name], keys, name)
 
 
 def evaluate(expression: str, context: dict[str, Value]) -> Value:
-    """Evaluate one expression (the text between ``${{`` and ``}}``)."""
+    """Evaluate one expression (the text between ``${{`` and ``}}``).
+
+    The whole expression is parsed first; evaluation then follows the
+    operators, so a short-circuited operand is never evaluated.
+    """
     tokens = _tokenize(expression)
     if not tokens:
         raise ExpressionError("empty expression")
-    return _Parser(tokens, context).evaluate()
+    return _Parser(tokens, context).parse()()
 
 
 def _split_template(template: str) -> list[tuple[bool, str]]:

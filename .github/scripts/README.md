@@ -318,6 +318,14 @@ or event name, when a main validation job has a `concurrency` key of its own,
 and when a workflow outside `ai-review`, `pr-auto-assign`, `pr-labeler` and
 `auto-rerun-on-infra-failure` loses its block.
 
+Whether a push to `main` runs a workflow is read from its `push` filters, which
+the test compares only as literal branch names. A `branches` or
+`branches-ignore` entry that GitHub reads as a pattern (`*`, `**`, `?`, `+`,
+`[...]`, a leading `!`, a `\` escape) fails the test, which prints the filter.
+Decide from GitHub's filter pattern rules whether a push to `main` runs the
+workflow and record it in `PUSH_FILTERS_BY_HAND` with that filter; the entry
+stops applying when the filter changes.
+
 The test reads only this repository's files. When the lgtm-ci pin is bumped,
 check the called reusable workflows for `concurrency` blocks keyed on the ref
 with cancellation, because such a block would cancel main runs again and the

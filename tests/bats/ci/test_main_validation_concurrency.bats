@@ -112,15 +112,43 @@ TRIGGERS_JQ='."on"
     elif type == "string" then {(.): null}
     else error("on must be a mapping, a list or an event name") end'
 
-# A push trigger runs on main unless its filters rule main out. Any branch
-# glob is assumed to match main.
-PUSHES_TO_MAIN_JQ='has("push") and ((.push // {}) as $p
-  | if ($p | type) != "object" then true
-    elif ($p | has("branches")) then
-      ($p.branches | any(. == "main" or contains("*")))
-    elif ($p | has("branches-ignore")) then
-      ($p["branches-ignore"] | any(. == "main") | not)
-    else (($p | has("tags")) or ($p | has("tags-ignore"))) | not end)'
+# Whether a push to main runs the workflow, from `on` as `triggers` prints it:
+# "true", "false", or "unsupported: REASON" when a person has to decide.
+# Branch filters are read only as lists of literal branch names. Anything
+# GitHub reads as a pattern (`*`, `**`, `?`, `+`, `[...]`, a leading `!`, a `\`
+# escape) is not interpreted, and neither is a filter that is not a non-empty
+# list. Tag filters need no matching: without a branch filter, their presence
+# alone means a branch push does not run the workflow.
+PUSH_TO_MAIN_JQ='
+  def literal: type == "string" and length > 0
+    and (test("^!|[*?+\\[\\]\\\\]") | not);
+  def names($key): .[$key] as $names
+    | if ($names | type) == "array" and ($names | length) > 0
+        and ($names | all(literal)) then $names
+      else error("push.\($key) is \($names | tojson), not a list of literal branch names") end;
+  try (
+    if has("push") | not then false
+    else (.push // {}) as $p
+      | if ($p | type) != "object" then true
+        elif ($p | has("branches")) and ($p | has("branches-ignore")) then
+          error("push sets both branches and branches-ignore, which GitHub rejects")
+        elif ($p | has("branches")) then $p | names("branches") | any(. == "main")
+        elif ($p | has("branches-ignore")) then
+          $p | names("branches-ignore") | all(. != "main")
+        else ($p | has("tags") or has("tags-ignore")) | not end
+    end | tostring
+  ) catch "unsupported: \(.)"'
+
+# The push filters a hand classification is pinned to.
+PUSH_REF_FILTERS_JQ='.push | with_entries(select(.key
+  | IN("branches", "branches-ignore", "tags", "tags-ignore")))'
+
+# Workflows whose push filters PUSH_TO_MAIN_JQ leaves to a person, classified
+# by hand against GitHub's filter pattern rules: "WORKFLOW VERDICT FILTER",
+# where VERDICT is true when a push to main runs the workflow and FILTER is
+# its push branch and tag filters exactly as the failure message prints them.
+# An entry stops applying as soon as the filter changes.
+PUSH_FILTERS_BY_HAND=()
 
 triggers() {
 	yq -o=json '.' "${WORKFLOWS}/$1.yml" | jq -ce "${TRIGGERS_JQ}"
@@ -139,10 +167,33 @@ lacks_trigger() {
 	fi
 }
 
-pushes_to_main() {
-	local events
+# main_push_verdict WORKFLOW -> true or false: whether a push to main runs it.
+# Fails, saying what to do, when its push filters need a person. Callers
+# capture the output, so the failure is never read as "false".
+main_push_verdict() {
+	local events verdict filter entry name hand_verdict hand_filter
 	events="$(triggers "$1")" || return 1
-	jq -e "${PUSHES_TO_MAIN_JQ}" <<<"${events}" >/dev/null
+	verdict="$(jq -r "${PUSH_TO_MAIN_JQ}" <<<"${events}")" || return 1
+	if [[ "${verdict}" == true || "${verdict}" == false ]]; then
+		echo "${verdict}"
+		return 0
+	fi
+	filter="$(jq -cS "${PUSH_REF_FILTERS_JQ}" <<<"${events}")" || return 1
+	for entry in "${PUSH_FILTERS_BY_HAND[@]}"; do
+		read -r name hand_verdict hand_filter <<<"${entry}"
+		[[ "${name}" == "$1" && "${hand_filter}" == "${filter}" ]] || continue
+		if [[ "${hand_verdict}" != true && "${hand_verdict}" != false ]]; then
+			echo "PUSH_FILTERS_BY_HAND: the verdict for $1 must be true or false" >&2
+			return 1
+		fi
+		echo "${hand_verdict}"
+		return 0
+	done
+	echo "$1: ${verdict#unsupported: }. This test matches literal branch names" \
+		"only. Decide from GitHub's filter pattern rules whether a push to main" \
+		"runs $1, then classify it by hand in PUSH_FILTERS_BY_HAND:" \
+		"$1 <true|false> ${filter}" >&2
+	return 1
 }
 
 no_caller_concurrency() {
@@ -181,17 +232,115 @@ require_concurrency() {
 	check truthy " \${{ github.sha }} " true
 	check truthy false false
 
-	# Outside the supported subset is an error, never a guess.
-	run python3 -I "${EXPRESSION}" render "\${{ github.ref > 1 }}" "${context}"
+	# && and || short-circuit: the operand that decides nothing is not
+	# evaluated, so its runtime error never happens.
+	check render "\${{ true || format('{1}', 'x') }}" true
+	check render "\${{ false && format('{1}', 'x') }}" false
+	check render "\${{ 0 && format('{1}', 'x') }}" 0
+	check render "\${{ 'a' || github.missing.key }}" a
+
+	# Falsy: false, 0, '', null. Everything else, '0' and 'false' included, is
+	# truthy.
+	check truthy "\${{ 0 }}" false
+	check truthy "\${{ '' }}" false
+	check truthy "\${{ null }}" false
+	check truthy "\${{ '0' }}" true
+	check truthy "\${{ 'false' }}" true
+	check truthy "\${{ github.event }}" true
+
+	# Mixed types compare as numbers: null and false are 0, true is 1, a string
+	# is its JSON number (empty or blank is 0) or NaN, and NaN equals nothing.
+	check render "\${{ null == 0 }}" true
+	check render "\${{ false == '' }}" true
+	check render "\${{ true == '1' }}" true
+	check render "\${{ ' 7 ' == 7 }}" true
+	check render "\${{ '1e1' == 10 }}" true
+	check render "\${{ '1_0' == 10 }}" false
+	check render "\${{ 'abc' == 0 }}" false
+	check render "\${{ 'abc' != 'ABC' }}" false
+	check render "\${{ github.event == 0 }}" false
+
+	# Outside the supported subset is an error, never a guess. The helper must
+	# report it, not crash.
+	fails() {
+		run python3 -I "${EXPRESSION}" "$1" "$2" "${context}"
+		[ "${status}" -eq 1 ]
+		[[ "${output}" == "expression error: "* ]]
+	}
+	fails render "\${{ github.ref > 1 }}"
+	fails render "\${{ hashFiles('x') }}"
+	fails truthy "a\${{ true }}"
+	# The runner reads these strings as numbers; GitHub documents only JSON
+	# numbers.
+	fails render "\${{ '0x10' == 16 }}"
+	fails render "\${{ '+1' == 1 }}"
+	# An evaluated operand still fails.
+	fails render "\${{ true && format('{1}', 'x') }}"
+	# The whole expression is parsed first: syntax, unknown functions, wrong
+	# argument counts and unknown contexts fail even where not evaluated.
+	fails render "\${{ true || (false }}"
+	fails render "\${{ true || hashFiles('x') }}"
+	fails render "\${{ true || startsWith('a') }}"
+	fails render "\${{ false && secrets.token }}"
+}
+
+@test "test_push_to_main_detection_reads_literal_branch_names_only" {
+	verdict() {
+		run jq -r "${PUSH_TO_MAIN_JQ}" <<<"$1"
+		[ "${status}" -eq 0 ]
+		[[ "${output}" == "$2"* ]]
+	}
+	verdict '{"push":null}' true
+	verdict '{"push":{"branches":["main"]}}' true
+	verdict '{"push":{"branches":["develop","main"],"paths":["src/**"]}}' true
+	verdict '{"push":{"branches":["develop"]}}' false
+	verdict '{"push":{"branches-ignore":["main"]}}' false
+	verdict '{"push":{"branches-ignore":["develop"]}}' true
+	verdict '{"push":{"paths":["src/**"]}}' true
+	# Tag filters alone keep branch pushes out; with a branch filter, the
+	# branch filter decides. Tag patterns are never matched.
+	verdict '{"push":{"tags":["v*.*.*"]}}' false
+	verdict '{"push":{"tags-ignore":["v*"]}}' false
+	verdict '{"push":{"branches":["main"],"tags":["v*.*.*"]}}' true
+	verdict '{"push":{"branches":["develop"],"tags":["v*.*.*"]}}' false
+	verdict '{"pull_request":null,"workflow_dispatch":null}' false
+
+	# Patterns, and filters GitHub would not accept, are left to a person.
+	local pattern
+	for pattern in '**' '*' 'release/**' 'main*' 'ma?in' 'mai+n' '[m]ain' \
+		'ma\\in' '!main'; do
+		verdict "{\"push\":{\"branches\":[\"${pattern}\"]}}" unsupported
+		verdict "{\"push\":{\"branches-ignore\":[\"${pattern}\"]}}" unsupported
+	done
+	verdict '{"push":{"branches":["main","!main"]}}' unsupported
+	verdict '{"push":{"branches":"main"}}' unsupported
+	verdict '{"push":{"branches":[]}}' unsupported
+	verdict '{"push":{"branches":[""]}}' unsupported
+	verdict '{"push":{"branches":["main"],"branches-ignore":["x"]}}' unsupported
+
+	# Such a workflow fails until it is classified by hand, and again when its
+	# filter changes.
+	WORKFLOWS="${BATS_TEST_TMPDIR}"
+	printf '%s\n' 'on:' '  push:' "    branches-ignore: ['**']" \
+		>"${WORKFLOWS}/scratch.yml"
+	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
-	run python3 -I "${EXPRESSION}" render "\${{ hashFiles('x') }}" "${context}"
+	[[ "${output}" == *'classify it by hand in PUSH_FILTERS_BY_HAND: scratch <true|false> {"branches-ignore":["**"]}' ]]
+	PUSH_FILTERS_BY_HAND=('scratch false {"branches-ignore":["**"]}')
+	run main_push_verdict scratch
+	[ "${status}" -eq 0 ]
+	[ "${output}" = false ]
+	printf '%s\n' 'on:' '  push:' "    branches: ['release/**']" \
+		>"${WORKFLOWS}/scratch.yml"
+	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
-	run python3 -I "${EXPRESSION}" truthy "a\${{ true }}" "${context}"
+	PUSH_FILTERS_BY_HAND=('scratch maybe {"branches":["release/**"]}')
+	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
 }
 
 @test "test_every_workflow_concurrency_block_is_accounted_for" {
-	local file name class_members count
+	local file name class_members count verdict
 	class_members=" ${MAIN_VALIDATION[*]} ${RELEASE_MUTATORS[*]} ${MAINTENANCE[*]} ${PR_ONLY[*]} ${RUN_FOLLOWERS[*]} "
 	for file in "${WORKFLOWS}"/*.yml "${WORKFLOWS}"/*.yaml; do
 		[[ -e "${file}" ]] || continue
@@ -214,14 +363,19 @@ require_concurrency() {
 	# Every workflow that runs on pushes to main is a validation or release one.
 	for file in "${WORKFLOWS}"/*.yml; do
 		name="$(basename "${file%.yml}")"
-		if pushes_to_main "${name}" &&
+		verdict="$(main_push_verdict "${name}")"
+		if [[ "${verdict}" == true ]] &&
 			[[ " ${MAIN_VALIDATION[*]} ${RELEASE_MUTATORS[*]} " != *" ${name} "* ]]; then
 			echo "${name}: runs on pushes to main but is not a validation or release workflow" >&2
 			return 1
 		fi
 	done
 	for name in "${MAIN_VALIDATION[@]}" "${RELEASE_MUTATORS[@]}"; do
-		pushes_to_main "${name}"
+		verdict="$(main_push_verdict "${name}")"
+		if [[ "${verdict}" != true ]]; then
+			echo "${name}: a validation or release workflow that does not run on pushes to main" >&2
+			return 1
+		fi
 	done
 	for name in "${MAINTENANCE[@]}"; do
 		has_trigger "${name}" schedule
@@ -304,7 +458,7 @@ require_concurrency() {
 
 @test "test_pr_supersession_cancels_and_separate_prs_do_not" {
 	local name ref=refs/pull/7/merge other_ref=refs/pull/8/merge
-	local a b c other main_push
+	local a b c other main_push verdict
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
 		has_trigger "${name}" pull_request || continue
 		no_caller_concurrency "${name}" && continue
@@ -320,7 +474,8 @@ require_concurrency() {
 		# Separate PRs never touch each other.
 		run replay "${a}" "${other}"
 		[ -z "${output}" ]
-		if pushes_to_main "${name}"; then
+		verdict="$(main_push_verdict "${name}")"
+		if [[ "${verdict}" == true ]]; then
 			main_push="$(arrival "${name}-main" "${name}" push "${MAIN}" "${SHA_A}")"
 			run replay "${main_push}" "${a}" "${b}" "${other}"
 			[ "${output}" = "${name}-pr7-a" ]
@@ -329,7 +484,7 @@ require_concurrency() {
 }
 
 @test "test_merge_group_runs_keep_their_own_groups" {
-	local name q7 q8 main_push pr queue=refs/heads/gh-readonly-queue/main
+	local name q7 q8 main_push pr verdict queue=refs/heads/gh-readonly-queue/main
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
 		has_trigger "${name}" merge_group || continue
 		no_caller_concurrency "${name}" && continue
@@ -338,7 +493,8 @@ require_concurrency() {
 		q8="$(arrival q8 "${name}" merge_group "${queue}/pr-8-${SHA_B}" "${SHA_B}")"
 		pr="$(arrival pr7 "${name}" pull_request refs/pull/7/merge "${SHA_C}" 7)"
 		[ "$(cut -f2 <<<"${q7}")" != "$(cut -f2 <<<"${q8}")" ]
-		if pushes_to_main "${name}"; then
+		verdict="$(main_push_verdict "${name}")"
+		if [[ "${verdict}" == true ]]; then
 			main_push="$(arrival main "${name}" push "${MAIN}" "${SHA_A}")"
 			run replay "${q7}" "${q8}" "${pr}" "${main_push}"
 		else
