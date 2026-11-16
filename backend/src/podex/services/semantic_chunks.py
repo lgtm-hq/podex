@@ -12,10 +12,12 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    ContentSuppressionScope,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
 )
+from podex.services.content_suppression import require_episode_not_suppressed
 from podex.services.failure_codes import FailureReason, PipelineFailure
 from podex.services.failure_descriptors import (
     describe_failure,
@@ -162,7 +164,16 @@ def sync_semantic_chunks_for_transcript(
 
     Returns:
         Summary of created, updated, deleted, and embedded chunks.
+
+    Raises:
+        ContentSuppressedError: If an approved takedown suppresses the
+            episode's derivatives; nothing is chunked or embedded.
     """
+    require_episode_not_suppressed(
+        db=db,
+        episode_id=transcript.episode_id,
+        scope=ContentSuppressionScope.DERIVATIVES,
+    )
     now = now or datetime.now(UTC)
     policy = policy or SemanticChunkingPolicy()
     candidates = build_semantic_chunk_candidates(

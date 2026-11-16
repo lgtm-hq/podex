@@ -3,21 +3,29 @@
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    ContentSuppressionScope,
+    ContentSuppressionSubjectType,
     DerivativeGenerationRun,
     Episode,
     EpisodeSummary,
     GraphTriple,
     Mention,
     MentionCandidate,
+    Podcast,
     SemanticChunk,
     TakedownRequest,
     TakedownRequesterType,
     TakedownRequestStatus,
     TakedownSubjectType,
     Transcript,
+)
+from podex.services.content_suppression import (
+    lock_podcasts_for_takedown,
+    record_suppression,
 )
 from podex.services.transcript_artifacts import (
     TranscriptArtifactStore,
@@ -33,6 +41,19 @@ from podex.services.transcript_retention_policies import (
     to_retention_policy,
     upsert_transcript_source_retention_policy,
 )
+
+SUPPRESSION_SCOPES_BY_ACTION: dict[str, ContentSuppressionScope] = {
+    "unpublish_mentions": ContentSuppressionScope.MENTIONS,
+    "suppress_derivatives": ContentSuppressionScope.DERIVATIVES,
+}
+"""Requested actions that leave a durable suppression, and its scope.
+
+Raw retention actions (``suppress_raw_transcript``, ``register_source_opt_out``)
+keep their storage and opt-out semantics and record no suppression.
+"""
+
+_SuppressedSubject = tuple[ContentSuppressionSubjectType, tuple[int, ...]]
+"""What one suppression row covers: its subject type and ids."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +162,12 @@ def execute_approved_takedown_request(
 
     effective_now = now or datetime.now(UTC)
     actions = set(request.requested_actions_json)
+    lock_podcasts_for_takedown(
+        db=db,
+        podcast_ids=_podcast_ids_for_request(db=db, request=request),
+    )
     episode_ids = _episode_ids_for_request(db=db, request=request)
+    _record_suppressions(db=db, request=request, actions=actions)
     transcripts = (
         db.query(Transcript).filter(Transcript.episode_id.in_(episode_ids)).all()
         if episode_ids
@@ -197,6 +223,87 @@ def execute_approved_takedown_request(
     }
     db.flush()
     return result
+
+
+def _podcast_ids_for_request(
+    *,
+    db: Session,
+    request: TakedownRequest,
+) -> tuple[int, ...]:
+    """Resolve the podcast whose rows serialize this takedown with writers."""
+    if request.subject_type == TakedownSubjectType.PODCAST.value:
+        return (request.subject_id,)
+    if request.subject_type == TakedownSubjectType.EPISODE.value:
+        statement = select(Episode.podcast_id).where(
+            Episode.id == request.subject_id,
+        )
+    else:
+        statement = (
+            select(Episode.podcast_id)
+            .join(Mention, Mention.episode_id == Episode.id)
+            .where(Mention.id == request.subject_id)
+        )
+    return tuple(int(row[0]) for row in db.execute(statement).all())
+
+
+def _record_suppressions(
+    *,
+    db: Session,
+    request: TakedownRequest,
+    actions: set[str],
+) -> None:
+    """Record a durable suppression per requested scope before any deletion.
+
+    A mention subject is stored as its ``(episode, media)`` pair, because the
+    ``Mention`` row it names is deleted. Its derivative scope covers the whole
+    episode, as execution does. A subject that no longer exists has nothing
+    left to suppress and records nothing, as execution removes nothing.
+    """
+    scopes = [
+        scope
+        for action, scope in SUPPRESSION_SCOPES_BY_ACTION.items()
+        if action in actions
+    ]
+    if not scopes:
+        return
+    subjects: dict[ContentSuppressionScope, _SuppressedSubject]
+    if request.subject_type == TakedownSubjectType.PODCAST.value:
+        if db.get(Podcast, request.subject_id) is None:
+            return
+        subjects = dict.fromkeys(
+            scopes,
+            (ContentSuppressionSubjectType.PODCAST, (request.subject_id,)),
+        )
+    elif request.subject_type == TakedownSubjectType.EPISODE.value:
+        if db.get(Episode, request.subject_id) is None:
+            return
+        subjects = dict.fromkeys(
+            scopes,
+            (ContentSuppressionSubjectType.EPISODE, (request.subject_id,)),
+        )
+    else:
+        mention = db.query(Mention).filter(Mention.id == request.subject_id).first()
+        if mention is None:
+            return
+        subjects = {
+            ContentSuppressionScope.MENTIONS: (
+                ContentSuppressionSubjectType.MENTION_PAIR,
+                (mention.episode_id, mention.media_id),
+            ),
+            ContentSuppressionScope.DERIVATIVES: (
+                ContentSuppressionSubjectType.EPISODE,
+                (mention.episode_id,),
+            ),
+        }
+    for scope in scopes:
+        subject_type, subject_ids = subjects[scope]
+        record_suppression(
+            db=db,
+            takedown_request_id=request.id,
+            subject_type=subject_type,
+            scope=scope,
+            subject_ids=subject_ids,
+        )
 
 
 def _episode_ids_for_request(

@@ -1,5 +1,8 @@
 """Tests for takedown intake, decision, and coordinated suppression."""
 
+from unittest.mock import Mock
+
+import pytest
 from assertpy import assert_that
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -8,16 +11,27 @@ from sqlalchemy.orm import Session
 from podex.api.deps import get_app_settings
 from podex.config import Settings
 from podex.models import (
+    ContentSuppressedError,
+    ContentSuppression,
+    ContentSuppressionScope,
+    DerivativeGenerationRun,
+    Episode,
+    EpisodeSummary,
+    Media,
+    MediaType,
     Mention,
     MentionCandidate,
     SemanticChunk,
+    TakedownSubjectType,
     Transcript,
 )
+from podex.services.derivative_generation import generate_episode_derivatives
 from podex.services.semantic_chunks import (
     SemanticChunkingPolicy,
     sync_semantic_chunks_for_transcript,
 )
 from tests.conftest import seed_catalog_graph
+from tests.takedown_support import approve_takedown, take_down_mention
 
 _OPS_HEADERS = {"X-Ops-Key": "test-ops-key"}
 
@@ -168,3 +182,217 @@ def test_approval_executes_coordinated_suppression(
     assert_that(db_session.query(SemanticChunk).count()).is_equal_to(0)
     surviving = db_session.query(MentionCandidate).one()
     assert_that(surviving.mention_id).is_none()
+
+
+def _suppression_rows(db: Session) -> list[tuple[str, str, int | None, int | None]]:
+    """Return ``(subject_type, scope, episode_id, media_id)`` for every row."""
+    db.expire_all()
+    return [
+        (row.subject_type, row.scope, row.episode_id, row.media_id)
+        for row in db.query(ContentSuppression).order_by(ContentSuppression.id)
+    ]
+
+
+def _seed_episode_derivatives(db: Session, episode_id: int) -> Transcript:
+    """Persist a transcript and its semantic chunks for one episode."""
+    transcript = Transcript(
+        episode_id=episode_id,
+        provider="podscripts",
+        cleaned_text="one two three four five six",
+    )
+    db.add(transcript)
+    db.flush()
+    sync_semantic_chunks_for_transcript(
+        db=db,
+        transcript=transcript,
+        policy=SemanticChunkingPolicy(max_words=6, overlap_words=0, min_words=2),
+    )
+    db.commit()
+    return transcript
+
+
+def test_derivatives_are_not_regenerated_after_takedown(
+    db_session: Session,
+) -> None:
+    """A derivative re-run after the takedown writes nothing and calls no provider."""
+    graph = seed_catalog_graph(db_session)
+    transcript = _seed_episode_derivatives(db_session, graph.episode_id)
+    approve_takedown(
+        db_session,
+        subject_type=TakedownSubjectType.EPISODE,
+        subject_id=graph.episode_id,
+        actions=["suppress_derivatives"],
+    )
+    db_session.query(Transcript).filter(Transcript.id == transcript.id).update(
+        {Transcript.raw_text: "one two three four five six"},
+    )
+    db_session.commit()
+    provider = Mock()
+    episode = db_session.query(Episode).filter(Episode.id == graph.episode_id).one()
+
+    with pytest.raises(ContentSuppressedError) as refused:
+        generate_episode_derivatives(
+            db=db_session,
+            episode=episode,
+            summary_provider=provider,
+            embedding_provider=provider,
+        )
+
+    assert_that(refused.value.scope).is_equal_to(ContentSuppressionScope.DERIVATIVES)
+    assert_that(refused.value.episode_id).is_equal_to(graph.episode_id)
+    db_session.rollback()
+    assert_that(provider.mock_calls).is_empty()
+    assert_that(
+        db_session.query(SemanticChunk)
+        .filter(SemanticChunk.episode_id == graph.episode_id)
+        .count(),
+    ).is_zero()
+    assert_that(db_session.query(EpisodeSummary).count()).is_zero()
+    assert_that(db_session.query(DerivativeGenerationRun).count()).is_zero()
+
+
+def test_suppression_rows_written_per_requested_scope(db_session: Session) -> None:
+    """Each subject records one row per suppression scope it requested."""
+    graph = seed_catalog_graph(db_session)
+    other = Media(type=MediaType.MOVIE, title="Arrival")
+    db_session.add(other)
+    db_session.flush()
+    mention = Mention(episode_id=graph.episode_id, media_id=other.id)
+    db_session.add(mention)
+    db_session.commit()
+
+    approve_takedown(
+        db_session,
+        subject_type=TakedownSubjectType.MENTION,
+        subject_id=mention.id,
+        actions=["unpublish_mentions", "suppress_derivatives"],
+    )
+    approve_takedown(
+        db_session,
+        subject_type=TakedownSubjectType.PODCAST,
+        subject_id=graph.podcast_id,
+        actions=["unpublish_mentions", "suppress_raw_transcript"],
+    )
+    approve_takedown(
+        db_session,
+        subject_type=TakedownSubjectType.EPISODE,
+        subject_id=graph.episode_id,
+        actions=["suppress_raw_transcript"],
+    )
+
+    assert_that(_suppression_rows(db_session)).is_equal_to(
+        [
+            ("mention_pair", "mentions", graph.episode_id, other.id),
+            ("episode", "derivatives", graph.episode_id, None),
+            ("podcast", "mentions", None, None),
+        ],
+    )
+    keys = [row.suppression_key for row in db_session.query(ContentSuppression)]
+    assert_that(keys).contains(
+        f"mention_pair:{graph.episode_id}:{other.id}:mentions",
+        f"podcast:{graph.podcast_id}:mentions",
+    )
+
+
+def test_repeated_takedown_of_one_subject_keeps_one_row(db_session: Session) -> None:
+    """A second approval of the same subject and scope adds no duplicate row."""
+    graph = seed_catalog_graph(db_session)
+    for _ in range(2):
+        approve_takedown(
+            db_session,
+            subject_type=TakedownSubjectType.EPISODE,
+            subject_id=graph.episode_id,
+            actions=["suppress_derivatives"],
+        )
+
+    assert_that(_suppression_rows(db_session)).is_length(1)
+
+
+def test_takedown_of_missing_subject_records_nothing(db_session: Session) -> None:
+    """A subject that no longer exists has nothing to suppress, as before."""
+    seed_catalog_graph(db_session)
+    for subject_type in TakedownSubjectType:
+        approve_takedown(
+            db_session,
+            subject_type=subject_type,
+            subject_id=999_999,
+            actions=["unpublish_mentions", "suppress_derivatives"],
+        )
+
+    assert_that(_suppression_rows(db_session)).is_empty()
+    assert_that(db_session.query(Mention).count()).is_equal_to(1)
+
+
+def test_failed_execution_writes_no_suppression(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """An execution that fails part-way leaves no suppression and no deletion."""
+    graph = seed_catalog_graph(db_session)
+    _seed_episode_derivatives(db_session, graph.episode_id)
+    submitted = client.post(
+        "/api/v2/takedowns",
+        json={
+            "subject_type": "episode",
+            "subject_id": graph.episode_id,
+            "requester_type": "rights_holder",
+            "requester_name": "Rights Holder",
+            "requester_email": "rights@example.com",
+            "basis": "This content infringes the rights we hold.",
+            "requested_actions": [
+                "unpublish_mentions",
+                "suppress_derivatives",
+                "register_source_opt_out",
+            ],
+        },
+    )
+    _enable_ops(client)
+
+    decided = client.post(
+        f"/api/v2/ops/takedown-requests/{submitted.json()['id']}/decide",
+        json={"status": "approved", "note": "Ownership verified."},
+        headers=_OPS_HEADERS,
+    )
+
+    assert_that(decided.status_code).is_equal_to(409)
+    assert_that(decided.json()["detail"]).contains("creator request")
+    assert_that(_suppression_rows(db_session)).is_empty()
+    assert_that(db_session.query(Mention).count()).is_equal_to(1)
+    assert_that(db_session.query(SemanticChunk).count()).is_equal_to(1)
+
+
+def test_mention_pair_suppression_survives_candidate_detach(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """The pair stays suppressed after its Mention is deleted and candidate freed."""
+    graph = seed_catalog_graph(db_session)
+    candidate = MentionCandidate(
+        episode_id=graph.episode_id,
+        media_id=graph.media_id,
+        media_type="book",
+        raw_title="Dune",
+        confidence=0.9,
+        mention_id=graph.mention_id,
+    )
+    db_session.add(candidate)
+    db_session.commit()
+    take_down_mention(db_session, graph.mention_id)
+    db_session.refresh(candidate)
+    assert_that(candidate.mention_id).is_none()
+
+    # Publishing the freed candidate again, as a later review approval would.
+    db_session.add(
+        Mention(
+            episode_id=candidate.episode_id,
+            media_id=candidate.media_id,
+            context="a great book",
+        ),
+    )
+    with pytest.raises(ContentSuppressedError):
+        db_session.commit()
+    db_session.rollback()
+
+    assert_that(db_session.query(Mention).count()).is_zero()
+    listed = client.get(f"/api/v2/media/{graph.media_id}/mentions")
+    assert_that(listed.json()["items"]).is_empty()

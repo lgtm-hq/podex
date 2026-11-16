@@ -9,6 +9,7 @@ from hashlib import sha256
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    ContentSuppressionScope,
     DerivativeGenerationRun,
     DerivativeGenerationRunStatus,
     Episode,
@@ -16,6 +17,7 @@ from podex.models import (
     Mention,
     Transcript,
 )
+from podex.services.content_suppression import require_episode_not_suppressed
 from podex.services.derivative_summaries import (
     SummaryProvider,
     build_episode_summary_source,
@@ -76,7 +78,17 @@ def generate_episode_derivatives(
 
     Returns:
         Persisted derivative generation run summary.
+
+    Raises:
+        ContentSuppressedError: If an approved takedown suppresses the
+            episode's derivatives. The skip is reported before any provider
+            call, run row or other derived row.
     """
+    require_episode_not_suppressed(
+        db=db,
+        episode_id=episode.id,
+        scope=ContentSuppressionScope.DERIVATIVES,
+    )
     config = config or DerivativeGenerationConfig()
     now = now or datetime.now(UTC)
     transcript = transcript or _latest_transcript(db=db, episode=episode)

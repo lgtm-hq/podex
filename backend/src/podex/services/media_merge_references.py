@@ -5,6 +5,9 @@ source is deleted:
 
 - Mention candidates, their provenance snapshots and review items move to the
   surviving record, so extraction history keeps resolving to the canonical work.
+- Mention-pair takedown suppressions move to the survivor and collapse to one
+  per ``(episode, media)`` pair, so a takedown of a mention of the merged-away
+  record keeps covering mentions of the same work in that episode.
 - Saved media move to the survivor and collapse to one save per account.
 - Media alert rules move to the survivor and collapse to one rule per account
   and event type. Alert events from a collapsed rule move to the surviving rule,
@@ -33,12 +36,16 @@ from podex.models import (
     AccountAlertEvent,
     AccountAlertRule,
     AccountSavedMedia,
+    ContentSuppression,
+    ContentSuppressionScope,
+    ContentSuppressionSubjectType,
     Media,
     Mention,
     MentionCandidate,
     MentionCandidateProvenance,
     ReviewItem,
 )
+from podex.models.content_suppression import suppression_key
 
 MEDIA_ALERT_TARGET_TYPE = "media"
 
@@ -124,6 +131,11 @@ def move_media_references(
         source_media_id=source_media.id,
         target_media_id=target_media.id,
     )
+    _move_mention_pair_suppressions(
+        db=db,
+        source_media_id=source_media.id,
+        target_media_id=target_media.id,
+    )
     _move_media_alert_rules(
         db=db,
         rule_plan=rule_plan,
@@ -156,6 +168,46 @@ def _move_extraction_references(
         db.query(ReviewItem).filter(ReviewItem.target_media_id == source_media.id).all()
     ):
         review_item.target_media = target_media
+
+
+def _move_mention_pair_suppressions(
+    *,
+    db: Session,
+    source_media_id: int,
+    target_media_id: int,
+) -> None:
+    """Repoint pair suppressions at the target, keeping one per pair and scope.
+
+    The key encodes the media id, so a moved row gets the target's key; when
+    the target pair is already suppressed the source row is dropped instead.
+    """
+    existing_keys = {
+        key
+        for (key,) in db.query(ContentSuppression.suppression_key)
+        .filter(ContentSuppression.media_id == target_media_id)
+        .all()
+    }
+    for suppression in (
+        db.query(ContentSuppression)
+        .filter(ContentSuppression.media_id == source_media_id)
+        .order_by(ContentSuppression.id)
+        .all()
+    ):
+        episode_id = suppression.episode_id
+        if episode_id is None:
+            # Unreachable: the check constraint gives every pair row an episode.
+            continue
+        moved_key = suppression_key(
+            subject_type=ContentSuppressionSubjectType.MENTION_PAIR,
+            scope=ContentSuppressionScope(suppression.scope),
+            subject_ids=(episode_id, target_media_id),
+        )
+        if moved_key in existing_keys:
+            db.delete(suppression)
+            continue
+        suppression.media_id = target_media_id
+        suppression.suppression_key = moved_key
+        existing_keys.add(moved_key)
 
 
 def _move_saved_media(

@@ -14,9 +14,10 @@ from __future__ import annotations
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from podex.models import Episode, Media, Mention, Podcast
+from podex.models import Episode, Media, Podcast
 from podex.schemas.stats import CatalogStats, MediaTypeCount
 from podex.services.cache import Cache
+from podex.services.content_suppression import count_published_mentions
 
 CATALOG_STATS_CACHE_KEY = "catalog:stats"
 """Cache key under which the aggregate catalog stats are stored."""
@@ -37,7 +38,7 @@ def compute_catalog_stats(db: Session) -> CatalogStats:
     podcasts = db.execute(select(func.count()).select_from(Podcast)).scalar_one()
     episodes = db.execute(select(func.count()).select_from(Episode)).scalar_one()
     media = db.execute(select(func.count()).select_from(Media)).scalar_one()
-    mentions = db.execute(select(func.count()).select_from(Mention)).scalar_one()
+    mentions = count_published_mentions(db)
 
     # Ties are broken alphabetically by type name so responses are stable
     # regardless of insertion order.

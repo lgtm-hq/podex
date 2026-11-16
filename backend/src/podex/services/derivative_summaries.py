@@ -10,6 +10,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    ContentSuppressionScope,
     DerivativeSummaryKind,
     DerivativeSummaryStatus,
     Episode,
@@ -19,6 +20,10 @@ from podex.models import (
     Mention,
     SemanticChunk,
     Transcript,
+)
+from podex.services.content_suppression import (
+    published_mention_clause,
+    require_episode_not_suppressed,
 )
 from podex.services.field_normalization import (
     normalize_optional as _normalize_optional,
@@ -97,7 +102,16 @@ def generate_episode_summary(
 
     Returns:
         Persisted episode summary.
+
+    Raises:
+        ContentSuppressedError: If an approved takedown suppresses the
+            episode's derivatives; the provider is not called.
     """
+    require_episode_not_suppressed(
+        db=db,
+        episode_id=episode.id,
+        scope=ContentSuppressionScope.DERIVATIVES,
+    )
     source = build_episode_summary_source(db=db, episode=episode)
     generated = provider.summarize(source)
     return upsert_episode_summary(
@@ -435,7 +449,7 @@ def build_media_summary_source(
 
     mentions = (
         db.query(Mention)
-        .filter(Mention.media_id == media.id)
+        .filter(Mention.media_id == media.id, published_mention_clause())
         .order_by(Mention.episode_id, Mention.timestamp_seconds)
         .all()
     )
