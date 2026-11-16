@@ -8,7 +8,6 @@ SDK logs.
 """
 
 import logging
-import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
@@ -25,6 +24,7 @@ from botocore.exceptions import MetadataRetrievalError
 from botocore.utils import ContainerMetadataFetcher
 
 from tests.sdk_log_support import (
+    assert_quick_record,
     cached_record_text,
     debug_logging,
     logged,
@@ -409,12 +409,8 @@ def test_expensive_records_stay_within_budget(
     """Records that cost hundreds of milliseconds to inspect are bounded."""
     sdk = logging.getLogger("botocore.parsers")
     with debug_logging(caplog):
-        sdk.log(level, message, *arguments)
-        started = time.perf_counter()
-        sdk.log(level, message, *arguments)
-        elapsed = time.perf_counter() - started
+        assert_quick_record(sdk, level, message, *arguments)
 
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(caplog.records[-1].getMessage()).starts_with(_WITHHELD)
 
 

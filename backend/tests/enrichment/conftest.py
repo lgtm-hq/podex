@@ -1,6 +1,6 @@
 """Shared helpers for enrichment tests."""
 
-import time
+import threading
 from typing import Any
 
 import httpx
@@ -79,18 +79,29 @@ class _RaisingProvider:
         """No-op close."""
 
 
-class _SlowProvider:
-    """Provider double that sleeps past the aggregate deadline."""
+BLOCKED_WAIT_SECONDS = 30.0
+"""Longest a blocked provider, or a test waiting on one, waits before failing."""
 
-    def __init__(self, result: EnrichmentResult, delay: float) -> None:
+
+class _BlockedProvider:
+    """Provider double that blocks until the test releases it."""
+
+    def __init__(self, result: EnrichmentResult, release: threading.Event) -> None:
         self.result = result
-        self.delay = delay
+        self.release = release
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
-        """Sleep, then return the canned result."""
+        """Block until released, then return the canned result.
+
+        Raises:
+            AssertionError: When the test does not release it in time.
+        """
 
         del media
-        time.sleep(self.delay)
+        if not self.release.wait(timeout=BLOCKED_WAIT_SECONDS):
+            raise AssertionError(
+                f"blocked provider not released within {BLOCKED_WAIT_SECONDS:g}s",
+            )
         return self.result
 
     def close(self) -> None:
