@@ -9,10 +9,12 @@ inputs with it, while removing a check lets the one-past input print.
 
 import logging
 import sys
+from http import HTTPStatus
 
 import pytest
 from assertpy import assert_that
 
+from podex import sdk_log_rules
 from podex.sdk_log_boundary import MAX_SKELETON
 from podex.sdk_log_forms import FORMS, MAX_PREFORMATTED, SERVER_FORMS
 from podex.sdk_log_rules import MAX_HEADER_VALUE, WITHHELD, header_value
@@ -324,30 +326,131 @@ def test_trace_line_with_the_longest_address_prints_it_whole(
     )
 
 
+def _header_values(limit: int) -> list[tuple[object, str]]:
+    """Return header values at and one past ``limit``, with what each prints.
+
+    Text and bytes of ``limit`` characters and one more; the largest integer
+    whose decimal text is ``limit`` digits (all nines) and the next one; and
+    the same for a negative integer, whose minus sign takes one character.
+    """
+    nines = 10**limit - 1
+    negative = -(nines // 10)
+    return [
+        ("a" * limit, "a" * limit),
+        ("a" * (limit + 1), WITHHELD),
+        (b"a" * limit, "a" * limit),
+        (b"a" * (limit + 1), WITHHELD),
+        (nines, "9" * limit),
+        (nines + 1, WITHHELD),
+        (negative, "-" + "9" * (limit - 1)),
+        (negative - 1, WITHHELD),
+    ]
+
+
+_HEADER_VALUE_KINDS = (
+    "text-at",
+    "text-over",
+    "bytes-at",
+    "bytes-over",
+    "int-at",
+    "int-over",
+    "negative-at",
+    "negative-over",
+)
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        pytest.param("a" * MAX_HEADER_VALUE, "a" * MAX_HEADER_VALUE, id="text-at"),
-        pytest.param("a" * (MAX_HEADER_VALUE + 1), WITHHELD, id="text-over"),
-        pytest.param(b"a" * MAX_HEADER_VALUE, "a" * MAX_HEADER_VALUE, id="bytes-at"),
-        pytest.param(b"a" * (MAX_HEADER_VALUE + 1), WITHHELD, id="bytes-over"),
+        pytest.param(value, expected, id=kind)
+        for kind, (value, expected) in zip(
+            _HEADER_VALUE_KINDS,
+            _header_values(MAX_HEADER_VALUE),
+            strict=True,
+        )
     ],
 )
-def test_header_value_is_bounded(value: str | bytes, expected: str) -> None:
+def test_header_value_is_bounded(value: object, expected: str) -> None:
     """A header value one character past the bound is withheld.
 
-    This pins the limit's behaviour only. The value pattern repeats the same
-    limit, so removing either explicit length check alone changes no output
-    and fails no case here.
+    :data:`MAX_HEADER_VALUE` is the only bound: the value pattern has no
+    length of its own, text and bytes share one length check made before
+    they are decoded or matched, and an integer is measured by magnitude
+    with its minus sign counted. Removing any one of these checks lets a
+    one-over case here print, and checking one character short makes an
+    at-bound case withheld.
     """
     assert_that(header_value(value)).is_equal_to(expected)
+
+
+@pytest.mark.parametrize(
+    "limit",
+    [MAX_HEADER_VALUE // 2, MAX_HEADER_VALUE * 2],
+    ids=["lowered", "raised"],
+)
+def test_header_value_follows_the_one_limit(
+    limit: int,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text, bytes and integers all follow the constant when it moves.
+
+    A second copy of the bound, in the value pattern for example, would keep
+    the old limit for some kind of value once the constant is raised.
+    """
+    monkeypatch.setattr(sdk_log_rules, "MAX_HEADER_VALUE", limit)
+    cases = _header_values(limit)
+
+    printed = [header_value(value) for value, _ in cases]
+
+    assert_that(printed).is_equal_to([expected for _, expected in cases])
+
+
+@pytest.mark.parametrize(
+    "value",
+    [10**100_000, -(10**100_000)],
+    ids=["positive", "negative"],
+)
+def test_huge_integer_header_value_is_withheld(
+    value: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An integer past the interpreter's text limit is withheld, not an error.
+
+    Converting it to text would raise, so the record would print only the
+    boundary's failure placeholder; it is measured without that conversion.
+    """
+    limit = sys.get_int_max_str_digits()
+    assert_that(limit == 0 or limit < 100_000).is_true()
+
+    printed = _printed(
+        caplog,
+        "botocore.parsers",
+        "Response headers: %r",
+        {"content-length": value},
+    )
+
+    assert_that(header_value(value)).is_equal_to(WITHHELD)
+    assert_that(printed).is_equal_to(
+        f"Response headers: {{'content-length': '{WITHHELD}'}}",
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [True, False, HTTPStatus.OK],
+    ids=["true", "false", "int-subclass"],
+)
+def test_header_value_of_a_bool_or_int_subclass_is_withheld(value: int) -> None:
+    """Only an exact ``int`` prints as a number; a bool or subclass is withheld."""
+    assert_that(header_value(value)).is_equal_to(WITHHELD)
 
 
 _REQUEST_LINE = '%s://%s:%s "%s %s %s" %s %s'
 """The connection pool's request line; its status and length are numbers."""
 
 _ARABIC_VERSION = "HTTP/\N{ARABIC-INDIC DIGIT ONE}.\N{ARABIC-INDIC DIGIT ONE}"
-"""An HTTP version the version pattern accepts, with two non-ASCII digits."""
+"""An HTTP version with two non-ASCII digits, which the version pattern
+withholds: validated parts are ASCII, so a skeleton is ASCII text."""
 
 
 def _request_line(version: str, length: int) -> tuple[object, ...]:
@@ -367,20 +470,32 @@ def _request_line(version: str, length: int) -> tuple[object, ...]:
 
 
 @pytest.mark.parametrize(
-    "version",
+    ("version", "shown"),
     [
-        pytest.param("HTTP/1.1", id="ascii"),
-        pytest.param(_ARABIC_VERSION, id="non-ascii"),
+        pytest.param("HTTP/1.1", "HTTP/1.1", id="ascii"),
+        pytest.param(_ARABIC_VERSION, WITHHELD, id="non-ascii-version-withheld"),
     ],
 )
 def test_skeleton_at_the_output_bound_is_printed(
     version: str,
+    shown: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A skeleton exactly as long as the bound, in characters, is printed."""
-    arguments = _request_line(version, MAX_SKELETON)
+    """A skeleton exactly as long as the bound, in characters, is printed.
 
-    printed = _printed(caplog, "urllib3.connectionpool", _REQUEST_LINE, *arguments)
+    The bound applies to the skeleton, not to the record's input: a version
+    with non-ASCII digits is withheld, and the skeleton printing
+    ``[withheld]`` in its place is still printed at exactly the bound.
+    """
+    arguments = _request_line(shown, MAX_SKELETON)
+    logged_arguments = (*arguments[:5], version, *arguments[6:])
+
+    printed = _printed(
+        caplog,
+        "urllib3.connectionpool",
+        _REQUEST_LINE,
+        *logged_arguments,
+    )
 
     assert_that(len(printed)).is_equal_to(MAX_SKELETON)
     assert_that(printed).is_equal_to(_REQUEST_LINE % arguments)
