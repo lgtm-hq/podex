@@ -36,6 +36,7 @@ from uvicorn.server import ServerState
 from podex.redaction import REDACTED
 from tests.sdk_log_support import (
     CREDENTIAL_QUERY_KEYS,
+    MemoryTransport,
     debug_logging,
     logged,
     synthetic_secret,
@@ -478,8 +479,7 @@ def test_storage_client_logs_no_secret(
         "x-amz-security-token",
         "x-provider-trace",
     )
-    if status == 403:
-        assert_that(output).contains("; error code AccessDenied]")
+    assert_that(output).does_not_contain("AccessDenied", "error code")
 
 
 def test_storage_client_failure_withholds_error_text(
@@ -508,37 +508,6 @@ def test_storage_client_failure_withholds_error_text(
 # --- ASGI server access log (uvicorn) -------------------------------------------
 
 
-class _MemoryTransport:
-    """The part of an asyncio transport the server uses; keeps what it writes."""
-
-    def __init__(self) -> None:
-        self.written = bytearray()
-        self.closed = False
-
-    def get_extra_info(self, name: str, default: Any = None) -> Any:
-        """Return fixed local and peer addresses."""
-        addresses = {"sockname": ("127.0.0.1", 8000), "peername": ("127.0.0.1", 5000)}
-        return addresses.get(name, default)
-
-    def write(self, data: bytes | bytearray | memoryview) -> None:
-        """Keep the written bytes."""
-        self.written += data
-
-    def close(self) -> None:
-        """Mark the transport closed."""
-        self.closed = True
-
-    def is_closing(self) -> bool:
-        """Return whether the transport was closed."""
-        return self.closed
-
-    def pause_reading(self) -> None:
-        """Accept a request to stop reading; nothing is read from a socket."""
-
-    def resume_reading(self) -> None:
-        """Accept a request to resume reading."""
-
-
 async def _serve_once(request: bytes) -> bytes:
     """Serve one request through the server's HTTP/1.1 protocol in memory."""
 
@@ -550,7 +519,7 @@ async def _serve_once(request: bytes) -> bytes:
     config = Config(app=app, access_log=True, log_config=None)
     config.load()
     protocol = H11Protocol(config=config, server_state=ServerState(), app_state={})
-    transport = _MemoryTransport()
+    transport = MemoryTransport()
     protocol.connection_made(cast(asyncio.Transport, transport))
     protocol.data_received(request)
     for _ in range(100):

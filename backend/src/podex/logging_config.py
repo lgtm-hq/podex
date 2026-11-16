@@ -48,6 +48,7 @@ from podex.sdk_log_boundary import (
     configure_secret_values,
     is_sdk_logger,
     sanitise_sdk_record,
+    sanitise_server_record,
 )
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -236,7 +237,7 @@ def _sanitising_record(
     with contextlib.suppress(Exception):
         if is_sdk_logger(record.name):
             sanitise_sdk_record(record)
-        else:
+        elif not sanitise_server_record(record):
             sanitise_database_errors(record)
         sanitised = True
     if not sanitised:

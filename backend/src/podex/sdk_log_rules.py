@@ -26,9 +26,12 @@ from collections.abc import Iterable, Iterator, Mapping, Sized
 from email.message import Message
 from http import HTTPStatus
 from itertools import islice
+from typing import TypeGuard
 from urllib.parse import unquote_plus, urlsplit
 
-from podex.database_errors import type_name
+import httpx
+import httpx2
+
 from podex.redaction import REDACTED, SecretRedactor
 
 SAFE_HEADERS = frozenset(
@@ -174,9 +177,40 @@ _IDENTIFIER_RE = re.compile(
 )
 _NUMBER_TEXT_RE = re.compile(r"\d{1,12}(?:\.\d{1,6})?")
 _SCHEMES = frozenset({"http", "https"})
+_DESCRIBED_TYPES = frozenset({str, bytes, bytearray, dict, list, tuple})
 
 # URL userinfo and, once configured, the secret values of the loaded settings.
 _REDACTOR = SecretRedactor()
+
+
+def exact_str(value: object) -> TypeGuard[str]:
+    """Return whether ``value`` is a ``str`` itself, not a subclass."""
+    return type(value) in (str,)
+
+
+def exact_int(value: object) -> TypeGuard[int]:
+    """Return whether ``value`` is an ``int`` itself (not ``bool`` or a subclass)."""
+    return type(value) in (int,)
+
+
+def exact_float(value: object) -> TypeGuard[float]:
+    """Return whether ``value`` is a ``float`` itself, not a subclass."""
+    return type(value) in (float,)
+
+
+def exact_bytes(value: object) -> TypeGuard[bytes]:
+    """Return whether ``value`` is ``bytes`` itself, not a subclass."""
+    return type(value) in (bytes,)
+
+
+def exact_dict(value: object) -> TypeGuard[dict[object, object]]:
+    """Return whether ``value`` is a ``dict`` itself, not a subclass."""
+    return type(value) in (dict,)
+
+
+def exact_tuple(value: object) -> TypeGuard[tuple[object, ...]]:
+    """Return whether ``value`` is a ``tuple`` itself, not a subclass."""
+    return type(value) in (tuple,)
 
 
 class Rendered(str):
@@ -219,9 +253,9 @@ def snake_case(name: str) -> str:
 
 def _text_name(name: object) -> str | None:
     """Return a name as text, percent-decoded, or None if it is not a name."""
-    if isinstance(name, bytes):
+    if exact_bytes(name) and len(name) <= _MAX_NAME:
         name = name.decode("latin-1")
-    if not isinstance(name, str) or len(name) > _MAX_NAME:
+    if not exact_str(name) or len(name) > _MAX_NAME:
         return None
     if "%" in name or "+" in name:
         name = unquote_plus(name)
@@ -285,18 +319,18 @@ def header_value(value: object) -> str:
     Returns:
         str: The value, or ``[withheld]``.
     """
-    if isinstance(value, bytes):
+    if exact_bytes(value):
         if len(value) > MAX_HEADER_VALUE:
             return WITHHELD
         value = value.decode("latin-1")
-    if isinstance(value, int) and not isinstance(value, bool):
-        return str(value)
+    if exact_int(value):
+        return str(int(value))
     if (
-        isinstance(value, str)
+        exact_str(value)
         and len(value) <= MAX_HEADER_VALUE
         and _HEADER_VALUE_RE.fullmatch(value)
     ):
-        return value
+        return str(value)
     return WITHHELD
 
 
@@ -310,18 +344,25 @@ def _size(value: object) -> int:
 
 
 def _header_items(headers: object) -> Iterator[tuple[object, object]]:
-    """Yield a header container's name and value pairs, lazily."""
-    multi_items = getattr(headers, "multi_items", None)
-    if callable(multi_items):
-        pairs: Iterable[object] = multi_items()
+    """Yield a header container's name and value pairs, lazily.
+
+    Only the known container types are read: the HTTP clients' header
+    objects, mappings, the standard library's message headers, and lists or
+    tuples of pairs.
+    """
+    pairs: Iterable[object] = ()
+    if isinstance(headers, httpx.Headers | httpx2.Headers):
+        pairs = headers.multi_items()
     elif isinstance(headers, Mapping | Message):
         pairs = headers.items()
-    elif isinstance(headers, list | tuple):
+    elif isinstance(headers, list | tuple) and type(headers) in (list, tuple):
         pairs = headers
-    else:
-        pairs = ()
     for pair in islice(pairs, MAX_ITEMS):
-        if isinstance(pair, list | tuple) and len(pair) == 2:
+        if (
+            isinstance(pair, list | tuple)
+            and type(pair) in (list, tuple)
+            and len(pair) == 2
+        ):
             yield pair[0], pair[1]
 
 
@@ -341,16 +382,16 @@ def headers_skeleton(headers: object) -> str:
     """
     size = _size(headers)
     shown: dict[str, str] = {}
-    others = 0
+    read = 0
     if size <= MAX_ITEMS:
         for name, value in _header_items(headers):
-            printable = safe_header_name(name) if len(shown) < MAX_HEADERS else None
-            if printable is None:
-                others += 1
-            else:
+            read += 1
+            printable = safe_header_name(name)
+            if printable is not None:
                 shown[printable] = header_value(value)
-    else:
-        others = size
+                if len(shown) >= MAX_HEADERS:
+                    break
+    others = max(size, read) - len(shown)
     suffix = f" (+{others} other headers)" if others else ""
     return f"{shown}{suffix}"
 
@@ -396,8 +437,13 @@ def url_skeleton(url: object) -> str:
     Returns:
         str: For example ``https://api.example.test/v1?token=[redacted]&page=2``.
     """
-    text = url if isinstance(url, str) else str(url)
-    if len(text) > MAX_URL:
+    if exact_str(url):
+        text = str(url)
+    elif isinstance(url, httpx.URL | httpx2.URL):
+        text = str(url)
+    else:
+        return WITHHELD
+    if not exact_str(text) or len(text) > MAX_URL:
         return WITHHELD
     try:
         parts = urlsplit(text)
@@ -425,10 +471,10 @@ def method(value: object) -> str:
     Returns:
         str: For example ``POST``.
     """
-    if isinstance(value, bytes):
+    if exact_bytes(value) and len(value) <= 16:
         value = value.decode("latin-1")
-    if isinstance(value, str) and value.upper() in METHODS:
-        return value.upper()
+    if exact_str(value) and len(value) <= 16 and value.upper() in METHODS:
+        return str.upper(value)
     return WITHHELD
 
 
@@ -441,13 +487,14 @@ def number(value: object) -> int | float | None:
     Returns:
         int | float | None: The number.
     """
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return value
-    if isinstance(value, str) and _NUMBER_TEXT_RE.fullmatch(value.strip()):
+    if exact_int(value):
+        return int(value)
+    if exact_float(value):
+        return float(value)
+    if exact_str(value) and len(value) <= 32:
         text = value.strip()
-        return float(text) if "." in text else int(text)
+        if _NUMBER_TEXT_RE.fullmatch(text) and text.isascii():
+            return float(text) if "." in text else int(text)
     return None
 
 
@@ -460,8 +507,8 @@ def status(value: object) -> int | None:
     Returns:
         int | None: A code from 100 to 599.
     """
-    if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
-        return value
+    if exact_int(value) and 100 <= value <= 599:
+        return int(value)
     return None
 
 
@@ -492,8 +539,8 @@ def identifier(value: object, pattern: re.Pattern[str]) -> str:
     Returns:
         str: The text, or ``[withheld]``.
     """
-    if isinstance(value, str) and pattern.fullmatch(value):
-        return value
+    if exact_str(value) and len(value) <= 512 and pattern.fullmatch(value):
+        return str(value)
     return WITHHELD
 
 
@@ -506,11 +553,15 @@ def qualified_name(kind: object) -> str:
     Returns:
         str: For example ``httpx2.ConnectError``, or ``[withheld]``.
     """
-    module = getattr(kind, "__module__", "")
-    name = getattr(kind, "__qualname__", "")
-    if not isinstance(name, str):
+    if not isinstance(kind, type):
         return WITHHELD
-    if isinstance(module, str) and module not in ("builtins", "__main__", ""):
+    module = (
+        kind.__dict__.get("__module__", "") if "__module__" in kind.__dict__ else ""
+    )
+    name = kind.__qualname__
+    if not exact_str(name):
+        return WITHHELD
+    if exact_str(module) and module not in ("builtins", "__main__", ""):
         name = f"{module}.{name}"
     return identifier(name, _IDENTIFIER_RE)
 
@@ -548,8 +599,8 @@ def withheld(value: object) -> str:
     Returns:
         str: For example ``"[withheld bytes (71)]"``.
     """
-    size = ""
-    if isinstance(value, Sized):
-        with contextlib.suppress(Exception):
-            size = f" ({len(value)})"
-    return f"[withheld {type_name(value)}{size}]"
+    kind = type(value)
+    if kind not in _DESCRIBED_TYPES:
+        return "[withheld]"
+    size = f" ({len(value)})" if isinstance(value, Sized) else ""
+    return f"[withheld {kind.__name__}{size}]"

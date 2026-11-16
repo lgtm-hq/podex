@@ -364,11 +364,11 @@ def test_error_reporting_sdk_records_withhold_response_bodies(
     [
         (
             b"<Error><Code>AccessDenied</Code><Message>private text</Message></Error>",
-            "[withheld response body (71 bytes); error code AccessDenied]",
+            "[withheld response body (71 bytes)]",
         ),
         (
             b'{"__type": "com.example#ThrottlingException", "message": "private text"}',
-            "[withheld response body (72 bytes); error code ThrottlingException]",
+            "[withheld response body (72 bytes)]",
         ),
         (
             b"<Code>bad code with spaces</Code> private text",
@@ -377,12 +377,12 @@ def test_error_reporting_sdk_records_withhold_response_bodies(
         (b"", "[withheld response body (0 bytes)]"),
     ],
 )
-def test_storage_response_body_prints_size_and_error_code(
+def test_storage_response_body_prints_its_size_only(
     body: bytes,
     expected: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """The storage response record keeps the error code, never the message."""
+    """The storage response record prints the body's size, nothing from it."""
     with debug_logging(caplog):
         logging.getLogger("botocore.parsers").debug("Response body:\n%r", body)
 

@@ -96,12 +96,10 @@ def test_spotify_debug_lines_mask_credentials(
     basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
     assert_that(discovered).is_not_none()
     assert_that(caplog.text).contains(
-        "Sending POST request to https://accounts.spotify.com/api/token with "
-        "Headers: {} (+1 other headers) and Body: [withheld]",
+        "Sending POST request to https://accounts.spotify.com/api/token\n",
     )
     assert_that(caplog.text).contains(
-        f"Sending GET to https://api.spotify.com/v1/shows/{_SHOW_ID} with Params: "
-        "{'market': '[withheld]'}",
+        f"Sending GET to https://api.spotify.com/v1/shows/{_SHOW_ID}\n",
         "RESULTS: [withheld response body",
     )
     for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN, _PROVIDER_TEXT):
@@ -144,13 +142,10 @@ def test_spotify_failure_lines_mask_credentials(
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert_that(errors).is_length(1)
     assert_that(errors[0].getMessage()).is_equal_to(
-        f"HTTP Error for GET to https://api.spotify.com/v1/shows/{_SHOW_ID} with "
-        "Params: {'market': '[withheld]'} returned 401 due to "
-        "[provider message withheld]",
+        f"HTTP Error for GET to https://api.spotify.com/v1/shows/{_SHOW_ID} "
+        "returned 401 due to [provider message withheld]",
     )
-    assert_that(caplog.text).contains(
-        "Headers: {'content-type': 'application/json'} (+1 other headers)",
-    )
+    assert_that(caplog.text).does_not_contain("Headers:", "Params:")
     for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN, _PROVIDER_TEXT):
         assert_that(_everything(caplog)).does_not_contain(credential)
 
@@ -252,11 +247,9 @@ def test_error_line_for_a_long_query_is_a_skeleton(
 
     errors = [r for r in caplog.records if r.levelno == logging.ERROR]
     assert_that(errors).is_length(1)
-    assert_that(errors[0].getMessage()).starts_with(
-        "HTTP Error for GET to https://api.spotify.com/v1/search with Params: {",
-    )
-    assert_that(errors[0].getMessage()).ends_with(
-        "returned 400 due to [provider message withheld]",
+    assert_that(errors[0].getMessage()).is_equal_to(
+        "HTTP Error for GET to https://api.spotify.com/v1/search returned 400 due to "
+        "[provider message withheld]",
     )
     for value in (_PROVIDER_TEXT, _ACCESS_TOKEN, "qqqq"):
         assert_that(_everything(caplog)).does_not_contain(value)

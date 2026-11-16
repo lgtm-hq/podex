@@ -7,11 +7,11 @@ and ``tests/test_sdk_log_default_deny.py``.
 import logging
 import time
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
 
 import httpx
 import pytest
 from assertpy import assert_that
+from botocore.awsrequest import AWSPreparedRequest
 
 from podex import logging_config, sdk_log_boundary
 from podex.sdk_log_boundary import format_withheld_exception, is_sdk_logger
@@ -232,7 +232,7 @@ def test_headers_skeleton_prints_allowlisted_names_and_counts_the_rest() -> None
         "(+2 other headers)",
     )
     assert_that(headers_skeleton([(b"X-Api-Key", b"k"), ("bad",)])).is_equal_to(
-        "{} (+1 other headers)",
+        "{} (+2 other headers)",
     )
     assert_that(headers_skeleton(42)).is_equal_to("{}")
 
@@ -465,15 +465,6 @@ class _CountingHeaders(Mapping[str, str]):
         return self.size
 
 
-@dataclass
-class _PreparedRequest:
-    """A prepared request as an SDK logs it, with a large header container."""
-
-    headers: _CountingHeaders
-    method: str = "PUT"
-    url: str = "https://storage.example.test/artifacts/k"
-
-
 def test_wide_header_container_is_not_enumerated(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -482,12 +473,18 @@ def test_wide_header_container_is_not_enumerated(
     with debug_logging(caplog):
         logging.getLogger("botocore.endpoint").debug(
             "Sending http request: %s",
-            _PreparedRequest(headers),
+            AWSPreparedRequest(
+                method="PUT",
+                url="https://storage.example.test/artifacts/k",
+                headers=headers,
+                body=None,
+                stream_output=False,
+            ),
         )
 
     assert_that(headers.read).is_equal_to(0)
     assert_that(caplog.records[-1].getMessage()).is_equal_to(
-        "Sending http request: <tests.test_sdk_log_boundary._PreparedRequest "
+        "Sending http request: <botocore.awsrequest.AWSPreparedRequest "
         "method=PUT url=https://storage.example.test/artifacts/k "
         f"headers={{}} (+{_WIDE} other headers)>",
     )

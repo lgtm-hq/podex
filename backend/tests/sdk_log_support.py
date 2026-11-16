@@ -152,3 +152,50 @@ def cached_record_text(exc_text: str, stack_info: str) -> Iterator[None]:
         yield
     finally:
         logging.setLogRecordFactory(previous)
+
+
+class MemoryTransport:
+    """The part of an asyncio transport the server uses; keeps what it writes."""
+
+    def __init__(self) -> None:
+        self.written = bytearray()
+        self.closed = False
+
+    def get_extra_info(self, name: str, default: Any = None) -> Any:
+        """Return fixed local and peer addresses.
+
+        Args:
+            name: The requested transport detail.
+            default: Returned for any other detail.
+
+        Returns:
+            Any: The address, or ``default``.
+        """
+        addresses = {"sockname": ("127.0.0.1", 8000), "peername": ("127.0.0.1", 5000)}
+        return addresses.get(name, default)
+
+    def write(self, data: bytes | bytearray | memoryview) -> None:
+        """Keep the written bytes.
+
+        Args:
+            data: Bytes the server writes.
+        """
+        self.written += data
+
+    def close(self) -> None:
+        """Mark the transport closed."""
+        self.closed = True
+
+    def is_closing(self) -> bool:
+        """Return whether the transport was closed.
+
+        Returns:
+            bool: True after :meth:`close`.
+        """
+        return self.closed
+
+    def pause_reading(self) -> None:
+        """Accept a request to stop reading; nothing is read from a socket."""
+
+    def resume_reading(self) -> None:
+        """Accept a request to resume reading."""
