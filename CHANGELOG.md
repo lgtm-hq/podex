@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.31] - 2026-11-16
+
+### Fixed
+
+- **security**: keep credentials and provider text out of third-party SDK logs (#837)
+  (82d0788)
+
 ## [0.41.30] - 2026-11-16
 
 ### Fixed
