@@ -52,7 +52,9 @@ scope it requested, in the same transaction and before any destructive step:
 - A `content_suppression_versions` counter increases by one in every
   suppression-relevant transaction: takedown execution, media merges and splits,
   and the backfill. Unlike a count or highest id of suppression rows, it never
-  repeats.
+  repeats. Its single row is created with the table (revision `0022`, or the
+  models' `after_create` hook), so a bump only updates it under a row lock and
+  two first bumps queue instead of racing to insert it.
 
 What execution removes, beyond what it removed before this decision:
 
@@ -105,7 +107,9 @@ own alias, so it answers for the outer row whether it is given a literal id, a
   (`GUARDED_MODELS`, one rule per model) and raise `ContentSuppressedError`,
   which names the refused row and why.
   - Inserts, content changes and moves between episodes or media records are
-    checked at the destination and, for moves, at the origin.
+    checked at the destination and, for moves, at the origin. The columns an
+    origin check reads have active history, so their old value is loaded even
+    when the row was expired by a commit.
   - Removing content, detaching provenance and repointing media identity are
     allowed.
 - **Provider calls.** Writers that send episode text to a provider authorise
@@ -123,8 +127,8 @@ above. Writes that skip the flush are forbidden for guarded tables:
 `tests/test_guarded_table_writes.py` parses `backend/src`, `backend/scripts` and
 `backend/alembic` with `ast` and fails on any such write. That covers Core
 `insert`/`update`/`delete` including dialect variants, `Query.update`/`delete`,
-raw SQL and the `bulk_*` methods, and the parse resolves import, model and
-table-name aliases.
+raw SQL and the `bulk_*` methods, and the parse resolves import (including
+relative), model and table-name aliases.
 
 - **Exemptions.** They are listed with a reason: takedown execution (it only
   removes content) and migrations.

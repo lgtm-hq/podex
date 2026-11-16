@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from podex.models import (
     AccountUser,
     ContentSuppressedError,
+    ContentSuppressionVersion,
     Episode,
     Media,
     MediaType,
@@ -27,7 +28,11 @@ from podex.models import (
 )
 from podex.services.account_alerts import create_alert_rule, evaluate_alert_rules
 from podex.services.account_saves import save_media
-from podex.services.content_suppression import count_published_mentions
+from podex.services.content_suppression import (
+    bump_suppression_version,
+    count_published_mentions,
+    suppression_version,
+)
 from podex.services.ops_media_commands import (
     SplitOpsMediaInputData,
     merge_ops_media,
@@ -289,6 +294,20 @@ def test_stats_are_current_after_a_merge_deletes_a_covered_mention(
     db_session.commit()
 
     assert_that(client.get("/api/v2/stats").json()["mentions"]).is_zero()
+
+
+def test_counter_row_exists_before_the_first_bump(db_session: Session) -> None:
+    """The counter row comes with the table, so a bump only updates it.
+
+    Two first bumps on PostgreSQL then queue on the row lock instead of both
+    inserting the row, where one would fail on the primary key.
+    """
+    row = db_session.get(ContentSuppressionVersion, 1)
+
+    assert_that(row).is_not_none()
+    assert_that(suppression_version(db_session)).is_zero()
+    bump_suppression_version(db_session)
+    assert_that(suppression_version(db_session)).is_equal_to(1)
 
 
 def test_stats_version_never_repeats_after_suppressions_are_deleted(

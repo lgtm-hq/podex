@@ -138,7 +138,8 @@ def _previous(row: object, column: str) -> Any:
     """Return a column's value before this flush.
 
     Before the flush a relationship-only change has not reached the column,
-    which then still holds the old value.
+    which then still holds the old value. A column in ``_ORIGIN_COLUMNS`` has
+    active history, so its old value is recorded even when the row was expired.
     """
     history = inspect(row).attrs[column].history
     if history.deleted:
@@ -322,6 +323,26 @@ _RULES: dict[type[Any], tuple[_Rule, _Rule]] = {
 
 GUARDED_MODELS: tuple[type[Any], ...] = tuple(_RULES)
 """Models whose writes are checked against content suppressions."""
+
+_ORIGIN_COLUMNS: dict[type[Any], tuple[str, ...]] = {
+    Mention: ("episode_id", "media_id"),
+    SemanticChunk: ("episode_id",),
+    EpisodeSummary: ("episode_id",),
+    DerivativeGenerationRun: ("episode_id",),
+    GraphTriple: ("provenance_episode_id",),
+    MediaRelation: ("provenance_episode_id",),
+    Transcript: ("episode_id",),
+}
+"""Columns whose value before a change the origin checks read."""
+
+
+def _load_replaced_value(*_event: object) -> None:
+    """Listen to a set only so that SQLAlchemy loads the value it replaces.
+
+    A row is expired after every commit. Assigning an expired column records
+    no old value unless a listener asks for active history, and the origin
+    check would then compare the destination with itself.
+    """
 
 
 def _pending_rows(session: Session) -> Iterator[_Pending]:
@@ -552,3 +573,11 @@ event.listen(Session, "before_flush", lock_before_guarded_writes)
 event.listen(Session, "after_flush", refuse_suppressed_writes)
 event.listen(Session, "do_orm_execute", _forget_bulk_suppression_changes)
 event.listen(Session, "after_transaction_end", _forget_transaction_checks)
+for _model, _columns in _ORIGIN_COLUMNS.items():
+    for _column in _columns:
+        event.listen(
+            getattr(_model, _column),
+            "set",
+            _load_replaced_value,
+            active_history=True,
+        )

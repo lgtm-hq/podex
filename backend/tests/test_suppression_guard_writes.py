@@ -370,24 +370,70 @@ def _no_seed(_world: _World) -> None:
     """Seed nothing before the takedown."""
 
 
-_ALLOWED: dict[str, tuple[Callable[[_World], None], Callable[[_World], None]]] = {
-    "triple-evidence-cleared": (_seed_triple, _clear_triple_evidence),
-    "relation-media-repointed": (_seed_relation, _repoint_relation_media),
-    "transcript-text-cleared": (_no_seed, _clear_transcript_text),
+def _triple_evidence_is_gone(world: _World) -> None:
+    triple = world.db.query(GraphTriple).one()
+    assert_that((triple.evidence_text, triple.provenance_episode_id)).is_equal_to(
+        (None, None),
+    )
+
+
+def _relation_points_at_the_replacement(world: _World) -> None:
+    relation = world.db.query(MediaRelation).one()
+    subject = world.db.get(Media, relation.subject_media_id)
+    assert_that(subject).is_not_none()
+    if subject is None:
+        raise AssertionError(relation.subject_media_id)
+    assert_that((subject.title, relation.relation_key)).is_equal_to(
+        ("Dune (1984)", "re-keyed by a merge"),
+    )
+
+
+def _transcript_text_is_gone(world: _World) -> None:
+    transcript = world.db.query(Transcript).one()
+    assert_that((transcript.episode_id, transcript.cleaned_text)).is_equal_to(
+        (world.suppressed, None),
+    )
+
+
+_WorldStep = Callable[[_World], None]
+_ALLOWED: dict[str, tuple[_WorldStep, _WorldStep, _WorldStep]] = {
+    "triple-evidence-cleared": (
+        _seed_triple,
+        _clear_triple_evidence,
+        _triple_evidence_is_gone,
+    ),
+    "relation-media-repointed": (
+        _seed_relation,
+        _repoint_relation_media,
+        _relation_points_at_the_replacement,
+    ),
+    "transcript-text-cleared": (
+        _no_seed,
+        _clear_transcript_text,
+        _transcript_text_is_gone,
+    ),
 }
 
 
-@pytest.mark.parametrize(("seed", "write"), _ALLOWED.values(), ids=_ALLOWED.keys())
+@pytest.mark.parametrize(
+    ("seed", "write", "stored"),
+    _ALLOWED.values(),
+    ids=_ALLOWED.keys(),
+)
 def test_removing_or_reidentifying_content_is_allowed(
     db_session: Session,
-    seed: Callable[[_World], None],
-    write: Callable[[_World], None],
+    seed: _WorldStep,
+    write: _WorldStep,
+    stored: _WorldStep,
 ) -> None:
-    """Writes that only remove content or re-identify media still commit."""
+    """Writes that only remove content or re-identify media are stored."""
     world = _world(db_session, before_takedown=seed)
 
     write(world)
     db_session.commit()
+
+    db_session.expire_all()
+    stored(world)
 
 
 def test_split_cannot_move_a_hidden_mention(

@@ -17,13 +17,16 @@ from enum import StrEnum, auto
 from sqlalchemy import (
     CheckConstraint,
     ColumnElement,
+    Connection,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     Select,
     String,
+    Table,
     and_,
+    event,
     literal,
     or_,
     select,
@@ -142,6 +145,19 @@ class ContentSuppressionVersion(Base):
 
     id: "Mapped[int]" = mapped_column(primary_key=True)
     version: "Mapped[int]" = mapped_column(Integer, default=0)
+
+
+def _seed_version_row(table: Table, connection: Connection, **_kw: object) -> None:
+    """Insert the single counter row when the table is created from the models.
+
+    Revision ``0022`` seeds it the same way. With the row always present, a
+    bump only updates it under a row lock, so two first bumps cannot race to
+    insert it.
+    """
+    connection.execute(table.insert().values(id=1, version=0))
+
+
+event.listen(ContentSuppressionVersion.__table__, "after_create", _seed_version_row)
 
 
 def suppression_key(

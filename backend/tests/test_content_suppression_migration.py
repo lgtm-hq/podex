@@ -155,6 +155,20 @@ def test_downgrade_drops_the_table_and_upgrade_replays(tmp_path: Path) -> None:
     engine.dispose()
 
 
+def test_counter_row_is_seeded_without_any_takedown(tmp_path: Path) -> None:
+    """An empty database gets the single change-counter row at version 0."""
+    db_url = f"sqlite:///{tmp_path / 'counter.db'}"
+    _migrate(db_url, "head")
+
+    engine = create_engine(db_url)
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text("SELECT id, version FROM content_suppression_versions"),
+        ).all()
+    engine.dispose()
+    assert_that([tuple(row) for row in rows]).is_equal_to([(1, 0)])
+
+
 def test_alert_event_mention_ids_round_trip(tmp_path: Path) -> None:
     """Revision 0023 adds a nullable column and its downgrade removes it."""
     db_url = f"sqlite:///{tmp_path / 'events.db'}"

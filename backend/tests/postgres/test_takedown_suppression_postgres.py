@@ -622,6 +622,25 @@ def test_takedown_gives_up_on_a_busy_lock_with_a_retryable_error(
         approver.close()
 
 
+def test_first_counter_bumps_queue_on_the_counter_row(
+    postgres: PostgresDatabase,
+) -> None:
+    """Two first bumps: the second waits on the seeded row, then both count.
+
+    Without a seeded row both would insert it, and the second would fail on
+    the primary key instead of waiting.
+    """
+    run_overlapping(
+        postgres,
+        first=content_suppression.bump_suppression_version,
+        second=content_suppression.bump_suppression_version,
+        expected=row_lock_wait("content_suppression_versions"),
+    )
+
+    with postgres.sessions() as db:
+        assert_that(content_suppression.suppression_version(db)).is_equal_to(2)
+
+
 def _skip_lock(**_kwargs: object) -> None:
     """Stand in for a production lock and take none."""
 

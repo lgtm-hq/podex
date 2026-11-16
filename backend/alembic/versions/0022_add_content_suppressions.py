@@ -1,8 +1,9 @@
 """Add durable content suppressions and backfill them from executed takedowns.
 
 Creates ``content_suppressions`` and the ``content_suppression_versions``
-change counter, then runs ``podex.suppression_backfill``: each approved
-takedown that already ran gets one row per suppression scope it requested.
+change counter with its single row, then runs ``podex.suppression_backfill``:
+each approved takedown that already ran gets one row per suppression scope it
+requested.
 The backfill only adds missing rows and reports unresolved cases by id; it is
 also an operational command (``python -m podex.suppression_backfill``) to
 re-run after a rolling deploy.
@@ -91,6 +92,12 @@ def upgrade() -> None:
         sa.Column("version", sa.Integer(), nullable=False),
         sa.PrimaryKeyConstraint("id"),
         if_not_exists=True,
+    )
+    # The single counter row; bumps then only update it under a row lock.
+    op.execute(
+        "INSERT INTO content_suppression_versions (id, version) SELECT 1, 0"
+        " WHERE NOT EXISTS"
+        " (SELECT 1 FROM content_suppression_versions WHERE id = 1)",
     )
     if op.get_context().as_sql:
         logger.warning(

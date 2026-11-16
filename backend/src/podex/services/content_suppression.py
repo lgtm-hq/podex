@@ -416,14 +416,20 @@ def bump_suppression_version(db: Session) -> None:
     The row is the last lock a suppression-relevant write takes, after media
     and podcast rows, so it adds no new lock order.
 
+    The row is seeded when the table is created, so this only updates it and
+    concurrent bumps queue on its row lock.
+
     Args:
         db: Session of the transaction that changed suppressed content.
+
+    Raises:
+        LookupError: If the counter row is missing (migrations not applied).
     """
     row = db.get(ContentSuppressionVersion, 1, with_for_update=True)
     if row is None:
-        db.add(ContentSuppressionVersion(id=1, version=1))
-    else:
-        row.version += 1
+        message = "content_suppression_versions has no row; apply the migrations"
+        raise LookupError(message)
+    row.version += 1
     db.flush()
 
 

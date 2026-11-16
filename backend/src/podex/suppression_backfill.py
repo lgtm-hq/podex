@@ -215,14 +215,19 @@ def _insert(
 
 
 def _bump_version(connection: sa.Connection) -> None:
-    """Increase the suppression change counter once for this backfill."""
+    """Increase the suppression change counter once for this backfill.
+
+    Raises:
+        LookupError: If the counter row is missing (revision ``0022`` seeds it).
+    """
     updated = connection.execute(
         _versions.update()
         .where(_versions.c.id == 1)
         .values(version=_versions.c.version + 1),
     )
     if not updated.rowcount:
-        connection.execute(_versions.insert().values(id=1, version=1))
+        message = "content_suppression_versions has no row; apply the migrations"
+        raise LookupError(message)
 
 
 def _case_subjects(

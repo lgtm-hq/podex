@@ -5,7 +5,8 @@ The suppression guard sees ORM flushes. Core ``insert``/``update``/``delete``
 and the ``bulk_*`` session methods skip it, so no module may write a guarded
 table that way. The scan parses each module with ``ast`` and resolves its
 imports, so aliases (``insert as sqlite_insert``, ``Mention as M``, ``import
-sqlalchemy as sa``) are followed, and a table named by string
+sqlalchemy as sa``, ``from ..models import Mention``) are followed, and a
+table named by string
 (``table("mentions")``, ``metadata.tables["mentions"]``) counts as the model.
 
 What it cannot see: a write built dynamically (a model or table chosen at
@@ -76,11 +77,16 @@ def _imports(tree: ast.Module) -> _Module:
                 module.aliases[alias.asname or alias.name.split(".")[0]] = (
                     alias.name if alias.asname else alias.name.split(".")[0]
                 )
-        elif isinstance(node, ast.ImportFrom) and node.module:
+        elif isinstance(node, ast.ImportFrom):
+            # A relative import in the scanned tree can only name a module of
+            # the ``podex`` package, so it resolves under that prefix.
+            package = ".".join(
+                part
+                for part in ("podex" if node.level else "", node.module or "")
+                if part
+            )
             for alias in node.names:
-                module.aliases[alias.asname or alias.name] = (
-                    f"{node.module}.{alias.name}"
-                )
+                module.aliases[alias.asname or alias.name] = f"{package}.{alias.name}"
     return module
 
 
@@ -252,6 +258,14 @@ _BYPASSES = {
         "db.execute(sa.table('mentions', sa.column('id')).insert())"
     ),
     "metadata-table": "db.execute(Base.metadata.tables['transcripts'].update())",
+    "relative-model": (
+        "from ..models import Mention\n"
+        "db.execute(insert(Mention).values(context='x'))"
+    ),
+    "relative-package": (
+        "from .. import models\n"
+        "db.execute(insert(models.EpisodeSummary).values(summary_text='x'))"
+    ),
 }
 
 

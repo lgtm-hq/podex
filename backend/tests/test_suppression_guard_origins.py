@@ -66,8 +66,43 @@ def test_hidden_mention_cannot_move_to_another_episode(db_session: Session) -> N
     db_session.rollback()
 
 
+@pytest.mark.parametrize("column", ["episode_id", "media_id"])
+def test_expired_hidden_mention_cannot_move_out_of_its_pair(
+    db_session: Session,
+    column: str,
+) -> None:
+    """An expired row's old ids are loaded, so the origin is still checked.
+
+    After a commit every loaded row is expired. Assigning a column then
+    records no old value unless the mapping asks for it, and the origin check
+    would compare the destination with itself.
+    """
+    graph = seed_catalog_graph(db_session)
+    open_episode = _open_episode(db_session, graph.podcast_id)
+    other_media = Media(type=MediaType.BOOK, title="Open work")
+    db_session.add(other_media)
+    db_session.commit()
+    destination = {"episode_id": open_episode, "media_id": other_media.id}[column]
+    take_down_mention(db_session, graph.mention_id)
+    db_session.execute(
+        insert(Mention).values(episode_id=graph.episode_id, media_id=graph.media_id),
+    )
+    db_session.commit()
+    hidden = db_session.query(Mention).one()
+    db_session.expire(hidden)
+
+    setattr(hidden, column, destination)
+    with pytest.raises(
+        ContentSuppressedError, match="moved out of its suppressed pair"
+    ):
+        db_session.commit()
+    db_session.rollback()
+
+
+@pytest.mark.parametrize("expired", [False, True], ids=["loaded", "expired"])
 def test_derivative_row_cannot_move_out_of_a_suppressed_episode(
     db_session: Session,
+    expired: bool,
 ) -> None:
     """An episode summary of a suppressed episode cannot be re-attributed."""
     graph = seed_catalog_graph(db_session)
@@ -83,6 +118,8 @@ def test_derivative_row_cannot_move_out_of_a_suppressed_episode(
     )
     db_session.commit()
     summary = db_session.query(EpisodeSummary).one()
+    if expired:
+        db_session.expire(summary)
 
     summary.episode_id = open_episode
     with pytest.raises(ContentSuppressedError, match="moved out of the episode"):
