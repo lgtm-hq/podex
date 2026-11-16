@@ -10,13 +10,18 @@ name: Security - OSV Audit
     branches: [main]
   schedule:
     # Weekly on Monday at 05:30 UTC
-    - cron: '30 5 * * 1'
+    - cron: "30 5 * * 1"
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: security-audit-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    security-audit-${{ github.ref }}${{ github.event_name == 'push' &&
+    github.ref == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -25,7 +30,7 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-security-audit.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      job-name: '🔐 Security Audit'
+      job-name: "🔐 Security Audit"
       # yamllint disable-line rule:line-length
       lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.34@sha256:9f771871ace55abebc495e7c50716b59b91aa42a45fb47f9bf71be46547daded
       upload-comment-artifact: ${{ github.event_name == 'pull_request' }}
@@ -40,10 +45,8 @@ jobs:
   publish-security-audit-comment:
     needs: security-audit
     if: >-
-      !cancelled()
-      && github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && (
+      !cancelled() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository && (
         github.event.pull_request.draft == false
         || github.event.action == 'ready_for_review'
       )

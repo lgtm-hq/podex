@@ -8,25 +8,31 @@ name: Security - SBOM Generation
 "on":
   push:
     branches: [main]
-    tags: ['v*.*.*']
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
 permissions: {}
 
 concurrency:
-  group: sbom-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run, tag pushes included, keeps the group
+  # without the suffix.
+  group: >-
+    sbom-${{ github.ref }}${{ github.event_name == 'push' && github.ref ==
+    'refs/heads/main' && format('-{0}', github.sha) || '' }}
   # Never cancel main/tag runs: a cancelled tag run leaves the release
   # without its SBOM asset.
   cancel-in-progress: >-
-    ${{ github.ref != 'refs/heads/main'
-    && !startsWith(github.ref, 'refs/tags/v') }}
+    ${{ github.ref != 'refs/heads/main' && !startsWith(github.ref,
+    'refs/tags/v') }}
 
 jobs:
   sbom:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-sbom.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      job-name: '📋 SBOM & Supply Chain'
+      job-name: "📋 SBOM & Supply Chain"
       target: .
       target-type: dir
       sbom-format: cyclonedx-json

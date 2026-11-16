@@ -19,7 +19,8 @@ the changelog record _what_ changed.
 | [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |
 | [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | proposed | 2026-11-16 |
 | [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | proposed | 2026-11-16 |
-| [0012](./0012-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
+| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | proposed | 2026-11-16 |
+| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
 
 ## Format
 
