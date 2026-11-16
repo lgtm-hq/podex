@@ -262,12 +262,13 @@ class _FailingClient:
 
 def _lock_error(secret: str) -> Exception:
     """A Redis error that is also a ValueError."""
-    return redis.exceptions.LockError(f"lock {secret} not owned")
+    error: Exception = redis.exceptions.LockError(f"lock {secret} not owned")
+    return error
 
 
 def _connection_error_without_errno(secret: str) -> Exception:
     """A connection error whose operating-system cause has no ``errno``."""
-    error = redis.ConnectionError(f"Error connecting to {secret}")
+    error: Exception = redis.ConnectionError(f"Error connecting to {secret}")
     error.__cause__ = OSError(f"AF_UNIX path too long: {secret}")
     return error
 
