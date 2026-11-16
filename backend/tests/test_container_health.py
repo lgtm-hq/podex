@@ -1,7 +1,6 @@
 """Exercise the container probe's role decision and API liveness check."""
 
 import runpy
-import time
 from http.client import HTTPConnection, HTTPException
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -10,6 +9,7 @@ import pytest
 from assertpy import assert_that
 
 from scripts import healthcheck
+from tests.timing_support import assert_fast
 
 MODULE = "podex.scheduler_runner"
 SCHEDULER = ["python", "-m", MODULE]
@@ -71,6 +71,20 @@ def _assert_api(pid1: bytes, root: Path, http: MagicMock) -> None:
     assert_that(healthcheck.detected_role(proc)).is_equal_to(healthcheck.Role.API)
     assert_that(healthcheck.is_healthy(proc_root=proc, environ={})).is_false()
     assert_that(http.call_count).is_equal_to(1)
+
+
+def _assert_api_quickly(pid1: bytes, root: Path, http: MagicMock) -> None:
+    """PID 1 decides the API role about as quickly as an ordinary API command."""
+    ordinary, probed = root / "ordinary", root / "probed"
+    ordinary.mkdir()
+    probed.mkdir()
+    _process_table(ordinary, {1: _cmdline(API)})
+    _assert_api(pid1, probed, http)
+    assert_fast(
+        lambda: healthcheck.detected_role(probed),
+        baseline=lambda: healthcheck.detected_role(ordinary),
+        limit=1.0,
+    )
 
 
 SCHEDULER_FORMS = {
@@ -275,20 +289,14 @@ def test_other_scheduler_processes_do_not_exempt_api(
 
 def test_many_launchers_are_bounded(tmp_path: Path, http: MagicMock) -> None:
     """Thousands of nested ``env`` launchers neither recurse nor exempt."""
-    pid1 = _cmdline(["env"] * 1100 + SCHEDULER)
-    started = time.perf_counter()
-
-    _assert_api(pid1, tmp_path, http)
-    assert_that(time.perf_counter() - started).is_less_than(1.0)
+    _assert_api_quickly(_cmdline(["env"] * 1100 + SCHEDULER), tmp_path, http)
 
 
 def test_huge_command_line_is_bounded(tmp_path: Path, http: MagicMock) -> None:
     """A very long command line is not parsed and keeps the HTTP check."""
-    pid1 = _cmdline(["env"] + ["-i"] * 100_000 + SCHEDULER)
-    started = time.perf_counter()
-
-    _assert_api(pid1, tmp_path, http)
-    assert_that(time.perf_counter() - started).is_less_than(1.0)
+    _assert_api_quickly(
+        _cmdline(["env"] + ["-i"] * 100_000 + SCHEDULER), tmp_path, http
+    )
 
 
 def test_limits_bound_the_supported_forms(tmp_path: Path, http: MagicMock) -> None:

@@ -10,7 +10,6 @@ exact record form a library logs is used.
 import asyncio
 import base64
 import logging
-import time
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -24,6 +23,7 @@ from uvicorn.server import ServerState
 
 from tests.sdk_log_support import (
     MemoryTransport,
+    assert_quick_record,
     debug_logging,
     logged,
     synthetic_secret,
@@ -164,13 +164,9 @@ def test_preformatted_lines_are_bounded_on_adversarial_input(
     line = head + (" returned 200 due to a" * (_MEGABYTE // 21))
     log = logging.getLogger(logger_name)
     with debug_logging(caplog):
-        log.debug(line)
-        started = time.perf_counter()
-        log.debug(line)
-        elapsed = time.perf_counter() - started
+        assert_quick_record(log, logging.DEBUG, line)
 
     message = caplog.records[-1].getMessage()
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(len(message)).is_less_than(512)
     assert_that(message).does_not_contain("due to a")
 
@@ -183,12 +179,8 @@ def test_spotify_request_line_near_the_old_parse_bound_is_quick(
     line += " Headers: {}" * ((64_847 - len(line)) // 12)
     log = logging.getLogger("spotipy.client")
     with debug_logging(caplog):
-        log.debug(line)
-        started = time.perf_counter()
-        log.debug(line)
-        elapsed = time.perf_counter() - started
+        assert_quick_record(log, logging.DEBUG, line)
 
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(caplog.records[-1].getMessage()).starts_with(_WITHHELD)
 
 
@@ -338,12 +330,8 @@ def test_shape_is_checked_before_any_work(
     """Wrong arity, wrong types and huge mappings cost almost nothing."""
     log = logging.getLogger(logger_name)
     with debug_logging(caplog):
-        log.debug(message, *arguments)
-        started = time.perf_counter()
-        log.debug(message, *arguments)
-        elapsed = time.perf_counter() - started
+        assert_quick_record(log, logging.DEBUG, message, *arguments)
 
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(len(caplog.records[-1].getMessage())).is_less_than(2_000)
 
 

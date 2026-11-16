@@ -14,6 +14,7 @@ from podex.logging_config import (
     install_log_boundaries,
     redact_secret_values,
 )
+from tests.timing_support import assert_fast
 
 CREDENTIAL_QUERY_KEYS = (
     "token",
@@ -91,6 +92,35 @@ def log_sdk_request(secret: str) -> None:
         "HTTP/1.1",
         200,
         "OK",
+    )
+
+
+RECORD_LIMIT_SECONDS = 0.05
+"""Longest a bounded record may take to log, on its fastest run."""
+
+
+def assert_quick_record(
+    logger: logging.Logger,
+    level: int,
+    message: str,
+    *arguments: object,
+) -> None:
+    """Assert that logging one record costs about as much as an ordinary one.
+
+    The record is logged several times (see :func:`assert_fast`); its fastest
+    run must stay under :data:`RECORD_LIMIT_SECONDS` and within a fixed
+    multiple of an ordinary record logged by the same logger at ``level``.
+
+    Args:
+        logger: The library logger the record is sent to.
+        level: The record's level.
+        message: The record's message or format string.
+        *arguments: The record's arguments.
+    """
+    assert_fast(
+        lambda: logger.log(level, message, *arguments),
+        baseline=lambda: logger.log(level, "ordinary record %s", "value"),
+        limit=RECORD_LIMIT_SECONDS,
     )
 
 

@@ -506,12 +506,14 @@ def test_academic_fanout_drops_slow_provider() -> None:
         metadata={"title": "Sleep study"},
         confidence=0.95,
     )
+    # The deadline leaves the instant provider half a second to be scheduled
+    # on a busy machine, and ends well before the slow provider can finish.
     enricher = _academic_with(
         {
             EnrichmentSource.CROSSREF: _StubProvider(fast),
-            EnrichmentSource.SEMANTIC_SCHOLAR: _SlowProvider(slow, delay=1.0),
+            EnrichmentSource.SEMANTIC_SCHOLAR: _SlowProvider(slow, delay=2.0),
         },
-        aggregate_timeout_seconds=0.1,
+        aggregate_timeout_seconds=0.5,
     )
 
     result = enricher.enrich_with_verification(

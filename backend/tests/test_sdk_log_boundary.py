@@ -5,7 +5,6 @@ and ``tests/test_sdk_log_default_deny.py``.
 """
 
 import logging
-import time
 from collections.abc import Iterator, Mapping
 
 import httpx
@@ -25,6 +24,7 @@ from tests import boundary_sdk_config_process
 from tests.process_support import run_in_fresh_process
 from tests.sdk_log_support import (
     SDK_REQUEST_LINE,
+    assert_quick_record,
     cached_record_text,
     debug_logging,
     logged,
@@ -431,17 +431,9 @@ def test_wide_records_are_cleaned_in_bounded_time(
 ) -> None:
     """Strings and containers are read up to a bound, never in full."""
     sdk = logging.getLogger("botocore.endpoint")
-
-    def log() -> None:
-        sdk.log(level, message, argument)
-
     with debug_logging(caplog):
-        log()
-        started = time.perf_counter()
-        log()
-        elapsed = time.perf_counter() - started
+        assert_quick_record(sdk, level, message, argument)
 
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(len(caplog.records[-1].getMessage())).is_less_than(20_000)
 
 
@@ -497,13 +489,9 @@ def test_many_long_allowlisted_headers_are_bounded(
     headers = {f"x-ratelimit-limit-{index}": "v" * 8_192 for index in range(1_000)}
     sdk = logging.getLogger("botocore.parsers")
     with debug_logging(caplog):
-        sdk.debug("Response headers: %r", headers)
-        started = time.perf_counter()
-        sdk.debug("Response headers: %r", headers)
-        elapsed = time.perf_counter() - started
+        assert_quick_record(sdk, logging.DEBUG, "Response headers: %r", headers)
 
     message = caplog.records[-1].getMessage()
-    assert_that(elapsed).is_less_than(0.05)
     assert_that(len(message)).is_less_than(2_000)
     assert_that(message).ends_with("(+984 other headers)")
     assert_that(message).does_not_contain("v" * 200)
