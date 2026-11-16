@@ -2,6 +2,7 @@
 
 import asyncio
 import gzip
+import ssl
 from datetime import UTC, datetime
 
 import httpx
@@ -14,6 +15,7 @@ from podex.models import IngestionRun, Podcast, ScheduledWorkItemModel
 from podex.services.discovery import DiscoveryResult
 from podex.services.discovery_orchestrator import DiscoveryOrchestrator
 from podex.services.discovery_rss import RSSDiscovery
+from podex.services.failure_descriptors import describe_failure
 from podex.services.feed_http import FeedHttpClient
 from podex.services.recurring_discovery import (
     plan_recurring_discovery_work,
@@ -42,8 +44,18 @@ def _fetcher(kind: str) -> FeedHttpClient:
         """Serve controlled HTTP failures, redirects and malformed bodies."""
         if kind == "timeout":
             raise httpx.ReadTimeout(_PRIVATE_VALUE, request=request)
-        if kind == "connection_failed":
-            raise httpx.ConnectError(_PRIVATE_VALUE, request=request)
+        if kind in {"connection_failed", "connect_timeout", "tls_failed"}:
+            failure: Exception = (
+                httpx.ConnectTimeout(_PRIVATE_VALUE, request=request)
+                if kind == "connect_timeout"
+                else httpx.ConnectError(_PRIVATE_VALUE, request=request)
+            )
+            failure.__cause__ = (
+                ExceptionGroup("fixture", [ssl.SSLError(_PRIVATE_VALUE)])
+                if kind == "tls_failed"
+                else ConnectionRefusedError(_PRIVATE_VALUE)
+            )
+            raise failure
         if kind == "request_failed":
             raise httpx.RemoteProtocolError(_PRIVATE_VALUE, request=request)
         if kind.startswith("http_"):
@@ -101,6 +113,8 @@ def _fetcher(kind: str) -> FeedHttpClient:
         "total_deadline",
         "timeout",
         "connection_failed",
+        "connect_timeout",
+        "tls_failed",
         "request_failed",
         "response_too_large",
         "decompressed_response_too_large",
@@ -161,3 +175,54 @@ def test_rss_failures_keep_reason_and_status_in_storage_and_logs(
         db_session.query(ScheduledWorkItemModel).one().error_message
     ).is_equal_to(expected)
     assert_that(caplog.text).contains(expected).does_not_contain(_PRIVATE_VALUE)
+
+
+@pytest.mark.parametrize(
+    "failures, expected",
+    [
+        (("timeout", "refused"), "connection_failed"),
+        (("refused", "timeout"), "connect_timeout"),
+        (("tls", "timeout"), "connect_timeout"),
+        (("timeout", "tls"), "tls_failed"),
+    ],
+)
+def test_last_connect_failure_kind_wins_after_all_addresses_are_tried(
+    failures: tuple[str, str],
+    expected: str,
+) -> None:
+    """Keep address retries while classifying only their final failure."""
+    attempts: list[str] = []
+
+    async def resolve(_host: str, _port: int) -> list[str]:
+        """Supply two public addresses without DNS traffic."""
+        return ["8.8.8.8", "1.1.1.1"]
+
+    def fail(request: httpx.Request) -> httpx.Response:
+        """Vary the failure kind between the two connection attempts."""
+        kind = failures[len(attempts)]
+        attempts.append(request.url.host)
+        error: Exception = (
+            httpx.ConnectTimeout(_PRIVATE_VALUE, request=request)
+            if kind == "timeout"
+            else httpx.ConnectError(_PRIVATE_VALUE, request=request)
+        )
+        if kind == "tls":
+            error.__cause__ = ssl.SSLError(_PRIVATE_VALUE)
+        raise error
+
+    client = FeedHttpClient(resolver=resolve, transport=httpx.MockTransport(fail))
+    with pytest.raises(ValueError) as caught:
+        client.fetch("https://example.test/feed")
+    assert_that(attempts).is_equal_to(["8.8.8.8", "1.1.1.1"])
+    assert_that(describe_failure("rss", caught.value)).is_equal_to(
+        f"rss: FeedFetchError; {expected}",
+    )
+
+
+def test_read_timeout_message_does_not_claim_a_connect_failure() -> None:
+    """The outer timeout branch describes read/write/pool errors only."""
+    with pytest.raises(ValueError) as caught:
+        _fetcher("timeout").fetch("https://example.test/feed")
+    assert_that(str(caught.value)).is_equal_to(
+        "Feed read/write/pool timeout; check feed availability",
+    )

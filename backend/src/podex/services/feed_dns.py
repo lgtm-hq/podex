@@ -8,7 +8,11 @@ from concurrent.futures import Future
 from queue import Full, Queue
 from threading import Thread
 
-from podex.services.failure_codes import FailureReason
+from podex.services.failure_codes import (
+    FailureReason,
+    FailureReduction,
+    rebuild_failure,
+)
 
 # libc resolution cannot be cancelled. Bound abandoned work independently of
 # scheduler concurrency and never wait for these daemon threads at loop shutdown.
@@ -26,6 +30,10 @@ class FeedDnsError(OSError):
     def __init__(self, message: str, *, reason: FailureReason) -> None:
         super().__init__(message)
         self.failure_reason = reason
+
+    def __reduce__(self) -> FailureReduction:
+        """Preserve metadata when the exception is copied or transferred."""
+        return rebuild_failure, (type(self), self.args), self.__dict__
 
 
 async def resolve_feed_host(host: str, port: int) -> list[str]:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import ipaddress
+import ssl
 import zlib
 from collections.abc import Awaitable, Callable
 from typing import Protocol
@@ -12,7 +13,12 @@ from typing import Protocol
 import httpx
 
 from podex.config import FeedHttpSettings, get_settings
-from podex.services.failure_codes import FailureReason
+from podex.database_errors import exception_tree
+from podex.services.failure_codes import (
+    FailureReason,
+    FailureReduction,
+    rebuild_failure,
+)
 from podex.services.feed_dns import FeedDnsError, resolve_feed_host
 from podex.services.feed_response import FeedResponse
 
@@ -54,6 +60,10 @@ class FeedFetchError(ValueError):
         super().__init__(message)
         self.failure_reason = reason
         self.status_code = status_code
+
+    def __reduce__(self) -> FailureReduction:
+        """Preserve metadata when the exception is copied or transferred."""
+        return rebuild_failure, (type(self), self.args), self.__dict__
 
 
 class FeedFetcher(Protocol):
@@ -206,7 +216,7 @@ class FeedHttpClient:
             )
         except httpx.TimeoutException:
             failure = FeedFetchError(
-                "Feed connect/read timeout; check feed availability",
+                "Feed read/write/pool timeout; check feed availability",
                 reason=FailureReason.TIMEOUT,
             )
         except FeedDnsError as error:
@@ -264,6 +274,7 @@ class FeedHttpClient:
             self.settings.read_timeout_seconds,
             connect=self.settings.connect_timeout_seconds,
         )
+        last_reason = FailureReason.CONNECTION_FAILED
         for address in addresses:
             # Pin the connector while retaining Host and TLS verification identity.
             # Direct transport use also avoids HTTPX's URL-bearing INFO log.
@@ -281,11 +292,18 @@ class FeedHttpClient:
             )
             try:
                 return await transport.handle_async_request(request)
-            except (httpx.ConnectError, httpx.ConnectTimeout):
-                continue
+            except (httpx.ConnectError, httpx.ConnectTimeout) as error:
+                if isinstance(error, httpx.ConnectTimeout):
+                    last_reason = FailureReason.CONNECT_TIMEOUT
+                elif any(
+                    isinstance(link, ssl.SSLError) for link in exception_tree(error)
+                ):
+                    last_reason = FailureReason.TLS_FAILED
+                else:
+                    last_reason = FailureReason.CONNECTION_FAILED
         raise FeedFetchError(
             "Feed connection failed; check feed availability",
-            reason=FailureReason.CONNECTION_FAILED,
+            reason=last_reason,
         )
 
     def _redirect(self, url: httpx.URL, response: httpx.Response) -> httpx.URL:

@@ -456,7 +456,7 @@ def test_transport_failures_are_retried_then_reported(
     failure: Handler,
     sleeps: list[float],
 ) -> None:
-    """Transport failures retain their exact SDK timeout or connection class."""
+    """Transport failures produce an SDK timeout or connection descriptor."""
     provider = _Provider(failure)
 
     errors = run_service(_client(provider))

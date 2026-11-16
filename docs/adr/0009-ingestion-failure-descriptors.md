@@ -25,8 +25,12 @@ messages, URLs, headers, parameters or response bodies. Reuse the existing
 database descriptor and bounded exception-tree helpers. Before storing runner
 results, accept only the rendered descriptor grammar; replace other text with
 `discovery: unclassified_failure`. Each descriptor is at most 384 characters.
-The runner-exception path uses the same validation. Keep the existing string and
-null API shape and document the new meaning in OpenAPI.
+The runner-exception path uses the same validation. Exception traversal selects
+its first explicit reason, with class, status and reason from that same node.
+Without an explicit reason, the first node with protocol metadata is used.
+Unreadable diagnostic properties are omitted; diagnostic rendering never raises.
+Keep the existing string and null API shape and document the new meaning in
+OpenAPI.
 
 Pass exception objects to logging. Database-only diagnostic trees go through the
 existing sanitising boundary. Other failures use its existing stand-in helper to
@@ -35,12 +39,12 @@ unsafe messages, notes and chains. Arbitrary HTTP error text has no global log
 scrubber, so retaining its full message would violate this boundary. External
 exceptions are neither mutated nor re-raised. Feed fetching supplies a closed
 `FailureReason` enum at every error boundary, plus the HTTP status when present.
-This preserves DNS, deadline, size, redirect, encoding and HTTP failure kinds
-without inspecting fixed or arbitrary messages. Provider logs also retain fixed
-operation names, caller-supplied identifiers and page numbers. Embedding
-failures use the same persistence boundary, including fixed validation-shape
-reasons. Retry policy, recorded failure cases and scheduler transaction
-boundaries stay unchanged.
+This preserves DNS, connection, deadline, size, redirect, encoding and HTTP
+failure kinds without inspecting fixed or arbitrary messages. Provider logs also
+retain fixed operation names, caller-supplied identifiers and page numbers.
+Embedding failures use the same persistence boundary, including fixed
+validation-shape reasons. Retry policy, recorded failure cases and scheduler
+transaction boundaries stay unchanged.
 
 Leave historical rows unchanged. Their original failure kinds cannot reliably be
 reconstructed from free text, and a destructive rewrite would erase diagnostic
@@ -63,3 +67,35 @@ messages and generated response snippets are unavailable as failure diagnostics.
 Custom discovery runners must return descriptors or receive the fixed fallback.
 Changing this storage contract requires updating this decision and its tests.
 There is no migration, and rollback is a code revert.
+
+The class-name slot accepts any identifier of up to 64 characters. These are
+allowlisted shapes, not a closed list of class identities and not secret-value
+redaction. An unknown secret matching an accepted name or identifier shape is
+not detectable by this boundary. Legacy `embedding_error` rows are not
+rewritten. Invalid XML retains the existing RSS parse behavior: warnings and
+empty results when no entries are usable, without recording a new ingestion
+failure.
+
+Log context is limited to three values. Each is an identifier/slug matching
+`[A-Za-z0-9][A-Za-z0-9_-]*`, truncated to 64 characters, or a fixed
+invalid-context placeholder. Operation labels and page counters are
+application-owned. Podscripts slugs and direct Spotify show ids are
+caller/catalog inputs; ids returned by Spotify search receive the same
+validation before subsequent show-fetch logs. Logged exception modules and
+qualified names must also match bounded Python-name shapes. Invalid namespaces
+use a fixed exception identity. Empty context adds no prefix to the log line.
+
+Connection attempts still try the same addresses in order. Only the last failed
+attempt determines the stored reason, by exception type rather than message:
+
+| Last failure kind                                  | Example descriptor                       |
+| -------------------------------------------------- | ---------------------------------------- |
+| Connect timeout                                    | `rss: FeedFetchError; connect_timeout`   |
+| Exception tree contains `ssl.SSLError`             | `rss: FeedFetchError; tls_failed`        |
+| Refused connection or other connect error          | `rss: FeedFetchError; connection_failed` |
+| Read/write/pool timeout outside connection retries | `rss: FeedFetchError; timeout`           |
+
+`FeedFetchError`, `FeedDnsError` and `PipelineFailure` preserve their arguments,
+reason, status where present, notes and instance state through pickle, shallow
+copy and deep copy. Reconstruction restores state without calling their
+keyword-only metadata constructors.

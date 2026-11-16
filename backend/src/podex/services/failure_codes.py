@@ -1,6 +1,8 @@
 """Closed, code-owned reasons for ingestion and extraction diagnostics."""
 
+from collections.abc import Callable
 from enum import StrEnum, auto
+from typing import TypeVar
 
 
 class FailureReason(StrEnum):
@@ -28,6 +30,8 @@ class FailureReason(StrEnum):
     TOTAL_DEADLINE = auto()
     TIMEOUT = auto()
     CONNECTION_FAILED = auto()
+    CONNECT_TIMEOUT = auto()
+    TLS_FAILED = auto()
     REDIRECT_MISSING_LOCATION = auto()
     REDIRECT_INVALID_URL = auto()
     REDIRECT_DOWNGRADE = auto()
@@ -38,6 +42,25 @@ class FailureReason(StrEnum):
     DECOMPRESSED_RESPONSE_TOO_LARGE = auto()
     INVALID_GZIP = auto()
     INCOMPLETE_GZIP = auto()
+
+
+FailureReduction = tuple[
+    Callable[..., BaseException],
+    tuple[object, ...],
+    dict[str, object],
+]
+FailureT = TypeVar("FailureT", bound=BaseException)
+
+
+def rebuild_failure(kind: type[FailureT], arguments: tuple[object, ...]) -> FailureT:
+    """Rebuild an exception without requiring keyword-only metadata at init.
+
+    Pickle and copy restore the instance dictionary after this allocation,
+    preserving reason, status, notes and additional state.
+    """
+    restored: FailureT = kind.__new__(kind, *arguments)
+    BaseException.__init__(restored, *arguments)
+    return restored
 
 
 class PipelineFailure(ValueError):
@@ -56,3 +79,7 @@ class PipelineFailure(ValueError):
     ) -> None:
         super().__init__(message)
         self.failure_reason = reason
+
+    def __reduce__(self) -> FailureReduction:
+        """Preserve metadata when the exception is copied or transferred."""
+        return rebuild_failure, (type(self), self.args), self.__dict__
