@@ -4,11 +4,35 @@ Implements the subset of the expression language that workflow concurrency
 blocks use, with GitHub's semantics: literals (strings, numbers, true, false,
 null), context property access, ``!``, ``==``, ``!=``, ``&&``, ``||``,
 parentheses and the functions ``format``, ``startsWith``, ``endsWith`` and
-``contains``. ``&&`` and ``||`` return an operand, not a boolean, string
-comparison ignores case, operands of different types compare as numbers, and
-a missing property is null, which renders as an empty string. Anything outside
-the subset is an error, so an unsupported construct fails the test instead of
-being guessed at.
+``contains``. The rule throughout: anything the helper does not model is an
+error, so it fails the test instead of producing a value.
+
+An expression is parsed in full before it is evaluated: syntax, unknown
+functions, wrong argument counts and unknown contexts are errors even in an
+operand that is never evaluated. ``&&`` and ``||`` short-circuit and return an
+operand, not a boolean: ``a && b`` is ``a`` when ``a`` is falsy and otherwise
+``b``; ``a || b`` is ``a`` when ``a`` is truthy and otherwise ``b``. The falsy
+values are ``false``, ``0``, ``NaN``, ``''`` and ``null``.
+
+Context and property names match ignoring case. A property that the given
+context does not define is an error naming it, raised when that operand is
+evaluated (GitHub reads properties at run time). It is null only when its
+parent is null or not an object, or when the context sets it to null.
+
+String comparison (``==``, ``startsWith``, ...) ignores ASCII case; where only
+non-ASCII case mapping would decide the result, it is an error. Operands of
+different types compare as numbers: null is 0, booleans are 1 and 0, a string
+is its JSON number (after trimming whitespace; empty is 0) or NaN, an object
+or array is NaN, and NaN equals nothing.
+
+Errors, because GitHub's result is not modelled or its documentation and
+runner disagree: strings the runner reads as numbers beyond the JSON format
+(``'+1'``, ``'.5'``, ``'007'``, ``'0x10'``, ``'0o7'``, ``'Infinity'``) compared
+with a non-string; a numeric literal with leading zeros; a number rendered as
+a string unless it is an integer below 1e15 in magnitude (GitHub uses .NET's
+``G15`` format); an object or array used as a string (GitHub renders
+``Object`` or ``Array``); a ``format`` string with a brace that is not part of
+``{{``, ``}}`` or ``{N}``; ``format`` without a replacement argument.
 
 Usage:
     github_expression.py render TEMPLATE CONTEXT_JSON
@@ -19,6 +43,10 @@ Usage:
 boolean, such as ``cancel-in-progress``: a single expression, or the literal
 ``true`` or ``false``. CONTEXT_JSON maps context names (``github``,
 ``inputs``, ...) to their values.
+
+Exit status: 0 with the result on stdout; 3 with ``expression error: ...`` on
+stderr for input outside the model; 2 for a usage error. Any other status is
+a crash of the helper itself.
 """
 
 from __future__ import annotations
@@ -27,22 +55,34 @@ import json
 import math
 import re
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 Value = str | float | bool | None | dict[str, object] | list[object]
+Thunk = Callable[[], Value]
+
+EXIT_EXPRESSION_ERROR = 3
+EXIT_USAGE = 2
 
 _TOKEN_RE = re.compile(
     r"""
     \s*(?:
       (?P<string>'(?:[^']|'')*')
-    | (?P<number>\d+(?:\.\d+)?)
+    | (?P<number>[0-9]+(?:\.[0-9]+)?)
     | (?P<name>[A-Za-z_][A-Za-z0-9_-]*)
     | (?P<op>==|!=|&&|\|\||[!().,])
     )
     """,
     re.VERBOSE,
 )
-_FORMAT_RE = re.compile(r"\{\{|\}\}|\{(\d+)\}")
+_FORMAT_INDEX_RE = re.compile(r"\{(0|[1-9][0-9]*)\}")
+_JSON_NUMBER_RE = re.compile(r"-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?")
+# Read as numbers by the runner but not by the documented JSON number format.
+_UNDOCUMENTED_NUMBER_RE = re.compile(
+    r"[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?|0x[0-9a-fA-F]+|0o[0-7]+"
+    r"|[+-]?(?i:infinity)",
+)
+# Integers below this magnitude render the same in Python and in .NET's G15.
+_PLAIN_INTEGER_LIMIT = 1e15
 _KEYWORDS: dict[str, Value] = {"true": True, "false": False, "null": None}
 
 
@@ -58,9 +98,38 @@ def _tokenize(text: str) -> list[tuple[str, str]]:
         match = _TOKEN_RE.match(text, position)
         if match is None or match.lastgroup is None:
             raise ExpressionError(f"unsupported syntax at: {text[position:]!r}")
-        tokens.append((match.lastgroup, match.group(match.lastgroup)))
+        kind, token = match.lastgroup, match.group(match.lastgroup)
+        if kind == "number" and len(token.split(".")[0]) > 1 and token[0] == "0":
+            raise ExpressionError(f"numeric literal with leading zeros: {token}")
+        tokens.append((kind, token))
         position = match.end()
     return tokens
+
+
+def _ascii_upper(text: str) -> str:
+    return "".join(c.upper() if c.isascii() else c for c in text)
+
+
+def _simple_upper(text: str) -> str:
+    """Uppercase each character by its single-character (simple) mapping."""
+
+    def one(c: str) -> str:
+        for mapped in (c.upper(), c.title()):
+            if len(mapped) == 1:
+                return mapped
+        return c
+
+    return "".join(one(c) for c in text)
+
+
+def _ignore_case(test: Callable[[str, str], bool], left: str, right: str) -> bool:
+    """Apply TEST ignoring ASCII case; non-ASCII case must not decide it."""
+    result = test(_ascii_upper(left), _ascii_upper(right))
+    if result != test(_simple_upper(left), _simple_upper(right)):
+        raise ExpressionError(
+            f"non-ASCII case decides comparing {left!r} with {right!r}",
+        )
+    return result
 
 
 def _to_number(value: Value) -> float:
@@ -70,10 +139,14 @@ def _to_number(value: Value) -> float:
         return value
     if not isinstance(value, str):
         return math.nan
-    try:
-        return float(value.strip() or 0)
-    except ValueError:
-        return math.nan
+    text = value.strip()
+    if not text:
+        return 0.0
+    if _JSON_NUMBER_RE.fullmatch(text):
+        return float(text)
+    if _UNDOCUMENTED_NUMBER_RE.fullmatch(text):
+        raise ExpressionError(f"undocumented string-to-number coercion: {value!r}")
+    return math.nan
 
 
 def _to_string(value: Value) -> str:
@@ -82,10 +155,13 @@ def _to_string(value: Value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, float):
-        return str(int(value)) if value.is_integer() else str(value)
+        if value.is_integer() and abs(value) < _PLAIN_INTEGER_LIMIT:
+            return str(int(value))
+        raise ExpressionError(f"rendering the number {value!r} is not modelled")
     if isinstance(value, str):
         return value
-    return json.dumps(value)
+    kind = "an object" if isinstance(value, dict) else "an array"
+    raise ExpressionError(f"{kind} used as a string is not modelled")
 
 
 def _truthy(value: Value) -> bool:
@@ -102,7 +178,7 @@ def _truthy(value: Value) -> bool:
 
 def _equal(left: Value, right: Value) -> bool:
     if isinstance(left, str) and isinstance(right, str):
-        return left.casefold() == right.casefold()
+        return _ignore_case(str.__eq__, left, right)
     if left is None and right is None:
         return True
     if isinstance(left, bool) and isinstance(right, bool):
@@ -113,50 +189,124 @@ def _equal(left: Value, right: Value) -> bool:
 
 
 def _format(template: Value, *args: Value) -> Value:
-    def replace(match: re.Match[str]) -> str:
-        if match.group(0) == "{{":
-            return "{"
-        if match.group(0) == "}}":
-            return "}"
-        index = int(match.group(1))
-        if index >= len(args):
-            raise ExpressionError(f"format index {index} has no argument")
-        return _to_string(args[index])
-
-    return _FORMAT_RE.sub(replace, _to_string(template))
+    text = _to_string(template)
+    parts: list[str] = []
+    position = 0
+    while position < len(text):
+        char = text[position]
+        if char not in "{}":
+            parts.append(char)
+            position += 1
+        elif text.startswith(char * 2, position):
+            parts.append(char)
+            position += 2
+        elif match := _FORMAT_INDEX_RE.match(text, position):
+            index = int(match.group(1))
+            if index >= len(args):
+                raise ExpressionError(f"format index {index} has no argument")
+            parts.append(_to_string(args[index]))
+            position = match.end()
+        else:
+            raise ExpressionError(f"invalid format string: {text!r}")
+    return "".join(parts)
 
 
 def _string_test(test: Callable[[str, str], bool]) -> Callable[..., Value]:
-    def apply(*args: Value) -> Value:
-        if len(args) != 2:
-            raise ExpressionError("function takes two arguments")
-        return test(_to_string(args[0]).casefold(), _to_string(args[1]).casefold())
+    def apply(left: Value, right: Value) -> Value:
+        return _ignore_case(test, _to_string(left), _to_string(right))
 
     return apply
 
 
-_FUNCTIONS: dict[str, Callable[..., Value]] = {
-    "format": _format,
-    "startswith": _string_test(str.startswith),
-    "endswith": _string_test(str.endswith),
-    "contains": _string_test(lambda haystack, needle: needle in haystack),
+# Name (lower case) -> (implementation, minimum and maximum argument count).
+_FUNCTIONS: dict[str, tuple[Callable[..., Value], int, float]] = {
+    "format": (_format, 2, math.inf),
+    "startswith": (_string_test(str.startswith), 2, 2),
+    "endswith": (_string_test(str.endswith), 2, 2),
+    "contains": (_string_test(lambda haystack, needle: needle in haystack), 2, 2),
 }
 
 
+def _constant(value: Value) -> Thunk:
+    return lambda: value
+
+
+def _either(left: Thunk, right: Thunk) -> Thunk:
+    """``left || right``: RIGHT is evaluated only when LEFT is falsy."""
+
+    def run() -> Value:
+        value = left()
+        return value if _truthy(value) else right()
+
+    return run
+
+
+def _both(left: Thunk, right: Thunk) -> Thunk:
+    """``left && right``: RIGHT is evaluated only when LEFT is truthy."""
+
+    def run() -> Value:
+        value = left()
+        return right() if _truthy(value) else value
+
+    return run
+
+
+def _compare(left: Thunk, right: Thunk, *, negate: bool) -> Thunk:
+    return lambda: _equal(left(), right()) != negate
+
+
+def _negation(operand: Thunk) -> Thunk:
+    return lambda: not _truthy(operand())
+
+
+def _call(function: Callable[..., Value], args: list[Thunk]) -> Thunk:
+    return lambda: function(*(arg() for arg in args))
+
+
+def _key(mapping: Mapping[str, object], name: str) -> str | None:
+    """Return the key of MAPPING that matches NAME ignoring case, if any."""
+    keys = [key for key in mapping if key.upper() == name.upper()]
+    if len(keys) > 1:
+        raise ExpressionError(f"{name} matches more than one key: {keys}")
+    return keys[0] if keys else None
+
+
+def _lookup(root: object, keys: list[str], name: str) -> Thunk:
+    def run() -> Value:
+        value = root
+        path = name
+        for key in keys:
+            path = f"{path}.{key}"
+            if not isinstance(value, dict):
+                value = None
+                continue
+            found = _key(value, key)
+            if found is None:
+                raise ExpressionError(f"{path} is not in the test's context")
+            value = value[found]
+        if isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        if value is None or isinstance(value, str | float | bool | dict | list):
+            return value
+        raise ExpressionError(f"unsupported context value for {path}")
+
+    return run
+
+
 class _Parser:
-    """Recursive-descent evaluator over one tokenized expression."""
+    """Recursive-descent parser from one token list to an unevaluated thunk."""
 
     def __init__(self, tokens: list[tuple[str, str]], context: dict[str, Value]):
         self._tokens = tokens
         self._index = 0
         self._context = context
 
-    def evaluate(self) -> Value:
-        """Evaluate the whole token list; trailing tokens are an error."""
-        value = self._or()
+    def parse(self) -> Thunk:
+        """Parse the whole token list; trailing tokens are an error."""
+        thunk = self._or()
         if self._index != len(self._tokens):
             raise ExpressionError(f"unexpected token: {self.peek()[1]!r}")
-        return value
+        return thunk
 
     def peek(self) -> tuple[str, str]:
         """Return the next token without consuming it."""
@@ -176,88 +326,88 @@ class _Parser:
         if not self.accept(operator):
             raise ExpressionError(f"expected {operator!r}, got {self.peek()[1]!r}")
 
-    def _or(self) -> Value:
-        value = self._and()
+    def _or(self) -> Thunk:
+        thunk = self._and()
         while self.accept("||"):
-            right = self._and()
-            value = value if _truthy(value) else right
-        return value
+            thunk = _either(thunk, self._and())
+        return thunk
 
-    def _and(self) -> Value:
-        value = self._equality()
+    def _and(self) -> Thunk:
+        thunk = self._equality()
         while self.accept("&&"):
-            right = self._equality()
-            value = right if _truthy(value) else value
-        return value
+            thunk = _both(thunk, self._equality())
+        return thunk
 
-    def _equality(self) -> Value:
-        value = self._unary()
+    def _equality(self) -> Thunk:
+        thunk = self._unary()
         while self.peek() in (("op", "=="), ("op", "!=")):
-            operator = self.peek()[1]
+            negate = self.peek()[1] == "!="
             self._index += 1
-            right = self._unary()
-            value = _equal(value, right) == (operator == "==")
-        return value
+            thunk = _compare(thunk, self._unary(), negate=negate)
+        return thunk
 
-    def _unary(self) -> Value:
+    def _unary(self) -> Thunk:
         if self.accept("!"):
-            return not _truthy(self._unary())
+            return _negation(self._unary())
         return self._primary()
 
-    def _primary(self) -> Value:
+    def _primary(self) -> Thunk:
         kind, text = self.peek()
         self._index += 1
         if kind == "string":
-            return text[1:-1].replace("''", "'")
+            return _constant(text[1:-1].replace("''", "'"))
         if kind == "number":
-            return float(text)
+            return _constant(float(text))
         if kind == "op" and text == "(":
-            value = self._or()
+            thunk = self._or()
             self.expect(")")
-            return value
+            return thunk
         if kind == "name":
             if text in _KEYWORDS:
-                return _KEYWORDS[text]
+                return _constant(_KEYWORDS[text])
             if self.accept("("):
                 return self._call(text)
             return self._property(text)
         raise ExpressionError(f"unexpected token: {text!r}")
 
-    def _call(self, name: str) -> Value:
-        function = _FUNCTIONS.get(name.lower())
-        if function is None:
+    def _call(self, name: str) -> Thunk:
+        if name.lower() not in _FUNCTIONS:
             raise ExpressionError(f"unsupported function: {name}")
-        args: list[Value] = []
+        function, minimum, maximum = _FUNCTIONS[name.lower()]
+        args: list[Thunk] = []
         if not self.accept(")"):
             args.append(self._or())
             while self.accept(","):
                 args.append(self._or())
             self.expect(")")
-        return function(*args)
+        if not minimum <= len(args) <= maximum:
+            raise ExpressionError(f"wrong number of arguments for {name}")
+        return _call(function, args)
 
-    def _property(self, name: str) -> Value:
-        if name not in self._context:
+    def _property(self, name: str) -> Thunk:
+        context_name = _key(self._context, name)
+        if context_name is None:
             raise ExpressionError(f"unknown context: {name}")
-        value: object = self._context[name]
+        keys: list[str] = []
         while self.accept("."):
             kind, key = self.peek()
             if kind != "name":
                 raise ExpressionError(f"expected a property name after {name!r}")
             self._index += 1
-            value = value.get(key) if isinstance(value, dict) else None
-        if isinstance(value, int) and not isinstance(value, bool):
-            return float(value)
-        if value is None or isinstance(value, str | float | bool | dict | list):
-            return value
-        raise ExpressionError(f"unsupported context value for {name}")
+            keys.append(key)
+        return _lookup(self._context[context_name], keys, name)
 
 
 def evaluate(expression: str, context: dict[str, Value]) -> Value:
-    """Evaluate one expression (the text between ``${{`` and ``}}``)."""
+    """Evaluate one expression (the text between ``${{`` and ``}}``).
+
+    The whole expression is parsed first; evaluation then follows the
+    operators, so a short-circuited operand is never evaluated.
+    """
     tokens = _tokenize(expression)
     if not tokens:
         raise ExpressionError("empty expression")
-    return _Parser(tokens, context).evaluate()
+    return _Parser(tokens, context).parse()()
 
 
 def _split_template(template: str) -> list[tuple[bool, str]]:
@@ -311,11 +461,11 @@ def main(argv: list[str]) -> int:
     """Run the command line interface described in the module docstring."""
     if len(argv) != 4 or argv[1] not in ("render", "truthy"):
         print(__doc__, file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     context = json.loads(argv[3])
     if not isinstance(context, dict):
         print("CONTEXT_JSON must be an object", file=sys.stderr)
-        return 2
+        return EXIT_USAGE
     try:
         if argv[1] == "render":
             print(render(argv[2], context))
@@ -323,7 +473,7 @@ def main(argv: list[str]) -> int:
             print("true" if truthy(argv[2], context) else "false")
     except ExpressionError as error:
         print(f"expression error: {error}", file=sys.stderr)
-        return 1
+        return EXIT_EXPRESSION_ERROR
     return 0
 
 
