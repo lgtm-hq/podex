@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.29] - 2026-11-16
+
+### Changed
+
+- **deps**: lock file maintenance (#831) (a5fbec0)
+
+### Fixed
+
+- **ingest**: store allowlisted error descriptors instead of raw failure text (#818)
+  (1352976)
+
 ## [0.41.28] - 2026-11-15
 
 ### Changed
