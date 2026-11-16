@@ -167,10 +167,15 @@ MAX_ITEMS = 1_000
 """Header entries read from a container; past it, they are only counted."""
 
 MAX_STATUS_TEXT = 3
-"""Longest status code printed where a form takes any number as its status.
+"""Longest integer part of a status where a form takes any number as its status.
 
 The HTTP clients' parsers accept three digits only: ``http.client`` rejects
 a status outside 100 to 999, and the ``h11`` parser requires three digits.
+The bound measures the integer part only, as every number bound does: an
+integer prints in at most three characters (``-99`` still prints), and in a
+``%s`` slot a float whose integer part fits prints its whole ``repr``
+(``0.30000000000000004``, ``999.9999999999999``), as it did before the
+bound. A finite float's ``repr`` is itself short.
 """
 
 MAX_PORT_TEXT = 5
@@ -182,7 +187,8 @@ MAX_COUNT_TEXT = 20
 Byte counts, connection and retry counts, pool sizes and delays: the
 libraries hold them as machine-sized integers or as floats of seconds or
 minutes, and the widest 64-bit integer (``18446744073709551615`` or
-``-9223372036854775808``) is 20 characters.
+``-9223372036854775808``) is 20 characters. A float's fraction is not
+counted: under ``%s`` it prints its ``repr``, under ``%f`` six decimals.
 """
 
 MAX_IDENTIFIER_TEXT = 512
@@ -512,17 +518,19 @@ def url_skeleton(url: object) -> str:
 
 
 def _host_and_port(netloc: str, hostname: str | None, port: int | None) -> str:
-    """Print a URL's validated host and port; withheld unless written in ASCII.
+    """Print a URL's validated host and port, each as written in ASCII.
 
-    The parser lowercases the host by Unicode rules, so the host and port
-    are checked as written: the part of the authority after the userinfo,
-    split off as the parser splits it.
+    The parser lowercases the host by Unicode rules, so the host is printed
+    only if the part of the authority after the userinfo, split off as the
+    parser splits it, is ASCII. The port is printed on its own: the parser
+    accepts it only as digits after the last colon, which must be ASCII
+    too, so a withheld host keeps its port.
     """
-    if not netloc.rpartition("@")[2].isascii():
-        return WITHHELD
+    written = netloc.rpartition("@")[2]
     host = hostname or ""
-    shown_host = host if _HOST_RE.fullmatch(host) else WITHHELD
-    return f"{shown_host}{f':{port}' if port else ''}"
+    shown_host = host if written.isascii() and _HOST_RE.fullmatch(host) else WITHHELD
+    shown_port = f":{port}" if port and written.rpartition(":")[2].isascii() else ""
+    return f"{shown_host}{shown_port}"
 
 
 def method(value: object) -> str:

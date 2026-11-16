@@ -15,8 +15,9 @@ import pytest
 from assertpy import assert_that
 
 from podex import sdk_log_boundary, sdk_log_rules
-from podex.sdk_log_boundary import MAX_SKELETON, _apply_form
-from podex.sdk_log_forms import FORMS, MAX_PREFORMATTED, SERVER_FORMS
+from podex.redaction import REDACTED
+from podex.sdk_log_boundary import MAX_SKELETON, _apply_form, _finished
+from podex.sdk_log_forms import FORMS, MAX_PREFORMATTED, SERVER_FORMS, known_form
 from podex.sdk_log_rules import MAX_HEADER_VALUE, WITHHELD, Rendered, header_value
 from tests.sdk_log_support import debug_logging
 
@@ -535,9 +536,11 @@ def _bound_at(length: int, monkeypatch: pytest.MonkeyPatch) -> None:
     """Set the output bound to ``length`` characters.
 
     Every part of a known form is bounded, and the longest skeleton a known
-    form builds is shorter than :data:`MAX_SKELETON`, so a logged record
-    reaches the bound only once it is set below that length. The bound at
-    its own value is applied in :func:`test_output_bound_counts_characters_not_bytes`.
+    form builds from its parts alone is shorter than :data:`MAX_SKELETON`,
+    so this line reaches the bound only once it is set below that length.
+    Replacing a short configured secret value can lengthen a skeleton past
+    the bound at its own value: see
+    :func:`test_redacted_skeleton_meets_the_output_bound`.
     """
     assert_that(length).is_less_than(MAX_SKELETON)
     monkeypatch.setattr(sdk_log_boundary, "MAX_SKELETON", length)
@@ -591,6 +594,92 @@ def test_skeleton_one_past_the_output_bound_is_withheld(
         "[record withheld: skeleton exceeds the output bound, "
         f"{len(_REQUEST_LINE)} characters]",
     )
+
+
+_OPTIONS = "Request options: %s"
+_CONFIGURED_VALUE = "v"
+"""A configured secret value of one character; each occurrence in a
+skeleton is replaced by the much longer redaction marker."""
+
+
+def _options(secrets: int, padding: int) -> dict[str, object]:
+    """Request options whose header values hold ``secrets`` secret characters.
+
+    The secret characters fill rate-limit header values of at most the
+    header value bound each; one more header holds ``padding`` letters that
+    are not secret. Nothing else in the skeleton holds the secret value.
+    """
+    headers: dict[str, str] = {}
+    for index, start in enumerate(range(0, secrets, MAX_HEADER_VALUE)):
+        size = min(MAX_HEADER_VALUE, secrets - start)
+        headers[f"x-ratelimit-h{index:02d}"] = _CONFIGURED_VALUE * size
+    headers["x-ratelimit-pad"] = "a" * padding
+    return {
+        "method": "GET",
+        "url": "https://api.example.test/items",
+        "headers": headers,
+    }
+
+
+def _skeleton_length(options: dict[str, object]) -> int:
+    """Return the length of the options' skeleton once secrets are replaced."""
+    form = known_form("anthropic._base_client", _OPTIONS, (options,))
+    if form is None:
+        pytest.fail("request options are a known form")
+    message, arguments = _finished(*form)
+    return len(message % arguments)
+
+
+def _options_of_length(length: int) -> dict[str, object]:
+    """Return request options whose redacted skeleton is ``length`` long.
+
+    Each secret character lengthens the skeleton by the marker's length less
+    one, so the secret count is lowered until the remainder fits in the
+    padding header's value.
+    """
+    secrets = length // len(REDACTED)
+    while True:
+        base = _skeleton_length(_options(secrets, 0))
+        if 0 <= length - base <= MAX_HEADER_VALUE:
+            options = _options(secrets, length - base)
+            assert_that(_skeleton_length(options)).is_equal_to(length)
+            return options
+        secrets -= 1
+
+
+@pytest.mark.parametrize(
+    ("length", "shown"),
+    [(MAX_SKELETON, True), (MAX_SKELETON + 1, False)],
+    ids=["at-bound", "one-over"],
+)
+def test_redacted_skeleton_meets_the_output_bound(
+    length: int,
+    shown: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A record lengthened past the bound by redaction is withheld whole.
+
+    The bound applies after the configured secret values are replaced, so a
+    short secret value repeated in valid header values brings a logged
+    record to the bound at its own value: exactly at it, the record prints;
+    one character past it, the record is withheld.
+    """
+    with debug_logging(caplog, configured=(_CONFIGURED_VALUE,)):
+        options = _options_of_length(length)
+        logging.getLogger("anthropic._base_client").info(_OPTIONS, options)
+
+    printed = caplog.records[-1].getMessage()
+    if shown:
+        assert_that(len(printed)).is_equal_to(MAX_SKELETON)
+        assert_that(printed).starts_with(
+            "Request options: method=GET url=https://api.example.test/items",
+        )
+        assert_that(printed).contains(REDACTED).does_not_contain(_CONFIGURED_VALUE)
+    else:
+        assert_that(printed).is_equal_to(
+            "[record withheld: skeleton exceeds the output bound, "
+            f"{len(_OPTIONS)} characters]",
+        )
 
 
 _ORIGINAL_MESSAGE = "k1-original message"

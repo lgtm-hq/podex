@@ -37,6 +37,7 @@ from podex.sdk_log_rules import (
     METHODS,
     SAFE_HEADERS,
     WITHHELD,
+    _host_and_port,
 )
 from tests.sdk_log_support import assert_quick_record, debug_logging
 
@@ -260,21 +261,24 @@ def _host_cases() -> Iterator[object]:
     for char in _LOWERED_TO_ASCII:
         for port in ("", ":8443"):
             yield pytest.param(
-                f"{char}.example.test{port}",
-                f"{char.lower()}.example.test{port}",
+                f"{char}.example.test",
+                f"{char.lower()}.example.test",
+                port,
                 id=f"U+{ord(char):04X}{'-port' if port else ''}",
             )
 
 
-@pytest.mark.parametrize(("written", "twin"), list(_host_cases()))
+@pytest.mark.parametrize(("written", "twin", "port"), list(_host_cases()))
 def test_host_lowering_into_ascii_is_withheld(
     written: str,
     twin: str,
+    port: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A host with a character that lowercases into ASCII is withheld.
 
-    Its port is withheld with it: the host and port are checked as written.
+    Its port is still printed: the parser takes the port as ASCII digits
+    only, so a withheld host does not read as one on the default port.
     """
     del twin
     printed = _printed(
@@ -282,41 +286,122 @@ def test_host_lowering_into_ascii_is_withheld(
         _REQUEST_LOGGER,
         _REQUEST,
         "GET",
-        f"https://{written}/v1",
+        f"https://{written}{port}/v1",
     )
 
-    assert_that(printed).is_equal_to(f"Sending HTTP Request: GET https://{WITHHELD}/v1")
+    assert_that(printed).is_equal_to(
+        f"Sending HTTP Request: GET https://{WITHHELD}{port}/v1",
+    )
 
 
-@pytest.mark.parametrize(("written", "twin"), list(_host_cases()))
+@pytest.mark.parametrize(("written", "twin", "port"), list(_host_cases()))
 def test_host_ascii_twin_prints(
     written: str,
     twin: str,
+    port: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """The ASCII host, in either case, prints lowercased with its port."""
     del written
-    for url in (f"https://{twin}/v1", f"https://{twin.upper()}/v1"):
+    for host in (twin, twin.upper()):
+        url = f"https://{host}{port}/v1"
+
         printed = _printed(caplog, _REQUEST_LOGGER, _REQUEST, "GET", url)
 
-        assert_that(printed).is_equal_to(f"Sending HTTP Request: GET https://{twin}/v1")
+        assert_that(printed).is_equal_to(
+            f"Sending HTTP Request: GET https://{twin}{port}/v1",
+        )
 
 
-def test_non_ascii_userinfo_does_not_withhold_the_host(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Only the host and port must be ASCII; the userinfo is dropped anyway."""
-    printed = _printed(
-        caplog,
+_AUTHORITIES = {
+    "non-ascii-host-port": (
+        "https://b\N{LATIN SMALL LETTER U WITH DIAERESIS}cher.example:8443/v1",
+        f"https://{WITHHELD}:8443/v1",
+    ),
+    "non-ascii-host": (
+        "https://b\N{LATIN SMALL LETTER U WITH DIAERESIS}cher.example/v1",
+        f"https://{WITHHELD}/v1",
+    ),
+    "kelvin-host-port": (
+        "https://\N{KELVIN SIGN}.example.test:8443/v1",
+        f"https://{WITHHELD}:8443/v1",
+    ),
+    "ipv6-port": ("https://[::1]:8443/v1", f"https://{WITHHELD}:8443/v1"),
+    "ipv6-zone-port": (
+        "https://[fe80::1%25eth0]:8443/v1",
+        f"https://{WITHHELD}:8443/v1",
+    ),
+    "ipv6": ("https://[::1]/v1", f"https://{WITHHELD}/v1"),
+    "kelvin-userinfo-ipv6-port": (
+        "https://\N{KELVIN SIGN}@[::1]:8443/v1",
+        f"https://{WITHHELD}:8443/v1",
+    ),
+    "userinfo-colon-at": (
+        "https://re@der:x@api.example.test:8443/v1",
+        "https://api.example.test:8443/v1",
+    ),
+    "kelvin-userinfo": (
+        "https://reader\N{KELVIN SIGN}:x@api.example.test:8443/v1",
+        "https://api.example.test:8443/v1",
+    ),
+    "ascii-host": ("https://api.example.test/v1", "https://api.example.test/v1"),
+}
+"""URLs whose authority takes each branch, and the skeleton each prints.
+
+The host is printed only if written in ASCII; the port, the digits after
+the last colon of the authority, is printed whatever the host; the userinfo
+is dropped, whatever it holds, and never withholds the host.
+"""
+
+_URL_LINES: dict[str, tuple[str, str, tuple[str, ...], str]] = {
+    "llm-request": (
         _REQUEST_LOGGER,
         _REQUEST,
-        "GET",
-        "https://reader\N{KELVIN SIGN}@api.example.test:8443/v1",
+        ("GET", "{url}"),
+        "Sending HTTP Request: GET {shown}",
+    ),
+    "redirect-location": (
+        "urllib3.connectionpool",
+        "Redirecting %s -> %s",
+        ("/start", "{url}"),
+        "Redirecting /start -> {shown}",
+    ),
+    "spotify-request": (
+        "spotipy.client",
+        "Sending GET to {url} with Params: {{}}",
+        (),
+        "Sending GET to {shown}",
+    ),
+}
+"""Lines that print a URL: an argument, a redirect's location, a parsed line.
+
+Each line's logger, message and arguments with ``{url}`` where the URL goes,
+and what it prints with ``{shown}`` where the URL's skeleton goes.
+"""
+
+
+@pytest.mark.parametrize("line", list(_URL_LINES))
+@pytest.mark.parametrize(
+    ("url", "shown"),
+    [pytest.param(*case, id=name) for name, case in _AUTHORITIES.items()],
+)
+def test_url_authority_prints_host_and_port_as_written(
+    url: str,
+    shown: str,
+    line: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each URL line prints the same authority for the same URL."""
+    logger_name, message, arguments, expected = _URL_LINES[line]
+
+    printed = _printed(
+        caplog,
+        logger_name,
+        message.format(url=url),
+        *(argument.format(url=url) for argument in arguments),
     )
 
-    assert_that(printed).is_equal_to(
-        "Sending HTTP Request: GET https://api.example.test:8443/v1",
-    )
+    assert_that(printed).is_equal_to(expected.format(shown=shown))
 
 
 _CHOSEN = "k1-chosen-text"
@@ -738,3 +823,43 @@ def test_bounds_admit_what_the_libraries_produce_and_nothing_wider(
     assert_that(printed).is_equal_to(
         message % (*leading, value) if shown else withheld,
     )
+
+
+_RATE_LIMIT = (
+    "Your application has reached a rate/request limit. Retry will occur after: "
+)
+
+
+@pytest.mark.parametrize(
+    ("delay", "shown"),
+    [("9" * 12, True), ("9" * 13, False), (f"{'9' * 12}.5", True)],
+    ids=["twelve-digits", "thirteen-digits", "twelve-digits-fraction"],
+)
+def test_spotify_rate_limit_delay_is_bounded(
+    delay: str,
+    shown: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The rate-limit delay prints up to twelve integer digits, as number text."""
+    printed = _printed(caplog, "spotipy.client", f"{_RATE_LIMIT}{delay} s")
+
+    assert_that(printed).is_equal_to(f"{_RATE_LIMIT}{delay if shown else WITHHELD} s")
+
+
+@pytest.mark.parametrize(
+    ("netloc", "shown"),
+    [
+        ("api.example.test:\N{ARABIC-INDIC DIGIT FOUR}43", WITHHELD),
+        ("api.example.test:443", "api.example.test:443"),
+    ],
+    ids=["non-ascii-port-digit", "ascii-port"],
+)
+def test_port_is_printed_only_as_written_in_ascii(netloc: str, shown: str) -> None:
+    """A port is printed only if its digits are ASCII as written.
+
+    The host is withheld with it, as the authority after the userinfo is
+    not ASCII. The supported interpreters' URL parser rejects other digits
+    itself (an older one converted them); the authority is given here as
+    such a parser would have returned it, with the port converted to 443.
+    """
+    assert_that(_host_and_port(netloc, "api.example.test", 443)).is_equal_to(shown)
