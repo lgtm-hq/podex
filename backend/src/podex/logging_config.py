@@ -5,28 +5,36 @@ record and uncaught exception passes; :func:`configure_logging` also sets the
 application's log format. Every process entrypoint installs the boundaries: the API
 (``create_app``), the scheduler runner and the migration environment.
 
-- HTTPX request lines lose URL userinfo, fragments and provider key fields.
+- Records from third-party SDK loggers (the LLM SDK, the HTTP clients and
+  their transports, the Spotify SDK, the object storage client, the ASGI
+  server's access log) lose credentials, request and response bodies and
+  error text, and keep method, host, path, status and exception classes
+  (:mod:`podex.sdk_log_boundary`).
 - Database errors are written by class and SQLSTATE only, wherever they are
   logged or printed (application code, the scheduler, the ASGI server,
   Alembic, uncaught exceptions): a driver's text can carry row values
   (``DETAIL:  Key (column)=(value) already exists.``).
-- The Spotify SDK's debug lines lose authorization headers and token fields.
 
-Text formatted into a string before it is logged is outside these
-boundaries.
+Text the application formats into a string before logging it is outside
+these boundaries; an SDK's own pre-formatted text passes the SDK
+boundary's text rules.
 """
 
 import contextlib
 import logging
-import re
 import sys
 import threading
-from collections.abc import Callable, Collection, Mapping, Sequence, Set
+from collections.abc import (
+    Callable,
+    Collection,
+    Iterable,
+    Mapping,
+    Sequence,
+    Set,
+)
 from functools import partial
 from types import TracebackType
 from typing import Any
-
-import httpx
 
 from podex.database_errors import (
     chain_has_database_error,
@@ -36,27 +44,13 @@ from podex.database_errors import (
     stand_in,
     withheld_exception,
 )
+from podex.sdk_log_boundary import (
+    configure_secret_values,
+    is_sdk_logger,
+    sanitise_sdk_record,
+)
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
-_CREDENTIAL_QUERY_PARAMS = ("api_key", "apikey", "key")
-_SPOTIFY_LOGGERS = (
-    "spotipy.client",
-    "spotipy.oauth2",
-    "spotipy.util",
-    "spotipy.cache_handler",
-)
-# Authorization header values ("Basic <base64>", "Bearer <token>") and token
-# fields, as the Spotify SDK renders them in its request debug lines.
-_AUTHORIZATION_RE = re.compile(
-    r"""(["']?authorization["']?\s*[:=]\s*["']?)[^"'\n,}]+""",
-    re.IGNORECASE,
-)
-_TOKEN_FIELD_RE = re.compile(
-    r"""(["']?\b(?:client_secret|refresh_token|access_token|code_verifier|code)"""
-    r"""["']?\s*[:=]\s*["']?)[^"'\s,}&]+""",
-    re.IGNORECASE,
-)
-_REDACTED = "[redacted]"
 _MAX_ARGUMENT_DEPTH = 4
 _MAX_ARGUMENT_ITEMS = 1_000
 _SCALAR_TYPES = frozenset({str, int, float, bool, bytes, type(None)})
@@ -64,55 +58,6 @@ _FAILED = object()
 
 RecordFactory = Callable[..., logging.LogRecord]
 """``logging``'s record factory."""
-
-
-def _safe_httpx_argument(value: object) -> object:
-    """Remove credentials from a logged URL without changing requests.
-
-    Drops the userinfo (``user:password@``), the fragment and the provider
-    credential query fields; the scheme, host, path and other query fields
-    stay for diagnostics.
-    """
-    if not isinstance(value, httpx.URL):
-        return value
-    url: httpx.URL = value.copy_with(username=None, password=None, fragment=None)
-    for name in _CREDENTIAL_QUERY_PARAMS:
-        url = url.copy_remove_param(name)
-    return url
-
-
-def _redact_httpx_credentials(record: logging.LogRecord) -> bool:
-    """Keep HTTPX request diagnostics while removing URL credentials."""
-    if isinstance(record.args, tuple):
-        record.args = tuple(_safe_httpx_argument(value) for value in record.args)
-    return True
-
-
-def mask_authorization(text: str) -> str:
-    """Replace authorization header values and token fields in ``text``.
-
-    Args:
-        text: A rendered log message.
-
-    Returns:
-        str: The message with credentials replaced by ``[redacted]``.
-    """
-    text = _AUTHORIZATION_RE.sub(rf"\g<1>{_REDACTED}", text)
-    return _TOKEN_FIELD_RE.sub(rf"\g<1>{_REDACTED}", text)
-
-
-def _mask_spotify_authorization(record: logging.LogRecord) -> bool:
-    """Mask credentials in the Spotify SDK's request debug lines.
-
-    The SDK renders request headers (``Authorization: Basic`` with the client
-    secret, or ``Bearer`` with the access token) into its messages.
-    """
-    message = record.getMessage()
-    masked = mask_authorization(message)
-    if masked != message:
-        record.msg = masked
-        record.args = ()
-    return True
 
 
 def _limit(value: object) -> str:
@@ -245,18 +190,26 @@ def _replace_with_placeholder(record: logging.LogRecord) -> None:
 def _sanitising_record(
     inner: RecordFactory, *args: Any, **kwargs: Any
 ) -> logging.LogRecord:
-    """Create a record with the inner factory, then withhold database text.
+    """Create a record with the inner factory, then apply the boundaries.
 
+    Database text is withheld from every record; a record from a
+    third-party SDK logger also loses credentials, bodies and error text.
     Never raises from sanitising: on any failure the record's content is
-    replaced by placeholders instead.
+    replaced by placeholders instead, and an SDK record's exception is
+    detached.
     """
     record: logging.LogRecord = inner(*args, **kwargs)
+    from_sdk = is_sdk_logger(record.name)
     sanitised = False
     with contextlib.suppress(Exception):
         sanitise_database_errors(record)
+        if from_sdk:
+            sanitise_sdk_record(record)
         sanitised = True
     if not sanitised:
         _replace_with_placeholder(record)
+        if from_sdk:
+            record.exc_info = None
     return record
 
 
@@ -349,12 +302,25 @@ def install_log_boundaries() -> None:
 
     Every process entrypoint calls this (the API and scheduler through
     :func:`configure_logging`, the migration environment directly), so the
-    boundaries hold whichever process logs or fails.
+    boundaries hold whichever process logs or fails. They live in the log
+    record factory and the exception hooks, which logging configuration
+    (``basicConfig``, ``fileConfig``, ``dictConfig``) does not replace, and
+    are installed once however often this is called.
     """
-    logging.getLogger("httpx").addFilter(_redact_httpx_credentials)
-    for name in _SPOTIFY_LOGGERS:
-        logging.getLogger(name).addFilter(_mask_spotify_authorization)
     _install_database_error_boundary()
+
+
+def redact_secret_values(secrets: Iterable[str]) -> None:
+    """Also replace configured secret values in third-party SDK records.
+
+    Each process entrypoint that loads settings calls this with their secret
+    values; until then, SDK records are cleaned by structure, by key and
+    for URL userinfo only. A later call replaces the values.
+
+    Args:
+        secrets: Secret values of the loaded settings; empty values are ignored.
+    """
+    configure_secret_values(secrets)
 
 
 def configure_logging(*, level: str = "INFO") -> None:

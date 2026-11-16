@@ -20,10 +20,11 @@ from unittest.mock import patch
 from podex.database import engine
 from podex.models import Base
 from tests.database_error_support import unique_violation
+from tests.sdk_log_support import log_sdk_request
 
 
 def run(row_value: str) -> None:
-    """Run the scheduler entrypoint for one failing tick, then report imports.
+    """Run the scheduler for one failing tick, log an SDK request, report imports.
 
     Args:
         row_value: The row value the database error's driver message reveals.
@@ -39,6 +40,7 @@ def run(row_value: str) -> None:
 
     with patch.object(scheduler_runner, "run_instrumented_tick", failing_tick):
         scheduler_runner.main()
+    log_sdk_request(row_value)
     print("podex.main imported:", "podex.main" in sys.modules, flush=True)
     sys.stderr.flush()
 

@@ -17,9 +17,14 @@ from sqlalchemy.orm import Session
 
 from podex.config import Settings, get_settings
 from podex.database import SessionLocal
-from podex.logging_config import configure_logging, get_logger
+from podex.logging_config import (
+    configure_logging,
+    get_logger,
+    redact_secret_values,
+)
 from podex.metrics import AppMetrics, build_metrics, observe_scheduler_tick
 from podex.observability import init_sentry
+from podex.redaction import secret_values
 from podex.services.notification_delivery import DigestSender, build_digest_sender
 from podex.services.recurring_discovery import (
     reconcile_recurring_discovery_schedules,
@@ -190,9 +195,11 @@ def main() -> None:
     # and SDK authorization headers stay out of this process's output.
     # Use the API's default level and format for lifecycle and tick logs.
     configure_logging()
+    settings = get_settings()
+    redact_secret_values(secret_values(settings))
     # The runner is its own process, so it initializes Sentry independently
     # of the API deployable.
-    init_sentry(get_settings())
+    init_sentry(settings)
     SchedulerRunner().run_forever()
 
 

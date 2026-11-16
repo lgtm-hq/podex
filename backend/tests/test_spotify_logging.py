@@ -17,7 +17,8 @@ import requests
 from assertpy import assert_that
 from spotipy.cache_handler import MemoryCacheHandler
 
-from podex.logging_config import configure_logging, mask_authorization
+from podex.logging_config import configure_logging
+from podex.sdk_log_boundary import mask_credential_fields
 from podex.services.discovery_spotify import SpotifyDiscovery
 
 _CLIENT_ID = f"spotify-client-{token_hex(6)}"
@@ -27,17 +28,19 @@ _SHOW_ID = "4rOoJ6Egrf8K2IrywzwOMk"
 
 
 class _JsonResponse:
-    """Successful JSON response, as much of ``requests.Response`` as the SDK uses."""
+    """JSON response, as much of ``requests.Response`` as the SDK uses."""
 
-    def __init__(self, url: str, payload: dict[str, Any]) -> None:
+    def __init__(self, url: str, payload: dict[str, Any], status: int = 200) -> None:
         self.url = url
-        self.status_code = 200
+        self.status_code = status
         self.headers = {"Content-Type": "application/json"}
         self.text = json.dumps(payload)
         self._payload = payload
 
     def raise_for_status(self) -> None:
-        """Succeed, as for any 2xx response."""
+        """Raise for an error status, as ``requests`` does."""
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"{self.status_code} error", response=self)
 
     def json(self) -> dict[str, Any]:
         """Return the decoded payload."""
@@ -83,6 +86,48 @@ def test_spotify_debug_lines_mask_credentials(
         assert_that(caplog.text).does_not_contain(credential)
 
 
+def _refuse_show(
+    _session: requests.Session,
+    method: str,
+    url: str,
+    **_kwargs: Any,
+) -> _JsonResponse:
+    """Grant a token, then reject the show request."""
+    if url.startswith("https://accounts.spotify.com/"):
+        return _answer(_session, method, url)
+    return _JsonResponse(
+        url,
+        {"error": {"status": 401, "message": "The access token expired"}},
+        status=401,
+    )
+
+
+def test_spotify_failure_lines_mask_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rejected API call is logged with method, URL and status only."""
+    monkeypatch.setattr(requests.Session, "request", _refuse_show)
+    monkeypatch.setattr("spotipy.oauth2.CacheFileHandler", MemoryCacheHandler)
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+
+    discovered = SpotifyDiscovery(
+        client_id=_CLIENT_ID,
+        client_secret=_CLIENT_SECRET,
+    ).discover_podcast(_SHOW_ID)
+
+    basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
+    assert_that(discovered).is_none()
+    assert_that(caplog.text).contains(
+        f"HTTP Error for GET to https://api.spotify.com/v1/shows/{_SHOW_ID}",
+        "returned 401",
+        "'Authorization': '[redacted]'",
+    )
+    for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN):
+        assert_that(caplog.text).does_not_contain(credential)
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
@@ -104,4 +149,4 @@ def test_spotify_debug_lines_mask_credentials(
 )
 def test_authorization_material_is_masked(message: str, expected: str) -> None:
     """Header values and token fields are masked; other fields are kept."""
-    assert_that(mask_authorization(message)).is_equal_to(expected)
+    assert_that(mask_credential_fields(message)).is_equal_to(expected)

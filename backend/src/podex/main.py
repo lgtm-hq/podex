@@ -10,10 +10,11 @@ from podex.api.v2.auth_rejection import (
 from podex.api.v2.errors import install_exception_handlers
 from podex.api.v2.router import api_v2_router
 from podex.config import Settings, get_settings
-from podex.logging_config import configure_logging
+from podex.logging_config import configure_logging, redact_secret_values
 from podex.metrics import MetricsMiddleware, build_metrics, get_prometheus_metrics
 from podex.middleware import RateLimitMiddleware, RequestContextMiddleware
 from podex.observability import init_sentry
+from podex.redaction import secret_values
 from podex.services.cache import TTLCache
 from podex.services.limiter_factory import build_rate_limiter
 
@@ -22,6 +23,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     """Build and configure the Podex FastAPI application."""
     resolved = settings or get_settings()
     configure_logging()
+    redact_secret_values(secret_values(resolved))
     init_sentry(resolved)
     application = FastAPI(title=resolved.app_name, debug=resolved.debug)
     # Stash the resolved settings on ``application.state`` so route dependencies see
