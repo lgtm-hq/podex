@@ -334,7 +334,12 @@ def test_trace_line_with_the_longest_address_prints_it_whole(
     ],
 )
 def test_header_value_is_bounded(value: str | bytes, expected: str) -> None:
-    """A header value one character past the bound is withheld."""
+    """A header value one character past the bound is withheld.
+
+    This pins the limit's behaviour only. The value pattern repeats the same
+    limit, so removing either explicit length check alone changes no output
+    and fails no case here.
+    """
     assert_that(header_value(value)).is_equal_to(expected)
 
 
