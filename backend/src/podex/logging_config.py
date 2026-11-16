@@ -5,19 +5,19 @@ record and uncaught exception passes; :func:`configure_logging` also sets the
 application's log format. Every process entrypoint installs the boundaries: the API
 (``create_app``), the scheduler runner and the migration environment.
 
-- Records from third-party SDK loggers (the LLM SDK, the HTTP clients and
-  their transports, the Spotify SDK, the object storage client, the ASGI
-  server's access log) lose credentials, request and response bodies and
-  error text, and keep method, host, path, status and exception classes
-  (:mod:`podex.sdk_log_boundary`).
+- Records from third-party library loggers (the LLM SDK, the HTTP clients
+  and their transports, the Spotify SDK, the object storage client, the
+  error-reporting SDK, the settings loader, the ASGI server's access log)
+  are printed only in known forms, as skeletons built from validated parts
+  (method, sanitised URL, status, allowlisted headers, exception classes);
+  any other such record is withheld (:mod:`podex.sdk_log_boundary`).
 - Database errors are written by class and SQLSTATE only, wherever they are
   logged or printed (application code, the scheduler, the ASGI server,
   Alembic, uncaught exceptions): a driver's text can carry row values
   (``DETAIL:  Key (column)=(value) already exists.``).
 
 Text the application formats into a string before logging it is outside
-these boundaries; an SDK's own pre-formatted text passes the SDK
-boundary's text rules.
+these boundaries.
 """
 
 import contextlib
@@ -173,22 +173,51 @@ def sanitise_database_errors(record: logging.LogRecord) -> None:
             record.msg, record.args = mapping, ()
 
 
+SANITISER_FAILED = "<unprintable: sanitiser failed>"
+"""Constant message left when even the descriptive placeholder fails."""
+
+_CLEARED = (
+    ("msg", SANITISER_FAILED),
+    ("args", ()),
+    ("exc_info", None),
+    ("exc_text", None),
+    ("stack_info", None),
+)
+
+
+def _clear(record: logging.LogRecord) -> None:
+    """Set every content attribute of a record to a constant; never raises."""
+    for name, value in _CLEARED:
+        with contextlib.suppress(Exception):
+            setattr(record, name, value)
+
+
 def _replace_with_placeholder(record: logging.LogRecord) -> None:
     """Replace a record's content after sanitising it failed.
 
-    The message and any traceback text (attached or cached) become
-    placeholders naming the message type and the exception classes; the
-    arguments, the attached exception and the stack text are cleared.
-    Nothing original is printed, whatever the record held.
+    Every content attribute is first set to a constant (message, arguments,
+    attached exception, traceback and stack text), so nothing original
+    remains even if what follows fails. Then the message and any traceback
+    text (attached or cached) become placeholders naming the message type
+    and the exception classes.
     """
-    error = record.exc_info[1] if isinstance(record.exc_info, tuple) else None
-    classes = exception_class_names(error) if isinstance(error, BaseException) else []
-    traced = error if isinstance(error, BaseException) else record.exc_text
-    record.msg = placeholder(record.msg, classes=classes)
-    record.args = ()
-    record.exc_text = None if traced is None else placeholder(traced, classes=classes)
-    record.exc_info = None
-    record.stack_info = None
+    message: object = None
+    exc_info: object = None
+    exc_text: object = None
+    with contextlib.suppress(Exception):
+        message, exc_info, exc_text = record.msg, record.exc_info, record.exc_text
+    _clear(record)
+    with contextlib.suppress(Exception):
+        error = exc_info[1] if isinstance(exc_info, tuple) else None
+        classes = (
+            exception_class_names(error) if isinstance(error, BaseException) else []
+        )
+        traced = error if isinstance(error, BaseException) else exc_text
+        described = placeholder(message, classes=classes)
+        record.exc_text = (
+            None if traced is None else placeholder(traced, classes=classes)
+        )
+        record.msg = described
 
 
 def _sanitising_record(
@@ -196,11 +225,11 @@ def _sanitising_record(
 ) -> logging.LogRecord:
     """Create a record with the inner factory, then apply the boundaries.
 
-    A record from a third-party SDK logger passes the SDK boundary, which
-    prints exceptions by class only and so also withholds database text;
-    every other record has database text withheld. Never raises from
-    sanitising: on any failure the record's content is replaced by
-    placeholders instead.
+    A record from a third-party library logger passes the SDK boundary,
+    which prints only known forms built from validated parts and so also
+    withholds database text; every other record has database text withheld.
+    Never raises from sanitising: on any failure the record's content is
+    replaced by placeholders, and if that fails too, by constants.
     """
     record: logging.LogRecord = inner(*args, **kwargs)
     sanitised = False

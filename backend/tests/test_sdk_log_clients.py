@@ -152,13 +152,15 @@ def test_llm_success_logs_no_secret(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        f"HTTP Request: POST https://[redacted]@{_LLM_HOST}/v1/messages"
+        f"HTTP Request: POST https://{_LLM_HOST}/v1/messages"
         '?token=[redacted] "HTTP/1.1 200 OK"',
-        "'headers': {'Authorization': '[redacted]'}",
-        "'x-provider-trace': '[redacted]'",
+        "Request options: method=POST url=/v1/messages "
+        "params={'token': '[redacted]'} headers={} (+1 other headers) "
+        "(+8 other options)",
         "'request-id': 'req_test'",
-        "'json_data': '[withheld dict",
+        "(+2 other headers)",
     )
+    assert_that(output).does_not_contain("x-provider-trace", "set-cookie")
 
 
 def test_llm_error_status_logs_no_secret(
@@ -174,10 +176,10 @@ def test_llm_error_status_logs_no_secret(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        f"HTTP Response: POST https://[redacted]@{_LLM_HOST}/v1/messages"
+        f"HTTP Response: POST https://{_LLM_HOST}/v1/messages"
         '?token=[redacted] "500 Internal Server Error"',
-        "'set-cookie': '[redacted]'",
         "'server': '[redacted]'",
+        "(+2 other headers)",
     )
 
 
@@ -202,7 +204,7 @@ def test_llm_connection_error_logs_class_not_text(
         "Encountered Exception",
         "Traceback (most recent call last):",
         "httpx2.ConnectError: [message withheld]",
-        f"Sending HTTP Request: POST https://[redacted]@{_LLM_HOST}/v1/messages",
+        f"Sending HTTP Request: POST https://{_LLM_HOST}/v1/messages",
     )
     assert_that(
         [record.exc_info for record in sdk_logs.records if record.exc_info]
@@ -234,7 +236,7 @@ def test_request_line_masks_credential_query_values(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        f"HTTP Request: GET https://[redacted]@{_API_HOST}/v1/items"
+        f"HTTP Request: GET https://{_API_HOST}/v1/items"
         f'?{key}=[redacted]&page=2 "HTTP/1.1 200 OK"',
     )
 
@@ -295,10 +297,8 @@ def test_connection_layer_masks_response_headers(
     assert_that(response.status_code).is_equal_to(200)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "receive_response_headers.complete protocol=HTTP/1.1 status=200 "
-        "headers={'Content-Type': 'text/plain', 'Set-Cookie': '[redacted]', "
-        "'X-Provider-Trace': '[redacted]'",
-        f"connect_tcp.started host='{_API_HOST}'",
+        "receive_response_headers.complete protocol=HTTP/1.1 status=200",
+        f"connect_tcp.started host='{_API_HOST}' port=80",
     )
 
 
@@ -392,9 +392,8 @@ def test_requests_stack_failure_withholds_error_text(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "after connection broken by 'urllib3.exceptions.NewConnectionError: "
-        "[message withheld]'",
-        "/v1/items?token=[redacted]",
+        "Retrying (Retry(total=0)) after connection broken by "
+        "'urllib3.exceptions.NewConnectionError': /v1/items?token=[redacted]",
     )
 
 
@@ -467,15 +466,20 @@ def test_storage_client_logs_no_secret(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        f"<AWSPreparedRequest method=PUT url=https://{_STORAGE_HOST}/artifacts/",
-        "'Authorization': '[redacted]'",
-        "'X-Amz-Security-Token': '[redacted]'",
-        "x-amz-security-token:[redacted]",
+        "Sending http request: <botocore.awsrequest.AWSPreparedRequest "
+        f"method=PUT url=https://{_STORAGE_HOST}/artifacts/transcripts/1.json ",
+        "CanonicalRequest:\nPUT /artifacts/transcripts/1.json headers=",
         "Signature:\n[redacted]",
-        "Response headers: {'x-amz-request-id': 'req-test', "
-        "'x-provider-trace': '[redacted]'}",
-        "Response body:\n'[withheld bytes",
+        "Response headers: {'x-amz-request-id': 'req-test'} (+1 other headers)",
+        "Response body:\n[withheld response body (",
     )
+    assert_that(output).does_not_contain(
+        "authorization",
+        "x-amz-security-token",
+        "x-provider-trace",
+    )
+    if status == 403:
+        assert_that(output).contains("; error code AccessDenied]")
 
 
 def test_storage_client_failure_withholds_error_text(
@@ -496,6 +500,7 @@ def test_storage_client_failure_withholds_error_text(
     _assert_clean(output, secrets)
     assert_that(output).contains(
         "Exception received when sending HTTP request.",
+        "Traceback (most recent call last):",
         "ConnectionError: [message withheld]",
     )
 
@@ -593,8 +598,8 @@ def test_request_options_body_is_withheld_not_dropped(
     assert_that(seen[0]["messages"][0]["content"]).contains(secrets["request-body"])
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "Request options: {'method': 'post', 'url': '/v1/messages'",
-        "'params': {'token': '[redacted]'}",
+        "Request options: method=POST url=/v1/messages "
+        "params={'token': '[redacted]'}",
     )
 
 
@@ -624,8 +629,8 @@ def test_llm_request_options_mask_mixed_case_credential_names(
     _assert_clean(output, secrets)
     options = _records(sdk_logs, "Request options")
     assert_that(options).is_not_empty()
-    assert_that(options[0].args[0]["params"]).is_equal_to(
-        {"ToKeN": REDACTED, "AWSAccessKeyId": REDACTED},
+    assert_that(options[0].getMessage()).contains(
+        f"params={{'ToKeN': '{REDACTED}', 'AWSAccessKeyId': '{REDACTED}'}}",
     )
 
 
@@ -644,9 +649,9 @@ def test_llm_standalone_header_records_follow_the_header_allowlist(
 
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
-    assert_that(output).contains("request_id: req_test", "workspace_id: [redacted]")
+    assert_that(output).contains("request_id: req_test", "workspace_id: [withheld]")
     assert_that(_records(sdk_logs, "workspace_id")[0].args).is_equal_to(
-        ("[redacted]",),
+        ("[withheld]",),
     )
 
 
@@ -699,7 +704,7 @@ def test_connection_pool_decodes_query_names(
     assert_that(response.status).is_equal_to(200)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        f'http://{_API_HOST}:80 "GET /v1/items?api%5Fkey=[redacted]&page=2 HTTP/1.1"'
+        f'http://{_API_HOST}:80 "GET /v1/items?api_key=[redacted]&page=2 HTTP/1.1"'
         " 200",
     )
 
@@ -724,7 +729,7 @@ def test_server_access_log_decodes_query_names(
         (
             "127.0.0.1:5000",
             "GET",
-            "/auth/callback?%63ode=[redacted]&state=x",
+            "/auth/callback?code=[redacted]&state=x",
             "1.1",
             204,
         ),
@@ -753,8 +758,8 @@ def test_storage_signing_dump_follows_the_header_allowlist(
     output = logged(sdk_logs)
     _assert_clean(output, secrets)
     assert_that(output).contains(
-        "CanonicalRequest:\nPUT\n/artifacts/k",
-        f"host:{_STORAGE_HOST}",
-        "x-amz-meta-private:[redacted]",
-        "x-amz-security-token:[redacted]",
+        "CanonicalRequest:\nPUT /artifacts/k headers=",
+        f"'host': '{_STORAGE_HOST}'",
+        "signed_headers=",
     )
+    assert_that(output).does_not_contain("x-amz-meta-private", "x-amz-security-token")

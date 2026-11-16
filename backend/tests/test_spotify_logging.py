@@ -14,11 +14,14 @@ from typing import Any
 
 import pytest
 import requests
+import urllib3
 from assertpy import assert_that
+from spotipy import Spotify
 from spotipy.cache_handler import MemoryCacheHandler
+from spotipy.exceptions import SpotifyException
+from spotipy.util import Retry
 
 from podex.logging_config import configure_logging
-from podex.sdk_log_rules import mask_credential_fields
 from podex.services.discovery_spotify import SpotifyDiscovery
 
 _CLIENT_ID = f"spotify-client-{token_hex(6)}"
@@ -92,8 +95,10 @@ def test_spotify_debug_lines_mask_credentials(
 
     basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
     assert_that(discovered).is_not_none()
-    assert_that(caplog.text).contains("Sending POST request")
-    assert_that(caplog.text).contains("'Authorization': '[redacted]'")
+    assert_that(caplog.text).contains(
+        "Sending POST request to https://accounts.spotify.com/api/token with "
+        "Headers: {} (+1 other headers) and Body: [withheld]",
+    )
     assert_that(caplog.text).contains(
         f"Sending GET to https://api.spotify.com/v1/shows/{_SHOW_ID} with Params: "
         "{'market': '[withheld]'}",
@@ -143,7 +148,9 @@ def test_spotify_failure_lines_mask_credentials(
         "Params: {'market': '[withheld]'} returned 401 due to "
         "[provider message withheld]",
     )
-    assert_that(caplog.text).contains("'Authorization': '[redacted]'")
+    assert_that(caplog.text).contains(
+        "Headers: {'content-type': 'application/json'} (+1 other headers)",
+    )
     for credential in (_CLIENT_SECRET, basic, _ACCESS_TOKEN, _PROVIDER_TEXT):
         assert_that(_everything(caplog)).does_not_contain(credential)
 
@@ -153,20 +160,103 @@ def test_spotify_failure_lines_mask_credentials(
     [
         (
             "Headers: {'Authorization': 'Basic YWJjOmRlZg=='} and Body: {}",
-            "Headers: {'Authorization': '[redacted]'} and Body: {}",
+            "[record withheld: unrecognised form, 61 characters]",
         ),
         (
             "Headers: {'Authorization': 'Bearer tok', 'Content-Type': 'x'}",
-            "Headers: {'Authorization': '[redacted]', 'Content-Type': 'x'}",
+            "[record withheld: unrecognised form, 61 characters]",
         ),
         (
             "Body: {'refresh_token': 'r1', 'code': 'c1', 'status_code': 200}",
-            "Body: {'refresh_token': '[redacted]', 'code': '[redacted]', "
-            "'status_code': 200}",
+            "[record withheld: unrecognised form, 63 characters]",
         ),
-        ("RESULTS: {'name': 'Example Show'}", "RESULTS: {'name': 'Example Show'}"),
+        (
+            "RESULTS: {'name': 'Example Show'}",
+            "RESULTS: [withheld response body (24 characters)]",
+        ),
     ],
 )
-def test_authorization_material_is_masked(message: str, expected: str) -> None:
-    """Header values and token fields are masked; other fields are kept."""
-    assert_that(mask_credential_fields(message)).is_equal_to(expected)
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.WARNING])
+def test_authorization_material_is_never_printed(
+    message: str,
+    expected: str,
+    level: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Lines the former Spotify filter masked are withheld or skeletons."""
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+
+    logging.getLogger("spotipy.oauth2").log(level, message)
+
+    assert_that(caplog.records[-1].getMessage()).is_equal_to(expected)
+    for value in ("YWJjOmRlZg==", "tok'", "r1", "c1", "Example Show"):
+        assert_that(_everything(caplog)).does_not_contain(value)
+
+
+@pytest.mark.parametrize(
+    ("retry_after", "shown"),
+    [("7", "7"), (f"soon {_PROVIDER_TEXT}", "[withheld]")],
+)
+def test_rate_limit_warning_prints_only_a_numeric_delay(
+    retry_after: str,
+    shown: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The SDK's rate-limit warning keeps a numeric Retry-After, nothing else."""
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+    retry = Retry(total=3, status_forcelist=[429], allowed_methods=["GET"])
+    response = urllib3.HTTPResponse(
+        status=429,
+        headers={"Retry-After": retry_after},
+        preload_content=False,
+    )
+
+    retry.increment(method="GET", url="/v1/shows/x", response=response)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert_that(warnings).is_length(1)
+    assert_that(warnings[0].getMessage()).is_equal_to(
+        "Your application has reached a rate/request limit. Retry will occur "
+        f"after: {shown} s",
+    )
+    assert_that(_everything(caplog)).does_not_contain(_PROVIDER_TEXT)
+
+
+def _reject_search(
+    _session: requests.Session,
+    _method: str,
+    url: str,
+    **_kwargs: Any,
+) -> _JsonResponse:
+    """Reject a search with a provider message."""
+    return _JsonResponse(
+        url,
+        {"error": {"status": 400, "message": f"Bad query {_PROVIDER_TEXT}"}},
+        status=400,
+    )
+
+
+def test_error_line_for_a_long_query_is_a_skeleton(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A very long query still yields the skeleton, never the provider text."""
+    monkeypatch.setattr(requests.Session, "request", _reject_search)
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+
+    with pytest.raises(SpotifyException):
+        Spotify(auth=_ACCESS_TOKEN).search(q="q" * 4_100)
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert_that(errors).is_length(1)
+    assert_that(errors[0].getMessage()).starts_with(
+        "HTTP Error for GET to https://api.spotify.com/v1/search with Params: {",
+    )
+    assert_that(errors[0].getMessage()).ends_with(
+        "returned 400 due to [provider message withheld]",
+    )
+    for value in (_PROVIDER_TEXT, _ACCESS_TOKEN, "qqqq"):
+        assert_that(_everything(caplog)).does_not_contain(value)

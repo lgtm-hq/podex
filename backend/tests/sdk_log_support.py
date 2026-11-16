@@ -4,11 +4,16 @@ import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
 from secrets import token_hex
+from typing import Any
 
 import httpx
 import pytest
 
-from podex.logging_config import configure_logging, redact_secret_values
+from podex.logging_config import (
+    configure_logging,
+    install_log_boundaries,
+    redact_secret_values,
+)
 
 CREDENTIAL_QUERY_KEYS = (
     "token",
@@ -90,7 +95,7 @@ def log_sdk_request(secret: str) -> None:
 
 
 SDK_REQUEST_LINE = (
-    "HTTP Request: GET https://[redacted]@api.example.test/v1/items"
+    "HTTP Request: GET https://api.example.test/v1/items"
     '?token=[redacted] "HTTP/1.1 200 OK"'
 )
 """What :func:`log_sdk_request` writes once the boundary is installed."""
@@ -117,3 +122,33 @@ def debug_logging(
         yield
     finally:
         redact_secret_values(())
+
+
+@contextmanager
+def cached_record_text(exc_text: str, stack_info: str) -> Iterator[None]:
+    """Create records that already carry traceback and stack text.
+
+    The boundary is installed around a record factory that sets both, as an
+    inner factory could, and the previous factory is restored afterwards.
+
+    Args:
+        exc_text: Cached traceback text set on every record.
+        stack_info: Stack text set on every record.
+
+    Yields:
+        None: While records are created this way.
+    """
+    previous = logging.getLogRecordFactory()
+
+    def caching_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
+        record = logging.LogRecord(*args, **kwargs)
+        record.exc_text = exc_text
+        record.stack_info = stack_info
+        return record
+
+    logging.setLogRecordFactory(caching_factory)
+    try:
+        install_log_boundaries()
+        yield
+    finally:
+        logging.setLogRecordFactory(previous)

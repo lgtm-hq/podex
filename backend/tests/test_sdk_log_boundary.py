@@ -1,30 +1,43 @@
-"""The third-party SDK log boundary: installation, fail-safety and text rules.
+"""The third-party log boundary: installation, fail-safety and validators.
 
-Client-by-client behaviour is tested in ``tests/test_sdk_log_clients.py``.
+Client-by-client behaviour is tested in ``tests/test_sdk_log_clients.py``
+and ``tests/test_sdk_log_default_deny.py``.
 """
 
 import logging
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
-from typing import Any
 
 import httpx
 import pytest
 from assertpy import assert_that
 
-from podex import sdk_log_boundary
-from podex.logging_config import install_log_boundaries
+from podex import logging_config, sdk_log_boundary
 from podex.sdk_log_boundary import format_withheld_exception, is_sdk_logger
-from podex.sdk_log_rules import mask_credential_fields, safe_headers, safe_url
+from podex.sdk_log_rules import (
+    headers_skeleton,
+    is_credential_key,
+    safe_header_name,
+    url_skeleton,
+)
 from tests import boundary_sdk_config_process
 from tests.process_support import run_in_fresh_process
 from tests.sdk_log_support import (
     SDK_REQUEST_LINE,
+    cached_record_text,
     debug_logging,
     logged,
     synthetic_secret,
 )
+
+_WITHHELD = "[record withheld: unrecognised form"
+
+
+def _everything(caplog: pytest.LogCaptureFixture) -> str:
+    """Return everything the records could print, stack text included."""
+    stacks = [str(record.stack_info) for record in caplog.records]
+    return "\n".join([logged(caplog), *stacks])
 
 
 def test_boundary_is_installed_once_and_survives_reconfiguration(
@@ -47,18 +60,20 @@ def test_boundary_is_installed_once_and_survives_reconfiguration(
     assert_that(stdout + stderr).does_not_contain(secret)
 
 
+def _broken(*_args: object) -> object:
+    """Fail as an internal error of the boundary would."""
+    raise RuntimeError("sanitiser bug")
+
+
 def test_internal_failure_yields_placeholder_and_no_content(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """If cleaning fails, the record shows a placeholder and nothing original."""
+    """If the boundary fails, the record shows a placeholder, nothing original."""
     secret = synthetic_secret("failsafe")
 
-    def broken(_text: str) -> str:
-        raise RuntimeError("sanitiser bug")
-
     with debug_logging(caplog):
-        monkeypatch.setattr(sdk_log_boundary, "sanitise_text", broken)
+        monkeypatch.setattr(sdk_log_boundary, "known_form", _broken)
         try:
             raise httpx.ConnectError(f"refused: {secret}")
         except httpx.ConnectError:
@@ -66,16 +81,50 @@ def test_internal_failure_yields_placeholder_and_no_content(
                 "request to %s failed",
                 httpx.URL(f"https://reader:{secret}@api.example.test/"),
                 exc_info=True,
+                stack_info=True,
             )
 
-    output = logged(caplog)
+    record = caplog.records[-1]
+    output = _everything(caplog)
     assert_that(output).does_not_contain(secret)
     assert_that(output).contains(
         "<unprintable: sanitiser failed on str>",
         "<unprintable: sanitiser failed on ConnectError> [ConnectError]",
     )
-    assert_that(caplog.records[-1].exc_info).is_none()
-    assert_that(caplog.records[-1].args).is_empty()
+    assert_that(record.exc_info).is_none()
+    assert_that(record.args).is_empty()
+    assert_that(record.stack_info).is_none()
+
+
+def test_failing_placeholder_leaves_constants_and_never_raises(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If building the placeholder fails too, only constants remain."""
+    secret = synthetic_secret("emergency")
+
+    with debug_logging(caplog):
+        monkeypatch.setattr(sdk_log_boundary, "known_form", _broken)
+        monkeypatch.setattr(logging_config, "sanitise_database_errors", _broken)
+        monkeypatch.setattr(logging_config, "placeholder", _broken)
+        for name in ("httpx", "podex.services.example"):
+            try:
+                raise ValueError(secret)
+            except ValueError:
+                logging.getLogger(name).error(
+                    "failed %s",
+                    secret,
+                    exc_info=True,
+                    stack_info=True,
+                )
+
+    assert_that(_everything(caplog)).does_not_contain(secret)
+    for record in caplog.records[-2:]:
+        assert_that(record.msg).is_equal_to("<unprintable: sanitiser failed>")
+        assert_that(record.args).is_empty()
+        assert_that(record.exc_info).is_none()
+        assert_that(record.exc_text).is_none()
+        assert_that(record.stack_info).is_none()
 
 
 def test_application_records_are_not_rewritten(
@@ -105,7 +154,11 @@ def test_application_records_are_not_rewritten(
         ("anthropic._base_client", True),
         ("botocore.endpoint", True),
         ("urllib3.connectionpool", True),
+        ("charset_normalizer", True),
         ("spotipy.oauth2", True),
+        ("sentry_sdk.errors", True),
+        ("pydantic_settings", True),
+        ("bs4.dammit", True),
         ("uvicorn.access", True),
         ("uvicorn.error", False),
         ("httpxtra", False),
@@ -119,78 +172,95 @@ def test_sdk_logger_families(name: str, expected: bool) -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "expected"),
+    ("name", "expected"),
     [
-        (
-            "Headers: {'Authorization': 'Basic YWJjOmRlZg=='} and Body: {}",
-            "Headers: {'Authorization': '[redacted]'} and Body: {}",
-        ),
-        (
-            "{'X-Amz-Security-Token': b'tok', 'Content-Type': b'x'}",
-            "{'X-Amz-Security-Token': b'[redacted]', 'Content-Type': b'x'}",
-        ),
-        ('{"access_token": "a\\"b", "status_code": 200}', None),
-        (
-            "Authorization: AWS4-HMAC-SHA256 Credential=AKIA/x, Signature=abc",
-            "Authorization: [redacted], Signature=[redacted]",
-        ),
-        ("x-amz-security-token:tok\nhost:h", "x-amz-security-token:[redacted]\nhost:h"),
-        (
-            "/p?token=t&page=2&api_key=k",
-            "/p?token=[redacted]&page=2&api_key=[redacted]",
-        ),
-        ("SSECustomerKey='k1' Bucket='b'", "SSECustomerKey='[redacted]' Bucket='b'"),
-        ("token=[redacted]&x=1", "token=[redacted]&x=1"),
-        ("status_code: 200, monkey=1, passwordless: on", None),
+        ("token", True),
+        ("ToKeN", True),
+        ("AWSAccessKeyId", True),
+        ("AccessKeyId", True),
+        ("SecretAccessKey", True),
+        ("SessionToken", True),
+        ("x-amz-security-token", True),
+        ("api%5Fkey", True),
+        ("SSECustomerKey", True),
+        ("status_code", False),
+        ("monkey", False),
+        ("request-id", False),
     ],
 )
-def test_credential_fields_in_text(text: str, expected: str | None) -> None:
-    """Credential-named values are masked; other fields are kept."""
-    if expected is None:
-        expected = text.replace('"a\\"b"', '"[redacted]"')
-    assert_that(mask_credential_fields(text)).is_equal_to(expected)
+def test_credential_names(name: str, expected: bool) -> None:
+    """Credential names match in any case, spelling or encoding."""
+    assert_that(is_credential_key(name)).is_equal_to(expected)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        ("Content-Type", "content-type"),
+        ("X-Ratelimit-Remaining", "x-ratelimit-remaining"),
+        ("X-Ratelimit-Token", None),
+        ("anthropic-ratelimit-api-key", None),
+        ("X-Debug-Trace", None),
+        ("Authorization", None),
+        ("x-ratelimit-bad name", None),
+    ],
+)
+def test_header_allowlist_rejects_credential_names_first(
+    name: str,
+    expected: str | None,
+) -> None:
+    """A credential-named header is never allowlisted, even by prefix."""
+    assert_that(safe_header_name(name)).is_equal_to(expected)
+
+
+def test_headers_skeleton_prints_allowlisted_names_and_counts_the_rest() -> None:
+    """Only allowlisted names print; values are validated; others counted."""
+    headers = httpx.Headers(
+        [
+            ("Content-Type", "application/json"),
+            ("Set-Cookie", "a=1"),
+            ("X-Debug-Thing", "x"),
+            ("Server", "<script>"),
+            ("anthropic-ratelimit-requests-remaining", "9"),
+            ("Date", "d" * 200),
+        ],
+    )
+
+    assert_that(headers_skeleton(headers)).is_equal_to(
+        "{'content-type': 'application/json', 'server': '[withheld]', "
+        "'anthropic-ratelimit-requests-remaining': '9', 'date': '[withheld]'} "
+        "(+2 other headers)",
+    )
+    assert_that(headers_skeleton([(b"X-Api-Key", b"k"), ("bad",)])).is_equal_to(
+        "{} (+1 other headers)",
+    )
+    assert_that(headers_skeleton(42)).is_equal_to("{}")
 
 
 @pytest.mark.parametrize(
     ("url", "expected"),
     [
         (
-            "https://user:pw@api.example.test/v1?api%5Fkey=k&page=2#frag",
-            "https://[redacted]@api.example.test/v1?api%5Fkey=[redacted]&page=2"
-            "#[redacted]",
+            "https://user:pw@api.example.test:8443/v1?api%5Fkey=k&page=2#frag",
+            "https://api.example.test:8443/v1?api_key=[redacted]&page=2",
         ),
-        ("/v1/messages?Signature=s", "/v1/messages?Signature=[redacted]"),
-        ("file:///tmp/x", "file:///tmp/x"),
-        ("http://[::1", "http://[::1"),
+        (
+            "/v1/messages?Signature=s&q=hello world",
+            "/v1/messages?Signature=[redacted]&q=[withheld]",
+        ),
+        ("/v1/items?a%20b=1&flag", "/v1/items?[withheld]&flag"),
+        ("/reset/<script>", "/[withheld]"),
+        ("ftp://files.example.test/x", "[withheld]"),
+        ("http://[::1", "[withheld]"),
+        ("/v1?" + "&".join(f"f{index}=1" for index in range(20)), None),
     ],
 )
-def test_safe_url(url: str, expected: str) -> None:
-    """URLs keep scheme, host, path and other fields; credentials are masked."""
-    assert_that(safe_url(url)).is_equal_to(expected)
-
-
-def test_safe_headers_keep_names_and_allowlisted_values() -> None:
-    """Every header name stays; only allowlisted values are shown."""
-    headers = httpx.Headers(
-        [
-            ("Content-Type", "application/json"),
-            ("Set-Cookie", "a=1"),
-            ("Set-Cookie", "b=2"),
-            ("anthropic-ratelimit-requests-remaining", "9"),
-        ],
-    )
-
-    assert_that(safe_headers(headers)).is_equal_to(
-        {
-            "content-type": "application/json",
-            "set-cookie": "[redacted], [redacted]",
-            "anthropic-ratelimit-requests-remaining": "9",
-        },
-    )
-    assert_that(safe_headers([(b"X-Api-Key", b"k"), ("bad",)])).is_equal_to(
-        {b"X-Api-Key": "[redacted]"},
-    )
-    assert_that(safe_headers(42)).is_empty()
+def test_url_skeleton(url: str, expected: str | None) -> None:
+    """URLs keep validated parts only; credential values are masked."""
+    if expected is None:
+        expected = "/v1?" + "&".join(f"f{index}=1" for index in range(16))
+        expected += "&[+4 more fields]"
+    assert_that(url_skeleton(url)).is_equal_to(expected)
 
 
 def _raise_chained_group(secret: str) -> None:
@@ -219,34 +289,61 @@ def test_withheld_traceback_keeps_frames_classes_and_chain() -> None:
     )
 
 
-def test_record_shapes_are_rendered_safely(caplog: pytest.LogCaptureFixture) -> None:
-    """Named arguments, a lone mapping, objects, exceptions and nesting limits.
+@pytest.mark.parametrize("level", [logging.DEBUG, logging.WARNING, logging.ERROR])
+@pytest.mark.parametrize(
+    ("logger_name", "message"),
+    [
+        ("httpcore.http11", "Headers: {'Authorization': '%s'}"),
+        ("botocore.endpoint", "Authorization: Bearer %s"),
+        ("urllib3.connectionpool", 'payload {"access_token": "%s"}'),
+        ("spotipy.oauth2", "callback ?%%63ode=%s&state=x"),
+        ("anthropic._base_client", "%(method)s %(token)s"),
+        ("sentry_sdk.envelopes", "detail: %s"),
+        ("pydantic_settings", "settings: %s"),
+    ],
+)
+def test_unrecognised_records_are_withheld_at_every_level(
+    level: int,
+    logger_name: str,
+    message: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A record that is not a known form keeps logger, level and size only."""
+    secret = synthetic_secret("unknown")
+    arguments: tuple[object, ...] = (secret,)
+    if "%(" in message:
+        arguments = ({"method": "GET", "token": secret},)
+    with debug_logging(caplog):
+        logging.getLogger(logger_name).log(level, message, *arguments)
 
-    The secret is also a configured value, so it is replaced wherever it
-    appears as plain text.
-    """
-    secret = synthetic_secret("shapes")
-    with debug_logging(caplog, (secret,)):
-        sdk = logging.getLogger("botocore.endpoint")
-        sdk.warning("%(method)s %(token)s", {"method": "GET", "token": secret})
-        sdk.warning("params: %s", {"headers": {"Cookie": secret}, "body": secret})
-        sdk.warning(ValueError(secret))
-        sdk.warning(
-            "response: %r and %s",
-            httpx.Response(503, headers={"X-Trace": secret}),
-            [secret.encode(), (secret, {"nested": [{"deep": {"deeper": secret}}]})],
-        )
+    record = caplog.records[-1]
+    assert_that(_everything(caplog)).does_not_contain(secret)
+    assert_that(record.levelno).is_equal_to(level)
+    assert_that(record.msg).is_equal_to(f"{_WITHHELD}, {len(message)} characters]")
+    assert_that(record.args).is_empty()
 
-    output = logged(caplog)
-    assert_that(output).does_not_contain(secret)
-    assert_that(output).contains(
-        "GET [redacted]",
-        "params: {'headers': {'Cookie': '[redacted]'}, 'body': '[withheld str",
-        "ValueError: [message withheld]",
-        "<Response status=503 headers={'x-trace': '[redacted]'}>",
-        "[withheld bytes",
-        "('[redacted]', {'nested': '<unprintable: sanitiser limit reached on list>'})",
+
+def test_withheld_record_names_exception_classes_only(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A withheld record with an exception names its classes, nothing else."""
+    secret = synthetic_secret("classes")
+    with debug_logging(caplog):
+        try:
+            try:
+                raise KeyError(secret)
+            except KeyError as cause:
+                raise httpx.ConnectError(secret) from cause
+        except httpx.ConnectError:
+            logging.getLogger("urllib3.connection").error("broken", exc_info=True)
+
+    record = caplog.records[-1]
+    assert_that(_everything(caplog)).does_not_contain(secret)
+    assert_that(record.msg).is_equal_to(
+        f"{_WITHHELD}, 6 characters; exception httpx.ConnectError, KeyError]",
     )
+    assert_that(record.exc_info).is_none()
+    assert_that(record.exc_text).is_none()
 
 
 def _raise_group(secret: str) -> None:
@@ -260,7 +357,7 @@ def _raise_group(secret: str) -> None:
 def test_sdk_exception_group_keeps_member_classes_and_frames(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A logged group prints each member's class and frames, no message."""
+    """A known form's group prints each member's class and frames, no message."""
     secret = synthetic_secret("group")
     with debug_logging(caplog):
         try:
@@ -284,102 +381,16 @@ def test_sdk_exception_group_keeps_member_classes_and_frames(
     )
 
 
-@pytest.mark.parametrize("logger_name", ["httpcore.http11", "botocore.endpoint"])
-@pytest.mark.parametrize(
-    ("message", "masked"),
-    [
-        (
-            "Headers: {'Authorization': '%s'}",
-            "Headers: {'Authorization': '[redacted]'}",
-        ),
-        ("Authorization: Bearer %s", "Authorization: [redacted]"),
-        (
-            '{"access_token": "%s", "page": 2}',
-            '{"access_token": "[redacted]", "page": 2}',
-        ),
-        ("callback ?%%63ode=%s&state=x", "callback ?%63ode=[redacted]&state=x"),
-    ],
-)
-def test_placeholders_inside_quotes_or_after_a_prefix_are_masked(
-    logger_name: str,
-    message: str,
-    masked: str,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The rendered message is scanned whole, so split fields are masked."""
-    secret = synthetic_secret("split")
-    with debug_logging(caplog):
-        logging.getLogger(logger_name).warning(message, secret)
-
-    record = caplog.records[-1]
-    assert_that(logged(caplog)).does_not_contain(secret)
-    assert_that(record.msg).is_equal_to(masked)
-    assert_that(record.args).is_empty()
-
-
-@pytest.mark.parametrize(
-    ("message", "expected"),
-    [
-        (
-            "Headers: {'Authorization': 'Basic YWJjOmRlZg=='} and Body: {}",
-            "Headers: {'Authorization': '[redacted]'} and Body: {}",
-        ),
-        (
-            "Headers: {'Authorization': 'Bearer tok', 'Content-Type': 'x'}",
-            "Headers: {'Authorization': '[redacted]', 'Content-Type': 'x'}",
-        ),
-        (
-            "Body: {'refresh_token': 'r1', 'code': 'c1', 'status_code': 200}",
-            "Body: {'refresh_token': '[redacted]', 'code': '[redacted]', "
-            "'status_code': 200}",
-        ),
-    ],
-)
-@pytest.mark.parametrize("shape", ["formatted", "argument"])
-def test_former_spotify_filter_cases_hold_through_the_boundary(
-    message: str,
-    expected: str,
-    shape: str,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """What the removed Spotify filter masked is still masked, either way."""
-    with debug_logging(caplog):
-        spotify = logging.getLogger("spotipy.oauth2")
-        if shape == "formatted":
-            spotify.warning(message)
-        else:
-            spotify.warning("%s", message)
-
-    assert_that(caplog.records[-1].getMessage()).is_equal_to(expected)
-    for value in ("YWJjOmRlZg==", "tok'", "r1", "c1"):
-        assert_that(logged(caplog)).does_not_contain(value)
-
-
 def test_failure_clears_cached_traceback_and_stack_text(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """If cleaning fails, cached text on the record is replaced as well."""
+    """If the boundary fails, cached text on the record is replaced as well."""
     secret = synthetic_secret("cached")
-    previous = logging.getLogRecordFactory()
-
-    def caching_factory(*args: Any, **kwargs: Any) -> logging.LogRecord:
-        record = logging.LogRecord(*args, **kwargs)
-        record.exc_text = f"cached traceback {secret}"
-        record.stack_info = f"cached stack {secret}"
-        return record
-
-    def broken(_text: str) -> str:
-        raise RuntimeError("sanitiser bug")
-
-    logging.setLogRecordFactory(caching_factory)
-    try:
-        install_log_boundaries()
+    with cached_record_text(f"cached traceback {secret}", f"cached stack {secret}"):
         with debug_logging(caplog):
-            monkeypatch.setattr(sdk_log_boundary, "sanitise_text", broken)
+            monkeypatch.setattr(sdk_log_boundary, "known_form", _broken)
             logging.getLogger("httpx").warning("request %s", secret)
-    finally:
-        logging.setLogRecordFactory(previous)
 
     record = caplog.records[-1]
     assert_that(logged(caplog)).does_not_contain(secret)
@@ -476,30 +487,48 @@ def test_wide_header_container_is_not_enumerated(
 
     assert_that(headers.read).is_equal_to(0)
     assert_that(caplog.records[-1].getMessage()).is_equal_to(
-        "Sending http request: <_PreparedRequest method=PUT "
-        "url=https://storage.example.test/artifacts/k "
-        "headers=<unprintable: sanitiser limit reached on _CountingHeaders>>",
+        "Sending http request: <tests.test_sdk_log_boundary._PreparedRequest "
+        "method=PUT url=https://storage.example.test/artifacts/k "
+        f"headers={{}} (+{_WIDE} other headers)>",
     )
 
 
-def test_star_width_placeholders_keep_labels_aligned(
+def test_many_long_allowlisted_headers_are_bounded(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """``%*s`` and ``%.*s`` consume extra arguments without shifting labels."""
-    secret = synthetic_secret("star")
-    body = f"<Error>{secret}</Error>".encode()
+    """A thousand long allowlisted headers print a bounded skeleton quickly."""
+    headers = {f"x-ratelimit-limit-{index}": "v" * 8_192 for index in range(1_000)}
+    sdk = logging.getLogger("botocore.parsers")
     with debug_logging(caplog):
-        logging.getLogger("botocore.parsers").warning(
-            "%*s %.*s Response body: %r",
-            4,
-            "id",
-            2,
-            "ok",
-            body,
-        )
+        sdk.debug("Response headers: %r", headers)
+        started = time.perf_counter()
+        sdk.debug("Response headers: %r", headers)
+        elapsed = time.perf_counter() - started
 
-    record = caplog.records[-1]
-    assert_that(logged(caplog)).does_not_contain(secret)
-    assert_that(record.getMessage()).is_equal_to(
-        f"  id ok Response body: '[withheld bytes ({len(body)})]'",
+    message = caplog.records[-1].getMessage()
+    assert_that(elapsed).is_less_than(0.05)
+    assert_that(len(message)).is_less_than(2_000)
+    assert_that(message).ends_with("(+984 other headers)")
+    assert_that(message).does_not_contain("v" * 200)
+
+
+def test_header_names_are_printed_only_from_the_allowlist(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A header name carrying a secret, or credential-named, is not printed."""
+    secret = synthetic_secret("name")
+    headers = {
+        f"X-Debug-{secret}": "1",
+        "X-Ratelimit-Token": secret,
+        f"x-ratelimit-{secret}": "2",
+        "Content-Type": "text/plain",
+    }
+    with debug_logging(caplog, (secret,)):
+        logging.getLogger("botocore.parsers").debug("Response headers: %r", headers)
+
+    message = caplog.records[-1].getMessage()
+    assert_that(_everything(caplog)).does_not_contain(secret)
+    assert_that(message).starts_with(
+        "Response headers: {'x-ratelimit-[redacted]': '2', 'content-type': "
+        "'text/plain'} (+2 other headers)",
     )

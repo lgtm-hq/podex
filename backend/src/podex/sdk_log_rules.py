@@ -1,22 +1,23 @@
-"""Key, header and text rules of the third-party SDK log boundary.
+"""Validators that build third-party SDK log skeletons.
 
-:mod:`podex.sdk_log_boundary` decides what a record keeps; this module holds
-the rules it applies:
+A third-party record is printed only as a skeleton built from parts that are
+safe by construction (:mod:`podex.sdk_log_forms`). This module validates
+those parts; anything that does not validate is printed as ``[withheld]``:
 
-- :func:`is_credential_key` classifies a field, header or query name in any
-  case and spelling (``ToKeN``, ``AWSAccessKeyId``, ``x-amz-signature``,
-  ``api%5Fkey``).
-- :func:`is_safe_header` is the header allowlist; :func:`safe_headers`
-  applies it to a header container.
-- :func:`safe_url` and :func:`sanitise_text` remove credentials from a URL
-  or from free text: credential ``name: value`` and ``name=value`` fields
-  (query names percent-decoded), wire header pairs outside the allowlist,
-  exception reprs after ``exception=``, URL userinfo and the configured
-  secret values.
+- :func:`method`: an HTTP method from a fixed set.
+- :func:`number` and :func:`status`: values that parse as numbers.
+- :func:`url_skeleton`: scheme, host, port and path, each validated;
+  userinfo and fragment dropped; query names kept if they match a
+  conservative pattern, credential-named values masked, other values kept
+  only if short and conservative.
+- :func:`headers_skeleton`: allowlisted header names only (credential-named
+  names are never allowlisted, whatever the allowlist says), each value
+  validated; every other header is counted, not named.
+- :func:`class_name`: an exception class name validated as an identifier.
+- :func:`reason_phrase`: the standard phrase for a status code.
 
-Every scan is linear and capped: a string longer than :data:`MAX_TEXT`
-characters is withheld whole (type and size, never a prefix), and
-containers are read up to :data:`MAX_ITEMS` entries.
+Every builder is bounded: a fixed number of headers and query fields, a
+fixed value length and a fixed URL length.
 """
 
 import contextlib
@@ -27,7 +28,7 @@ from http import HTTPStatus
 from itertools import islice
 from urllib.parse import unquote_plus, urlsplit
 
-from podex.database_errors import placeholder, type_name
+from podex.database_errors import type_name
 from podex.redaction import REDACTED, SecretRedactor
 
 SAFE_HEADERS = frozenset(
@@ -65,10 +66,10 @@ SAFE_HEADERS = frozenset(
         "x-should-retry",
     },
 )
-"""Header names whose values are logged; every other header value is masked."""
+"""Header names that may be printed, with their validated values."""
 
 SAFE_HEADER_PREFIXES = ("anthropic-ratelimit-", "x-ratelimit-")
-"""Rate-limit header families, logged for diagnosing throttling."""
+"""Rate-limit header families, printed for diagnosing throttling."""
 
 CREDENTIAL_KEYS = frozenset(
     {
@@ -134,66 +135,80 @@ COMPACT_CREDENTIAL_SUFFIXES = (
 CREDENTIAL_SUFFIXES = ("_auth", "_key", "_secret", "_token")
 """Endings of a snake-case name that mark a credential (``x_api_key``)."""
 
+METHODS = frozenset({"DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"})
+"""HTTP methods printed as they are."""
+
+WITHHELD = "[withheld]"
 MESSAGE_WITHHELD = "[message withheld]"
 
-MAX_TEXT = 8_192
-"""Longest string or rendered message inspected; a longer one is withheld."""
+MAX_HEADERS = 16
+"""Allowlisted headers printed per container; the rest are counted."""
+
+MAX_HEADER_VALUE = 128
+"""Longest header value printed; a longer one is withheld."""
+
+MAX_QUERY_FIELDS = 16
+"""Query fields printed per URL; the rest are counted."""
+
+MAX_QUERY_VALUE = 64
+"""Longest query value printed; a longer one is withheld."""
+
+MAX_URL = 2_048
+"""Longest URL parsed; a longer one is withheld."""
 
 MAX_ITEMS = 1_000
-"""Entries of one record's containers inspected; beyond, a placeholder."""
+"""Header entries read from a container; past it, they are only counted."""
 
 _MAX_NAME = 256
-_AUTHORIZATION_NAMES = frozenset({"authorization", "proxyauthorization"})
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _WORD_SPLIT_RE = re.compile(r"[\s.\-]+")
 _CAMEL_RE = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_FIELD_NAME_RE = re.compile(
-    r"""(?<![A-Za-z0-9_.%\-])(?P<name>[A-Za-z0-9_.%\-]{1,128})(?P<close>["']?)"""
-    r"(?P<sep>[ \t]*(?:(?P<colon>:)|=)[ \t]*(?:\r?\n)?[ \t]*)",
+_SAFE_PREFIX_NAME_RE = re.compile(r"[a-z0-9\-]{1,64}")
+_HEADER_VALUE_RE = re.compile(r"[A-Za-z0-9 _.:;,=/+*#()\-]{0,128}")
+_QUERY_NAME_RE = re.compile(r"[A-Za-z0-9_.\-]{1,64}")
+_QUERY_VALUE_RE = re.compile(r"[A-Za-z0-9_.\-]{0,64}")
+_HOST_RE = re.compile(r"[A-Za-z0-9.\-]{1,253}|\[[0-9A-Fa-f:.]{2,45}\]")
+_PATH_RE = re.compile(r"/?[A-Za-z0-9._~/\-]{0,512}")
+_IDENTIFIER_RE = re.compile(
+    r"[A-Za-z_][A-Za-z0-9_]{0,127}(?:\.[A-Za-z_][A-Za-z0-9_]{0,127}){0,8}",
 )
-_BARE_AFTER_COLON_RE = re.compile(r"""[^\r\n,;}'"]*""")
-_BARE_AFTER_EQUALS_RE = re.compile(r"""[^\s&#,;'"}\])]*""")
-# An authorization value is a scheme and a credential separated by a space
-# (``Bearer <token>``, ``Basic <base64>``): both are masked together.
-_BARE_AUTHORIZATION_RE = re.compile(
-    r"""(?:[A-Za-z][A-Za-z0-9\-]{0,31}[ ]+)?[^\s,;&'"}\])]*""",
-)
-_QUOTED_REST_RE = {
-    "'": re.compile(r"(?:[^'\\]|\\.)*'", re.DOTALL),
-    '"': re.compile(r'(?:[^"\\]|\\.)*"', re.DOTALL),
-}
-_HEADER_PAIR_RE = re.compile(
-    r"""\(b(?P<nq>['"])(?P<name>[A-Za-z0-9!#$%&*+.^_`|~\-]{1,128})(?P=nq),[ ]?"""
-    r"""b(?P<q>['"])(?:[^'"\\]|\\.|(?!(?P=q))['"])*(?P=q)\)""",
-)
-# An exception rendered with repr() after an ``exception=`` field, as HTTP
-# transports trace a failed step: the class is kept, the arguments withheld.
-_EXCEPTION_REPR_RE = re.compile(
-    r"(?<![A-Za-z0-9_.\-])(?P<head>(?:exception|exc|error)[ ]?[:=][ ]?"
-    r"[A-Za-z_][A-Za-z0-9_.]{0,128})\([^\r\n]*\)",
-)
+_NUMBER_TEXT_RE = re.compile(r"\d{1,12}(?:\.\d{1,6})?")
+_SCHEMES = frozenset({"http", "https"})
 
 # URL userinfo and, once configured, the secret values of the loaded settings.
 _REDACTOR = SecretRedactor()
 
 
 class Rendered(str):
-    """Text standing in for an object; ``%r`` prints it without quotes."""
+    """A skeleton part; ``%r`` prints it as ``%s`` does, without quotes."""
 
     __slots__ = ()
 
     def __repr__(self) -> str:
-        """Return the text itself, as the object's own repr would print."""
+        """Return the text itself."""
         return str(self)
 
 
 def configure_secret_values(secrets: Iterable[str]) -> None:
-    """Set the configured secret values replaced in SDK records.
+    """Set the configured secret values replaced in finished skeletons.
 
     Args:
         secrets: Secret values of the loaded settings; empty values are ignored.
     """
     _REDACTOR.configure(secrets)
+
+
+def redact_configured(text: str) -> str:
+    """Replace URL userinfo and the configured secret values in ``text``.
+
+    Args:
+        text: A finished skeleton or rebuilt traceback.
+
+    Returns:
+        str: The text after the configured-value redactor.
+    """
+    redacted: str = _REDACTOR.redact(text)
+    return redacted
 
 
 def snake_case(name: str) -> str:
@@ -236,244 +251,53 @@ def is_credential_key(name: object) -> bool:
     return snake_case(text).endswith(CREDENTIAL_SUFFIXES)
 
 
-def is_safe_header(name: object) -> bool:
-    """Return whether a header's value may be logged.
+def safe_header_name(name: object) -> str | None:
+    """Return the printable form of an allowlisted header name, or None.
+
+    A credential-named header is never allowlisted, whatever the allowlist
+    or a prefix rule says (``X-Ratelimit-Token``).
 
     Args:
         name: The header name, as text or bytes.
 
     Returns:
-        bool: True for :data:`SAFE_HEADERS` and :data:`SAFE_HEADER_PREFIXES`.
+        str | None: The lowercased name, or None if it may not be printed.
     """
     text = _text_name(name)
-    if text is None:
-        return False
+    if text is None or is_credential_key(text):
+        return None
     lowered = text.strip().lower()
-    return lowered in SAFE_HEADERS or lowered.startswith(SAFE_HEADER_PREFIXES)
+    if lowered in SAFE_HEADERS:
+        return lowered
+    if lowered.startswith(SAFE_HEADER_PREFIXES) and _SAFE_PREFIX_NAME_RE.fullmatch(
+        lowered,
+    ):
+        return lowered
+    return None
 
 
-def reason_phrase(status: object) -> str:
-    """Return the standard reason phrase for a status, or ``""``.
-
-    Args:
-        status: An HTTP status code.
-
-    Returns:
-        str: For example ``"Internal Server Error"`` for 500.
-    """
-    phrase = ""
-    if isinstance(status, int) and not isinstance(status, bool):
-        with contextlib.suppress(ValueError):
-            phrase = HTTPStatus(status).phrase
-    return phrase
-
-
-def is_oversized(text: str) -> bool:
-    """Return whether text is too long to inspect and must be withheld.
+def header_value(value: object) -> str:
+    """Return an allowlisted header's value if it validates, else withheld.
 
     Args:
-        text: Any text.
+        value: The value, as text, bytes or a number.
 
     Returns:
-        bool: True past :data:`MAX_TEXT` characters.
+        str: The value, or ``[withheld]``.
     """
-    return len(text) > MAX_TEXT
-
-
-def redact_configured(text: str) -> str:
-    """Replace URL userinfo and the configured secret values in ``text``.
-
-    Args:
-        text: Text built by the boundary itself, such as a traceback.
-
-    Returns:
-        str: The text after the configured-value redactor.
-    """
-    redacted: str = _REDACTOR.redact(text)
-    return redacted
-
-
-def _value_end(
-    text: str,
-    start: int,
-    colon: bool,
-    authorization: bool,
-) -> tuple[int, str]:
-    """Return where a field value starting at ``start`` ends, and its mask.
-
-    A quoted (or ``b``-prefixed quoted) value runs to its closing quote, or
-    to the end if unclosed. A bare authorization value keeps its scheme and
-    credential together and runs to a separator; another bare value after
-    ``:`` runs to the end of the line or a separator, after ``=`` to the
-    next query or field separator.
-    """
-    if text.startswith(REDACTED, start):
-        return start, ""
-    prefix = ""
-    position = start
-    if text.startswith(("b'", 'b"'), position):
-        prefix = "b"
-        position += 1
-    if position < len(text) and text[position] in _QUOTED_REST_RE:
-        quote_char = text[position]
-        closed = _QUOTED_REST_RE[quote_char].match(text, position + 1)
-        end = closed.end() if closed else len(text)
-        return end, f"{prefix}{quote_char}{REDACTED}{quote_char}"
-    if authorization:
-        pattern = _BARE_AUTHORIZATION_RE
-    else:
-        pattern = _BARE_AFTER_COLON_RE if colon else _BARE_AFTER_EQUALS_RE
-    bare = pattern.match(text, start)
-    return (bare.end() if bare else start), REDACTED
-
-
-def mask_credential_fields(text: str) -> str:
-    """Mask the values of credential-named fields in free text.
-
-    Covers ``name: value`` (header lines, rendered mappings, quoted or bytes
-    values) and ``name=value`` (query strings with percent-encoded names,
-    form bodies, signed header parameters); the name and quoting are kept.
-    One pass, left to right; a non-credential name never hides the fields
-    after it.
-
-    Args:
-        text: A rendered log message.
-
-    Returns:
-        str: The message with credential values replaced by ``[redacted]``.
-    """
-    parts: list[str] = []
-    position = 0
-    for field in _FIELD_NAME_RE.finditer(text):
-        if field.start() < position or not is_credential_key(field.group("name")):
-            continue
-        start = field.end()
-        name = _text_name(field.group("name")) or ""
-        end, mask = _value_end(
-            text,
-            start,
-            field.group("colon") is not None,
-            _NON_ALNUM_RE.sub("", name.lower()) in _AUTHORIZATION_NAMES,
-        )
-        if end == start:
-            continue
-        parts.append(text[position:start])
-        parts.append(mask)
-        position = end
-    if not parts:
-        return text
-    parts.append(text[position:])
-    return "".join(parts)
-
-
-def _mask_header_pair(match: re.Match[str]) -> str:
-    """Replace the value of one wire header pair unless it is allowlisted."""
-    if is_safe_header(match.group("name")):
-        return match.group(0)
-    quote_char = match.group("q")
-    return (
-        f"(b{match.group('nq')}{match.group('name')}{match.group('nq')}, "
-        f"b{quote_char}{REDACTED}{quote_char})"
-    )
-
-
-def sanitise_text(text: str) -> str:
-    """Apply every text rule of the SDK boundary to a string.
-
-    Args:
-        text: A rendered log message or argument.
-
-    Returns:
-        str: The text without wire header values outside the allowlist,
-            exception messages, credential field values, URL userinfo or
-            configured secrets; text past :data:`MAX_TEXT` characters is
-            withheld whole.
-    """
-    if is_oversized(text):
-        return withheld(text)
-    text = _HEADER_PAIR_RE.sub(_mask_header_pair, text)
-    text = _EXCEPTION_REPR_RE.sub(rf"\g<head>({MESSAGE_WITHHELD})", text)
-    redacted: str = _REDACTOR.redact(mask_credential_fields(text))
-    return redacted
-
-
-def masked_query(query: str) -> str:
-    """Mask the values of credential query fields; keep the others."""
-    fields: list[str] = []
-    for field in query.split("&"):
-        name, equals, _value = field.partition("=")
-        if equals and is_credential_key(name):
-            fields.append(f"{name}={REDACTED}")
-        else:
-            fields.append(field)
-    return "&".join(fields)
-
-
-def safe_url(url: str) -> str:
-    """Render a URL or request target without credentials.
-
-    Userinfo and fragment become ``[redacted]``; credential query values
-    (names percent-decoded) become ``[redacted]``; the scheme, host, path
-    and other query fields are kept.
-
-    Args:
-        url: An absolute or relative URL, or a request target.
-
-    Returns:
-        str: For example ``https://[redacted]@host/path?token=[redacted]&page=2``.
-    """
-    if is_oversized(url):
-        return withheld(url)
-    try:
-        parts = urlsplit(url)
-    except ValueError:
-        return sanitise_text(url)
-    netloc = parts.netloc
-    if "@" in netloc:
-        netloc = f"{REDACTED}@{netloc.rpartition('@')[2]}"
-    scheme = f"{parts.scheme}:" if parts.scheme else ""
-    authority = f"//{netloc}" if netloc or url.startswith(f"{scheme}//") else ""
-    query = f"?{masked_query(parts.query)}" if parts.query else ""
-    fragment = f"#{REDACTED}" if parts.fragment else ""
-    return sanitise_text(f"{scheme}{authority}{parts.path}{query}{fragment}")
-
-
-def withheld(value: object) -> str:
-    """Describe a withheld body by type and size.
-
-    Args:
-        value: The body.
-
-    Returns:
-        str: For example ``"[withheld bytes (71)]"``.
-    """
-    size = ""
-    if isinstance(value, Sized):
-        with contextlib.suppress(Exception):
-            size = f" ({len(value)})"
-    return f"[withheld {type_name(value)}{size}]"
-
-
-def _qualified_name(error: BaseException) -> str:
-    """Return an exception's module-qualified class name."""
-    kind = type(error)
-    module = getattr(kind, "__module__", "")
-    qualname = getattr(kind, "__qualname__", type_name(error))
-    if not isinstance(module, str) or module in ("builtins", "__main__"):
-        return str(qualname)
-    return f"{module}.{qualname}"
-
-
-def describe_exception(error: BaseException) -> str:
-    """Describe an exception by class, without its message.
-
-    Args:
-        error: The exception.
-
-    Returns:
-        str: For example ``"httpx2.ConnectError: [message withheld]"``.
-    """
-    return f"{_qualified_name(error)}: {MESSAGE_WITHHELD}"
+    if isinstance(value, bytes):
+        if len(value) > MAX_HEADER_VALUE:
+            return WITHHELD
+        value = value.decode("latin-1")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    if (
+        isinstance(value, str)
+        and len(value) <= MAX_HEADER_VALUE
+        and _HEADER_VALUE_RE.fullmatch(value)
+    ):
+        return value
+    return WITHHELD
 
 
 def _size(value: object) -> int:
@@ -486,7 +310,7 @@ def _size(value: object) -> int:
 
 
 def _header_items(headers: object) -> Iterator[tuple[object, object]]:
-    """Yield a header container's name and value pairs, repeats included."""
+    """Yield a header container's name and value pairs, lazily."""
     multi_items = getattr(headers, "multi_items", None)
     if callable(multi_items):
         pairs: Iterable[object] = multi_items()
@@ -501,92 +325,231 @@ def _header_items(headers: object) -> Iterator[tuple[object, object]]:
             yield pair[0], pair[1]
 
 
-def _safe_header_value(value: object) -> object:
-    """Return an allowlisted header's value after the text rules."""
-    if isinstance(value, str):
-        return sanitise_text(value)
-    if isinstance(value, bytes):
-        if len(value) > MAX_TEXT:
-            return withheld(value)
-        text = value.decode("latin-1")
-        cleaned = sanitise_text(text)
-        return value if cleaned == text else cleaned
-    return value if isinstance(value, int | float) else REDACTED
+def headers_skeleton(headers: object) -> str:
+    """Print allowlisted headers with validated values; count the others.
 
-
-def safe_headers(headers: object) -> object:
-    """Return a header container with only allowlisted values kept.
-
-    A container larger than :data:`MAX_ITEMS` is not enumerated: it
-    becomes a placeholder.
+    At most :data:`MAX_HEADERS` allowlisted headers are printed and at most
+    :data:`MAX_ITEMS` entries are read; a container larger than that is only
+    counted.
 
     Args:
         headers: A header mapping, header object or sequence of pairs.
 
     Returns:
-        object: A dict of every header name, values outside
-            :data:`SAFE_HEADERS` masked; or the limit placeholder.
+        str: For example ``{'content-type': 'application/json'} (+2 other
+            headers)``.
     """
-    if _size(headers) > MAX_ITEMS:
-        return placeholder(headers, reason="sanitiser limit reached")
-    kept: dict[object, object] = {}
-    for name, value in _header_items(headers):
-        shown = _safe_header_value(value) if is_safe_header(name) else REDACTED
-        kept[name] = f"{kept[name]}, {shown}" if name in kept else shown
-    return kept
+    size = _size(headers)
+    shown: dict[str, str] = {}
+    others = 0
+    if size <= MAX_ITEMS:
+        for name, value in _header_items(headers):
+            printable = safe_header_name(name) if len(shown) < MAX_HEADERS else None
+            if printable is None:
+                others += 1
+            else:
+                shown[printable] = header_value(value)
+    else:
+        others = size
+    suffix = f" (+{others} other headers)" if others else ""
+    return f"{shown}{suffix}"
 
 
-def header_value(name: str, value: object) -> object:
-    """Return one header's value as it may be logged.
+def _query_field(field: str) -> str:
+    """Print one query field: validated name, masked or validated value."""
+    raw_name, equals, raw_value = field.partition("=")
+    name = unquote_plus(raw_name) if len(raw_name) <= _MAX_NAME else ""
+    if not _QUERY_NAME_RE.fullmatch(name):
+        return WITHHELD
+    if not equals:
+        return name
+    if is_credential_key(name):
+        return f"{name}={REDACTED}"
+    if not raw_value:
+        return f"{name}="
+    value = unquote_plus(raw_value) if len(raw_value) <= MAX_QUERY_VALUE * 3 else ""
+    shown = value if value and _QUERY_VALUE_RE.fullmatch(value) else WITHHELD
+    return f"{name}={shown}"
+
+
+def _query_skeleton(query: str) -> str:
+    """Print a query string's fields, bounded; count the rest."""
+    fields = query.split("&", MAX_QUERY_FIELDS)
+    printed = [_query_field(field) for field in fields[:MAX_QUERY_FIELDS]]
+    rest = fields[MAX_QUERY_FIELDS:]
+    if rest:
+        printed.append(f"[+{rest[0].count('&') + 1} more fields]")
+    return "&".join(printed)
+
+
+def url_skeleton(url: object) -> str:
+    """Print a URL or request target from validated parts only.
+
+    Scheme (``http``/``https``), host, port and path are kept if they
+    validate; userinfo and fragment are dropped; query fields are printed by
+    validated name, credential values masked and other values kept only if
+    short and conservative.
 
     Args:
-        name: The header name.
-        value: Its value, as the SDK logs it.
+        url: A URL, as text or a URL object.
 
     Returns:
-        object: The value after the text rules if the header is allowlisted
-            (or absent), otherwise ``[redacted]``.
+        str: For example ``https://api.example.test/v1?token=[redacted]&page=2``.
     """
-    if value is None:
-        return None
-    return _safe_header_value(value) if is_safe_header(name) else REDACTED
+    text = url if isinstance(url, str) else str(url)
+    if len(text) > MAX_URL:
+        return WITHHELD
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError:
+        return WITHHELD
+    authority = ""
+    if parts.scheme or parts.netloc:
+        if parts.scheme not in _SCHEMES:
+            return WITHHELD
+        host = parts.hostname or ""
+        shown_host = host if _HOST_RE.fullmatch(host) else WITHHELD
+        authority = f"{parts.scheme}://{shown_host}{f':{port}' if port else ''}"
+    path = parts.path if _PATH_RE.fullmatch(parts.path) else f"/{WITHHELD}"
+    query = f"?{_query_skeleton(parts.query)}" if parts.query else ""
+    return f"{authority}{path}{query}"
 
 
-def _attribute(value: object, name: str) -> object:
-    """Return an attribute, or None if it is missing or reading it fails."""
-    found: object = None
-    with contextlib.suppress(Exception):
-        found = getattr(value, name, None)
-    return found
-
-
-def message_object_skeleton(value: object) -> str | None:
-    """Render a request- or response-like object by its structure, if it is one.
-
-    An object with ``method``, ``url`` and ``headers`` (an SDK's prepared
-    request) prints its method, safe URL and allowlisted headers; one with
-    ``status_code`` and ``headers`` prints its status and headers. Bodies are
-    never printed.
+def method(value: object) -> str:
+    """Return an HTTP method from the fixed set, uppercased, else withheld.
 
     Args:
-        value: Any object.
+        value: The method, as text or bytes.
 
     Returns:
-        str | None: The skeleton, or None if the object has neither shape.
+        str: For example ``POST``.
     """
-    headers = _attribute(value, "headers")
-    if headers is None:
+    if isinstance(value, bytes):
+        value = value.decode("latin-1")
+    if isinstance(value, str) and value.upper() in METHODS:
+        return value.upper()
+    return WITHHELD
+
+
+def number(value: object) -> int | float | None:
+    """Return a value that is, or parses as, a number; None otherwise.
+
+    Args:
+        value: An int, float or numeric text.
+
+    Returns:
+        int | float | None: The number.
+    """
+    if isinstance(value, bool):
         return None
-    method = _attribute(value, "method")
-    url = _attribute(value, "url")
-    if method is not None and url is not None:
-        return (
-            f"<{type(value).__name__} method={sanitise_text(str(method))} "
-            f"url={safe_url(str(url))} headers={safe_headers(headers)}>"
-        )
-    status = _attribute(value, "status_code")
-    if isinstance(status, int):
-        return (
-            f"<{type(value).__name__} status={status} headers={safe_headers(headers)}>"
-        )
+    if isinstance(value, int | float):
+        return value
+    if isinstance(value, str) and _NUMBER_TEXT_RE.fullmatch(value.strip()):
+        text = value.strip()
+        return float(text) if "." in text else int(text)
     return None
+
+
+def status(value: object) -> int | None:
+    """Return an HTTP status code, or None.
+
+    Args:
+        value: The status.
+
+    Returns:
+        int | None: A code from 100 to 599.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and 100 <= value <= 599:
+        return value
+    return None
+
+
+def reason_phrase(code: object) -> str:
+    """Return the standard reason phrase for a status, or ``""``.
+
+    Args:
+        code: An HTTP status code.
+
+    Returns:
+        str: For example ``"Internal Server Error"`` for 500.
+    """
+    phrase = ""
+    checked = status(code)
+    if checked is not None:
+        with contextlib.suppress(ValueError):
+            phrase = HTTPStatus(checked).phrase
+    return phrase
+
+
+def identifier(value: object, pattern: re.Pattern[str]) -> str:
+    """Return text that fully matches ``pattern``, else withheld.
+
+    Args:
+        value: The candidate text.
+        pattern: A bounded, conservative pattern.
+
+    Returns:
+        str: The text, or ``[withheld]``.
+    """
+    if isinstance(value, str) and pattern.fullmatch(value):
+        return value
+    return WITHHELD
+
+
+def qualified_name(kind: object) -> str:
+    """Return a class's module-qualified name, validated as an identifier.
+
+    Args:
+        kind: A class.
+
+    Returns:
+        str: For example ``httpx2.ConnectError``, or ``[withheld]``.
+    """
+    module = getattr(kind, "__module__", "")
+    name = getattr(kind, "__qualname__", "")
+    if not isinstance(name, str):
+        return WITHHELD
+    if isinstance(module, str) and module not in ("builtins", "__main__", ""):
+        name = f"{module}.{name}"
+    return identifier(name, _IDENTIFIER_RE)
+
+
+def class_name(error: BaseException) -> str:
+    """Return an exception's validated class name.
+
+    Args:
+        error: The exception.
+
+    Returns:
+        str: For example ``httpx2.ConnectError``.
+    """
+    return qualified_name(type(error))
+
+
+def describe_exception(error: BaseException) -> str:
+    """Describe an exception by validated class, without its message.
+
+    Args:
+        error: The exception.
+
+    Returns:
+        str: For example ``"httpx2.ConnectError: [message withheld]"``.
+    """
+    return f"{class_name(error)}: {MESSAGE_WITHHELD}"
+
+
+def withheld(value: object) -> str:
+    """Describe a withheld value by type and size.
+
+    Args:
+        value: The value.
+
+    Returns:
+        str: For example ``"[withheld bytes (71)]"``.
+    """
+    size = ""
+    if isinstance(value, Sized):
+        with contextlib.suppress(Exception):
+            size = f" ({len(value)})"
+    return f"[withheld {type_name(value)}{size}]"
