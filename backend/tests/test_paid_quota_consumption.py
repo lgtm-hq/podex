@@ -195,20 +195,22 @@ def test_snapshot_reports_the_stored_count(db_session: Session) -> None:
 
 
 def test_consumption_refreshes_a_cached_usage_row(db_session: Session) -> None:
-    """A usage row already loaded in the session shows the new count."""
+    """A usage row held in the session shows the new count without a refresh.
+
+    The row is loaded and kept before the charge, so the session's identity
+    map holds it while the guarded ``UPDATE`` runs; both the held object and
+    the next snapshot, which reuses that identity, must show the new count
+    before any commit, expire or refresh.
+    """
     user_id = seed_paid_account(db_session, units=1)
     settings = enforced(5)
-    before = get_quota_snapshot(
-        db=db_session,
-        user_id=user_id,
-        settings=settings,
-        feature=API_REQUESTS,
-        now=JULY,
-    )
+    held = db_session.query(AccountQuotaUsage).filter_by(user_id=user_id).one()
+    assert_that(held.units).is_equal_to(1)
 
     consume_paid_api_request(
         db=db_session, user_id=user_id, settings=settings, now=JULY
     )
+    held_units = held.units
     after = get_quota_snapshot(
         db=db_session,
         user_id=user_id,
@@ -217,7 +219,7 @@ def test_consumption_refreshes_a_cached_usage_row(db_session: Session) -> None:
         now=JULY,
     )
 
-    assert_that((before.used, after.used, after.remaining)).is_equal_to((1, 2, 3))
+    assert_that((held_units, after.used, after.remaining)).is_equal_to((2, 2, 3))
 
 
 @pytest.mark.parametrize(
