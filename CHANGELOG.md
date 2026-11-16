@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.34] - 2026-11-16
+
+### Changed
+
+- **logging**: fail when a size bound in the third-party log filter is removed (#851)
+  (3a00f1e)
+- **deps**: update lintro to 0.180.35 (patch) (#850) (787a5d8)
+
+### Fixed
+
+- **security**: keep configured values out of first-use setting failures (#848)
+  (2699d6b)
+
 ## [0.41.33] - 2026-11-16
 
 ### Changed
