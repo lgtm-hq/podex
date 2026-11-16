@@ -22,12 +22,10 @@ from podex.models import (
     ContentSuppressedError,
     Episode,
     TakedownSubjectType,
-    Transcript,
     suppression_guard,
 )
 from podex.services import takedown_requests
 from podex.services.derivative_generation import generate_episode_derivatives
-from podex.services.semantic_chunks import SemanticChunkingPolicy
 from podex.services.takedown_requests import execute_approved_takedown_request
 from tests.conftest import seed_catalog_graph
 from tests.postgres.concurrency import (
@@ -43,8 +41,6 @@ from tests.takedown_support import assert_derivatives_taken_down, submit_takedow
 
 pytestmark = pytest.mark.postgres
 
-_POLICY = SemanticChunkingPolicy(max_words=6, overlap_words=0, min_words=2)
-
 _WRITER_WAITS = ExpectedWait(
     statement_patterns=(r"\bFROM podcasts\b", r"\bFOR SHARE\b"),
     row_lock_table="podcasts",
@@ -53,21 +49,17 @@ _TAKEDOWN_WAITS = row_lock_wait("podcasts")
 
 
 def _seed(postgres: PostgresDatabase) -> int:
-    """Seed a catalog episode with a chunkable transcript.
+    """Seed a catalog episode without a transcript.
+
+    Its rebuild writes, and on a re-run updates, the episode's derivative run
+    row and no semantic chunk, which keeps these races independent of how
+    embeddings bind on PostgreSQL.
 
     Returns:
         The episode id.
     """
     with postgres.sessions() as db:
         graph = seed_catalog_graph(db)
-        db.add(
-            Transcript(
-                episode_id=graph.episode_id,
-                provider="podscripts",
-                raw_text="one two three four five six",
-            ),
-        )
-        db.commit()
         return graph.episode_id
 
 
@@ -75,12 +67,12 @@ def _rebuild(db: Session, *, episode_id: int) -> int:
     """Generate derivatives for the episode without committing.
 
     Returns:
-        The number of semantic chunks the run created.
+        The id of the derivative run the rebuild wrote.
     """
     episode = db.query(Episode).filter(Episode.id == episode_id).one()
-    run = generate_episode_derivatives(db=db, episode=episode, chunking_policy=_POLICY)
-    created: int = run.semantic_chunks_created
-    return created
+    run = generate_episode_derivatives(db=db, episode=episode)
+    run_id: int = run.id
+    return run_id
 
 
 def _takedown(db: Session, *, episode_id: int) -> int:
@@ -128,14 +120,14 @@ def _rebuild_first(postgres: PostgresDatabase) -> int:
         The episode id.
     """
     episode_id = _seed(postgres)
-    created, deleted = run_overlapping(
+    run_id, deleted = run_overlapping(
         postgres,
         first=partial(_rebuild, episode_id=episode_id),
         second=partial(_takedown, episode_id=episode_id),
         expected=_TAKEDOWN_WAITS,
     )
-    assert_that(created).is_equal_to(1)
-    assert_that(deleted).is_equal_to(2)
+    assert_that(run_id).is_positive()
+    assert_that(deleted).is_equal_to(1)
     return episode_id
 
 

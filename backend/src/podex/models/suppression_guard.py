@@ -215,7 +215,6 @@ def check_requirement(*, session: Session, requirement: _Requirement) -> None:
     checked.add(requirement)
 
 
-@event.listens_for(Session, "before_flush")
 def lock_before_guarded_writes(
     session: Session,
     _flush_context: UOWTransaction,
@@ -227,7 +226,6 @@ def lock_before_guarded_writes(
         lock_podcasts_of_episodes(session=session, episode_ids=episode_ids)
 
 
-@event.listens_for(Session, "after_flush")
 def refuse_suppressed_writes(
     session: Session,
     _flush_context: UOWTransaction,
@@ -247,7 +245,6 @@ def refuse_suppressed_writes(
         check_requirement(session=session, requirement=requirement)
 
 
-@event.listens_for(Session, "after_transaction_end")
 def _forget_transaction_checks(
     session: Session,
     transaction: SessionTransaction,
@@ -261,3 +258,10 @@ def _forget_transaction_checks(
     if transaction.parent is None or transaction.nested:
         session.info.pop(_LOCKED_PODCASTS, None)
         session.info.pop(_CHECKED, None)
+
+
+# Registered as plain calls: the listens_for decorator is untyped under the
+# dep-less CI mypy image and would mark these functions untyped.
+event.listen(Session, "before_flush", lock_before_guarded_writes)
+event.listen(Session, "after_flush", refuse_suppressed_writes)
+event.listen(Session, "after_transaction_end", _forget_transaction_checks)
