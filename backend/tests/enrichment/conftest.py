@@ -79,6 +79,10 @@ class _RaisingProvider:
         """No-op close."""
 
 
+BLOCKED_WAIT_SECONDS = 30.0
+"""Longest a blocked provider, or a test waiting on one, waits before failing."""
+
+
 class _BlockedProvider:
     """Provider double that blocks until the test releases it."""
 
@@ -87,10 +91,17 @@ class _BlockedProvider:
         self.release = release
 
     def search_and_enrich(self, media: Media) -> EnrichmentResult | None:
-        """Block until released, then return the canned result."""
+        """Block until released, then return the canned result.
+
+        Raises:
+            AssertionError: When the test does not release it in time.
+        """
 
         del media
-        self.release.wait()
+        if not self.release.wait(timeout=BLOCKED_WAIT_SECONDS):
+            raise AssertionError(
+                f"blocked provider not released within {BLOCKED_WAIT_SECONDS:g}s",
+            )
         return self.result
 
     def close(self) -> None:

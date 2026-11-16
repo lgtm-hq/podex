@@ -21,6 +21,7 @@ from podex.services.enrichment import (
 )
 from podex.services.enrichment.base import EnrichmentResult, EnrichmentSource
 from tests.enrichment.conftest import (
+    BLOCKED_WAIT_SECONDS,
     _academic_with,
     _BlockedProvider,
     _CountingLimiter,
@@ -36,6 +37,30 @@ from tests.enrichment.conftest import (
 
 _ProviderFutures = set[Future[EnrichmentResult | None]]
 """Futures of provider lookups, as the fan-out's ``wait`` returns them."""
+
+
+def _await_providers(futures: Iterable[Future[EnrichmentResult | None]]) -> None:
+    """Wait, bounded, until no provider lookup is still running.
+
+    A lookup still queued when the fan-out returns never runs: the
+    executor's ``shutdown(cancel_futures=True)`` cancels it. That happens
+    when the instant lookup's idle worker is reused for the blocked one and
+    the fan-out shuts down before the worker takes it, as it does on Python
+    3.11 and 3.12. ``concurrent.futures.wait`` never counts a future
+    cancelled that way as done, so it is skipped here rather than waited on.
+
+    Raises:
+        AssertionError: When a lookup is still running after the bound.
+    """
+    for future in futures:
+        if future.cancelled():
+            continue
+        try:
+            future.exception(timeout=BLOCKED_WAIT_SECONDS)
+        except TimeoutError as error:
+            raise AssertionError(
+                f"provider lookup still running after {BLOCKED_WAIT_SECONDS:g}s",
+            ) from error
 
 
 def test_academic_enricher_degrades_gracefully() -> None:
@@ -531,7 +556,16 @@ def test_academic_fanout_drops_slow_provider(
         """Stand in for the deadline: return once the instant provider is done."""
         submitted.extend(futures)
         timeouts.append(timeout)
-        return wait(submitted, return_when=FIRST_COMPLETED)
+        done, not_done = wait(
+            submitted,
+            timeout=BLOCKED_WAIT_SECONDS,
+            return_when=FIRST_COMPLETED,
+        )
+        if not done:
+            raise AssertionError(
+                f"no provider completed within {BLOCKED_WAIT_SECONDS:g}s",
+            )
+        return done, not_done
 
     monkeypatch.setattr(academic_enrichment, "wait", wait_until_first_completes)
     enricher = _academic_with(
@@ -546,7 +580,7 @@ def test_academic_fanout_drops_slow_provider(
         )
     finally:
         release.set()
-        wait(submitted)
+        _await_providers(submitted)
 
     assert_that(timeouts).is_equal_to([DEFAULT_AGGREGATE_TIMEOUT_SECONDS])
     result = require_result(result)
