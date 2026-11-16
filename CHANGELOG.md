@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.35] - 2026-11-16
+
+### Changed
+
+- **deps**: update lintro to 0.180.36 (patch) (#856) (6a7e3c6)
+
+### Fixed
+
+- **logging**: bound integer header values, single-source the limit and match ASCII
+  digits only (#853) (b877d0d)
+
 ## [0.41.34] - 2026-11-16
 
 ### Changed
