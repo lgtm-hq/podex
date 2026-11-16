@@ -204,6 +204,9 @@ def create_ops_podcast_endpoint(
                 ),
             ),
         )
+    except ValueError as error:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(error)) from error
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(

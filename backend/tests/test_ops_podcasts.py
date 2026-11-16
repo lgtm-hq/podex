@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from assertpy import assert_that
 from fastapi.testclient import TestClient
+from httpx2 import Response
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
@@ -360,25 +361,64 @@ def test_update_rejects_clearing_a_required_field(
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
-def test_rejected_update_flushes_none_of_its_valid_fields(
-    db_session: Session,
-) -> None:
-    """A valid rename sent with a cleared slug is not flushed to the database."""
-    podcast_id = _existing_podcast(db_session)
-    before = _stored_row(db_session, podcast_id)
-
-    with pytest.raises(ValueError, match="^slug cannot be cleared$"):
-        update_ops_podcast(
-            db=db_session,
-            podcast_id=podcast_id,
-            payload=UpdateOpsPodcastInputData(
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        (
+            UpdateOpsPodcastInputData(
                 provided_fields=frozenset({"name", "slug", "cover_url"}),
                 name="Renamed Show",
                 slug=None,
                 cover_url=None,
             ),
-        )
+            "^slug cannot be cleared$",
+        ),
+        (
+            UpdateOpsPodcastInputData(
+                provided_fields=frozenset({"name", "status"}),
+                name="Renamed Show",
+                status=None,
+            ),
+            "^status cannot be cleared$",
+        ),
+        (
+            UpdateOpsPodcastInputData(
+                provided_fields=frozenset(
+                    {"name", "slug", "status", "description", "discovery_source"},
+                ),
+                source_fields=frozenset({"rss_url"}),
+                name="Renamed Show",
+                slug="example-show-renamed",
+                status=PodcastStatus.PAUSED,
+                description="Replaced description.",
+                discovery_source="bogus",
+                sources=OpsPodcastSourceInputData(
+                    rss_url="https://example.com/new.xml",
+                ),
+            ),
+            "'bogus' is not a valid DiscoverySource",
+        ),
+    ],
+    ids=["cleared-slug", "cleared-status", "unknown-discovery-source"],
+)
+def test_rejected_update_leaves_the_loaded_podcast_untouched(
+    db_session: Session,
+    payload: UpdateOpsPodcastInputData,
+    message: str,
+) -> None:
+    """A rejected update assigns none of its valid fields, even in memory."""
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
 
+    with pytest.raises(ValueError, match=message):
+        update_ops_podcast(db=db_session, podcast_id=podcast_id, payload=payload)
+
+    assert_that(db_session.dirty).is_empty()
+    loaded = db_session.get(Podcast, podcast_id)
+    if loaded is None:
+        raise AssertionError("expected the podcast to be loaded")
+    assert_that(db_session.is_modified(loaded)).is_false()
+    assert_that(loaded.name).is_equal_to("The Example Show")
     assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
 
 
@@ -581,3 +621,118 @@ def test_api_update_validation_returns_422_and_changes_nothing(
     assert_that(
         db_session.scalar(select(func.count()).select_from(AuditLog)),
     ).is_zero()
+
+
+_CREATE_BODY: dict[str, Any] = {"name": "Example", "slug": "example"}
+
+
+def _error_body(response: Response) -> dict[str, Any]:
+    """Return an error body without its per-request correlation id."""
+    body: dict[str, Any] = response.json()
+    return {key: value for key, value in body.items() if key != "request_id"}
+
+
+def test_api_create_rejects_unknown_discovery_source_like_update(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Create answers an unknown discovery source with update's 422 body."""
+    enable_ops(client, api_key=_OPS_KEY)
+
+    created = client.post(
+        "/api/v2/ops/podcasts",
+        json={**_CREATE_BODY, "discovery_source": "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(created.status_code).is_equal_to(422)
+    assert_that(db_session.new).is_empty()
+    db_session.expire_all()
+    assert_that(_podcast_count(db_session)).is_zero()
+    assert_that(
+        db_session.scalar(select(func.count()).select_from(AuditLog)),
+    ).is_zero()
+
+    podcast_id = _existing_podcast(db_session)
+    updated = client.patch(
+        f"/api/v2/ops/podcasts/{podcast_id}",
+        json={"discovery_source": "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(updated.status_code).is_equal_to(422)
+    assert_that(_error_body(created)).is_equal_to(_error_body(updated))
+    assert_that(created.json()["detail"]).is_equal_to(
+        "'bogus' is not a valid DiscoverySource",
+    )
+
+
+@pytest.mark.parametrize("field", ["status", "discovery_source"])
+def test_api_create_rejects_unknown_enum_values_without_writing(
+    client: TestClient,
+    db_session: Session,
+    field: str,
+) -> None:
+    """Unknown status or discovery source values on create answer 422."""
+    enable_ops(client, api_key=_OPS_KEY)
+
+    response = client.post(
+        "/api/v2/ops/podcasts",
+        json={**_CREATE_BODY, field: "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(response.status_code).is_equal_to(422)
+    db_session.expire_all()
+    assert_that(_podcast_count(db_session)).is_zero()
+    assert_that(
+        db_session.scalar(select(func.count()).select_from(AuditLog)),
+    ).is_zero()
+
+
+@pytest.mark.parametrize("field", ["status", "discovery_source"])
+def test_api_update_rejects_unknown_enum_values_without_writing(
+    client: TestClient,
+    db_session: Session,
+    field: str,
+) -> None:
+    """Unknown status or discovery source values on update answer 422."""
+    enable_ops(client, api_key=_OPS_KEY)
+    podcast_id = _existing_podcast(db_session)
+    before = _stored_row(db_session, podcast_id)
+
+    response = client.patch(
+        f"/api/v2/ops/podcasts/{podcast_id}",
+        json={"name": "Renamed Show", field: "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that(response.status_code).is_equal_to(422)
+    assert_that(_stored_row(db_session, podcast_id)).is_equal_to(before)
+    assert_that(
+        db_session.scalar(select(func.count()).select_from(AuditLog)),
+    ).is_zero()
+
+
+def test_api_create_and_update_reject_unknown_status_with_the_same_body(
+    client: TestClient,
+    db_session: Session,
+) -> None:
+    """Both routes report an unknown status as the same request validation error."""
+    enable_ops(client, api_key=_OPS_KEY)
+    podcast_id = _existing_podcast(db_session)
+
+    created = client.post(
+        "/api/v2/ops/podcasts",
+        json={**_CREATE_BODY, "status": "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+    updated = client.patch(
+        f"/api/v2/ops/podcasts/{podcast_id}",
+        json={"status": "bogus"},
+        headers={"X-Ops-Key": _OPS_KEY},
+    )
+
+    assert_that((created.status_code, updated.status_code)).is_equal_to((422, 422))
+    assert_that(_error_body(created)).is_equal_to(_error_body(updated))
+    assert_that(created.json()["errors"][0]["loc"]).is_equal_to(["body", "status"])
