@@ -158,8 +158,13 @@ rows. All locks are held until the transaction ends.
   decision answers a retryable 409 and nothing is changed.
 
 - **Guarded flush.** Before writing, it locks the media rows of guarded mentions
-  `FOR KEY SHARE`, then the podcast rows of every touched episode `FOR SHARE`,
-  ascending id. It checks after writing.
+  `FOR KEY SHARE`, then the podcast rows of every touched episode `FOR SHARE`.
+  Each statement locks in ascending id. It checks after writing.
+  - Podcasts are ascending within each batch of up to 5,000 episodes, not
+    across batches.
+  - That cannot deadlock. Share locks do not conflict with each other, and
+    the locks that do (a takedown's `FOR UPDATE`, an operator's update or
+    archive) each take a single podcast row.
 - **Authorised provider call.** Derivative generation locks the episode's media
   rows when it will summarise them; then the episodes' podcast rows are locked
   `FOR SHARE`.

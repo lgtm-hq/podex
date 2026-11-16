@@ -25,7 +25,14 @@ Guarded writes (``GUARDED_MODELS``, one rule per model in ``_RULES``):
 Lock order, the same as the media merge (media rows before podcast rows):
 
 1. media rows of guarded mentions, ``FOR KEY SHARE``, ascending id;
-2. podcast rows of every episode touched, ``FOR SHARE``, ascending id.
+2. podcast rows of every episode touched, ``FOR SHARE``, ascending id within
+   each statement of up to ``SUPPRESSION_BATCH_SIZE`` episodes.
+
+The podcast order across statements cannot form a deadlock. Share locks do
+not conflict with each other. The locks that do conflict with them (a
+takedown's ``FOR UPDATE``, and an operator's update or archive) each take a
+single podcast row, so the other transaction never waits for a second
+podcast while it holds one.
 
 Both are taken before the flush writes, so a writer never holds a row a
 takedown will delete while it waits. A takedown takes the same media rows and
@@ -405,7 +412,11 @@ def lock_podcasts_of_episodes(
     session: Session,
     episode_ids: Iterable[int],
 ) -> None:
-    """Lock the podcast rows of ``episode_ids`` ``FOR SHARE``, ascending id.
+    """Lock the podcast rows of ``episode_ids`` ``FOR SHARE``.
+
+    Each statement covers up to ``SUPPRESSION_BATCH_SIZE`` episodes and locks
+    their podcasts in ascending id; the module docstring explains why the
+    order across statements cannot deadlock.
 
     A takedown locks the same rows ``FOR UPDATE``, so a writer and a takedown
     covering the same podcast run one after the other. SQLite ignores the
