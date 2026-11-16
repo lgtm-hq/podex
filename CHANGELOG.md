@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.32] - 2026-11-16
+
+### Fixed
+
+- **security**: sanitise start-up errors raised while settings and the database engine
+  load (#841) (dbdeb7a)
+
 ## [0.41.31] - 2026-11-16
 
 ### Fixed
