@@ -9,7 +9,6 @@ inputs with it, while removing a check lets the one-past input print.
 
 import logging
 import sys
-from collections.abc import Iterator
 
 import pytest
 from assertpy import assert_that
@@ -21,6 +20,9 @@ from tests.sdk_log_support import debug_logging
 
 _EXTRA = "k1-extra"
 """An argument past a form's arity."""
+
+_NON_ASCII = "\N{LATIN SMALL LETTER E WITH ACUTE}"
+"""One character, two bytes in UTF-8: bounds count characters, not bytes."""
 
 
 def _unrecognised(length: int) -> str:
@@ -132,18 +134,33 @@ def test_known_form_with_one_argument_too_few_is_withheld(
     assert_that(printed).is_equal_to(_unrecognised(len(message)))
 
 
+_SPOTIFY_HEAD = "Sending GET to https://api.spotify.com/v1/me/shows with Params: "
+_SPOTIFY_SKELETON = "Sending GET to https://api.spotify.com/v1/me/shows"
+
+
+def test_preformatted_line_with_an_argument_is_withheld(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A line a library formats itself is known only when it has no arguments."""
+    message = f"{_SPOTIFY_HEAD}%s"
+
+    printed = _printed(caplog, "spotipy.client", message, _EXTRA)
+
+    assert_that(printed).is_equal_to(_unrecognised(len(message)))
+
+
 _SERVER_FORMS: dict[str, tuple[str, tuple[object, ...], str, str]] = {
     "header": (
         "< %s: %s",
         ("content-type", "text/plain"),
-        "< content-type: [withheld]",
-        "< [withheld]: [withheld]",
+        f"< content-type: {WITHHELD}",
+        f"< {WITHHELD}: {WITHHELD}",
     ),
     "handshake": (
         '%s - "WebSocket %s" %d',
         ("127.0.0.1:5000", "/ws/feed", 403),
         '127.0.0.1:5000 - "WebSocket /ws/feed" 403',
-        '[withheld] - "WebSocket [withheld]" [withheld]',
+        f'{WITHHELD} - "WebSocket {WITHHELD}" {WITHHELD}',
     ),
 }
 """Server forms: format string, arguments, skeleton, every argument hidden."""
@@ -194,42 +211,36 @@ def test_server_form_with_another_arity_hides_every_argument(
     assert_that(printed).is_equal_to(hidden)
 
 
-def _padded(head: str, length: int, tail: str = "") -> str:
-    """Return ``head``, filler and ``tail``: exactly ``length`` characters."""
+def _padded(head: str, length: int, fill: str, tail: str = "") -> str:
+    """Return ``head``, ``fill`` repeated and ``tail``: ``length`` characters."""
     filler = length - len(head) - len(tail)
     assert_that(filler).is_positive()
-    return f"{head}{'#' * filler}{tail}"
+    return f"{head}{fill * filler}{tail}"
 
 
-_SPOTIFY_HEAD = "Sending GET to https://api.spotify.com/v1/me/shows with Params: "
+_LENGTHS = [
+    pytest.param(MAX_PREFORMATTED, "#", True, id="at-bound"),
+    pytest.param(MAX_PREFORMATTED, _NON_ASCII, True, id="at-bound-non-ascii"),
+    pytest.param(MAX_PREFORMATTED + 1, "#", False, id="one-over"),
+]
+"""Pre-formatted text lengths: length, filler character, whether it prints."""
 
 
-@pytest.mark.parametrize(
-    ("length", "expected"),
-    [
-        pytest.param(
-            MAX_PREFORMATTED,
-            "Sending GET to https://api.spotify.com/v1/me/shows",
-            id="at-bound",
-        ),
-        pytest.param(
-            MAX_PREFORMATTED + 1,
-            _unrecognised(MAX_PREFORMATTED + 1),
-            id="one-over",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("length", "fill", "shown"), _LENGTHS)
 def test_spotify_line_is_bounded(
     length: int,
-    expected: str,
+    fill: str,
+    shown: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A Spotify SDK line one character past the bound is withheld."""
-    line = _padded(_SPOTIFY_HEAD, length)
+    line = _padded(_SPOTIFY_HEAD, length, fill)
 
     printed = _printed(caplog, "spotipy.client", line)
 
-    assert_that(printed).is_equal_to(expected)
+    assert_that(printed).is_equal_to(
+        _SPOTIFY_SKELETON if shown else _unrecognised(length),
+    )
 
 
 _CANONICAL_HEAD = (
@@ -241,35 +252,28 @@ _CANONICAL_HEAD = (
 _CANONICAL_TAIL = "\n\nhost;x-amz-date\nUNSIGNED-PAYLOAD"
 """The blank line, the signed header names and the payload hash."""
 
-
-@pytest.mark.parametrize(
-    ("length", "expected"),
-    [
-        pytest.param(
-            MAX_PREFORMATTED,
-            "CanonicalRequest:\nGET /artifacts/episode-1 headers={'host': "
-            "'storage.example.test', 'x-amz-date': '20261116T000000Z'} "
-            "signed_headers=2 payload=UNSIGNED-PAYLOAD",
-            id="at-bound",
-        ),
-        pytest.param(
-            MAX_PREFORMATTED + 1,
-            f"CanonicalRequest:\n{WITHHELD}",
-            id="one-over",
-        ),
-    ],
+_CANONICAL_SKELETON = (
+    "CanonicalRequest:\nGET /artifacts/episode-1 headers={'host': "
+    "'storage.example.test', 'x-amz-date': '20261116T000000Z'} "
+    "signed_headers=2 payload=UNSIGNED-PAYLOAD"
 )
+
+
+@pytest.mark.parametrize(("length", "fill", "shown"), _LENGTHS)
 def test_canonical_request_is_bounded(
     length: int,
-    expected: str,
+    fill: str,
+    shown: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A canonical request one character past the bound is withheld."""
-    text = _padded(_CANONICAL_HEAD, length, _CANONICAL_TAIL)
+    text = _padded(_CANONICAL_HEAD, length, fill, _CANONICAL_TAIL)
 
     printed = _printed(caplog, "botocore.auth", "CanonicalRequest:\n%s", text)
 
-    assert_that(printed).is_equal_to(expected)
+    assert_that(printed).is_equal_to(
+        _CANONICAL_SKELETON if shown else f"CanonicalRequest:\n{WITHHELD}",
+    )
 
 
 _STRING_TO_SIGN_HEAD = (
@@ -278,32 +282,46 @@ _STRING_TO_SIGN_HEAD = (
 """The first three lines; the filler is the fourth, withheld on its own."""
 
 
-@pytest.mark.parametrize(
-    ("length", "expected"),
-    [
-        pytest.param(
-            MAX_PREFORMATTED,
-            f"StringToSign:\n{_STRING_TO_SIGN_HEAD}{WITHHELD}",
-            id="at-bound",
-        ),
-        pytest.param(
-            MAX_PREFORMATTED + 1,
-            f"StringToSign:\n{WITHHELD}",
-            id="one-over",
-        ),
-    ],
-)
+@pytest.mark.parametrize(("length", "fill", "shown"), _LENGTHS)
 def test_string_to_sign_is_bounded(
     length: int,
-    expected: str,
+    fill: str,
+    shown: bool,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A string to sign one character past the bound is withheld whole."""
-    text = _padded(_STRING_TO_SIGN_HEAD, length)
+    text = _padded(_STRING_TO_SIGN_HEAD, length, fill)
 
     printed = _printed(caplog, "botocore.auth", "StringToSign:\n%s", text)
 
-    assert_that(printed).is_equal_to(expected)
+    assert_that(printed).is_equal_to(
+        (
+            f"StringToSign:\n{_STRING_TO_SIGN_HEAD}{WITHHELD}"
+            if shown
+            else f"StringToSign:\n{WITHHELD}"
+        ),
+    )
+
+
+_LONGEST_HOST = ".".join(("h" * 63, "h" * 63, "h" * 63, "h" * 61))
+"""A 253-character host name, the longest a trace line's address may carry."""
+
+
+def test_trace_line_with_the_longest_address_prints_it_whole(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The part of a trace line that is parsed covers the longest address."""
+    line = (
+        f"connect_tcp.started host='{_LONGEST_HOST}' port=65535 timeout=5.0 "
+        "local_address=None socket_options=None"
+    )
+
+    printed = _printed(caplog, "httpcore.connection", line)
+
+    assert_that(len(_LONGEST_HOST)).is_equal_to(253)
+    assert_that(printed).is_equal_to(
+        f"connect_tcp.started host='{_LONGEST_HOST}' port=65535",
+    )
 
 
 @pytest.mark.parametrize(
@@ -320,44 +338,58 @@ def test_header_value_is_bounded(value: str | bytes, expected: str) -> None:
     assert_that(header_value(value)).is_equal_to(expected)
 
 
-@pytest.fixture(name="long_integers")
-def long_integers_fixture() -> Iterator[None]:
-    """Allow integers of any length to be printed while the test runs."""
-    previous = sys.get_int_max_str_digits()
-    sys.set_int_max_str_digits(0)
-    try:
-        yield
-    finally:
-        sys.set_int_max_str_digits(previous)
+_REQUEST_LINE = '%s://%s:%s "%s %s %s" %s %s'
+"""The connection pool's request line; its status and length are numbers."""
+
+_ARABIC_VERSION = "HTTP/\N{ARABIC-INDIC DIGIT ONE}.\N{ARABIC-INDIC DIGIT ONE}"
+"""An HTTP version the version pattern accepts, with two non-ASCII digits."""
 
 
-_RETRIES = "%i retries left"
-_RETRIES_TEXT = " retries left"
+def _request_line(version: str, length: int) -> tuple[object, ...]:
+    """Return request-line arguments whose skeleton is ``length`` characters.
+
+    The status and length fields carry the digits, split between two
+    integers so that each stays within the interpreter's default limit on
+    converting integers to text.
+    """
+    head = ("https", "storage.example.test", 443, "GET", "/artifacts/1", version)
+    fixed = len(_REQUEST_LINE % (*head, "", ""))
+    digits = length - fixed
+    first, second = digits // 2, digits - digits // 2
+    limit = sys.get_int_max_str_digits()
+    assert_that(limit == 0 or second <= limit).is_true()
+    return (*head, 10 ** (first - 1), 10 ** (second - 1))
 
 
-@pytest.mark.usefixtures("long_integers")
+@pytest.mark.parametrize(
+    "version",
+    [
+        pytest.param("HTTP/1.1", id="ascii"),
+        pytest.param(_ARABIC_VERSION, id="non-ascii"),
+    ],
+)
 def test_skeleton_at_the_output_bound_is_printed(
+    version: str,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A skeleton exactly as long as the bound is printed in full."""
-    retries = 10 ** (MAX_SKELETON - len(_RETRIES_TEXT) - 1)
+    """A skeleton exactly as long as the bound, in characters, is printed."""
+    arguments = _request_line(version, MAX_SKELETON)
 
-    printed = _printed(caplog, "anthropic._base_client", _RETRIES, retries)
+    printed = _printed(caplog, "urllib3.connectionpool", _REQUEST_LINE, *arguments)
 
     assert_that(len(printed)).is_equal_to(MAX_SKELETON)
-    assert_that(printed).is_equal_to(f"{retries}{_RETRIES_TEXT}")
+    assert_that(printed).is_equal_to(_REQUEST_LINE % arguments)
 
 
-@pytest.mark.usefixtures("long_integers")
 def test_skeleton_one_past_the_output_bound_is_withheld(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A skeleton one character past the bound withholds the record."""
-    retries = 10 ** (MAX_SKELETON - len(_RETRIES_TEXT))
+    arguments = _request_line("HTTP/1.1", MAX_SKELETON + 1)
 
-    printed = _printed(caplog, "anthropic._base_client", _RETRIES, retries)
+    printed = _printed(caplog, "urllib3.connectionpool", _REQUEST_LINE, *arguments)
 
     assert_that(printed).is_equal_to(
         "[record withheld: skeleton exceeds the output bound, "
-        f"{len(_RETRIES)} characters]",
+        f"{len(_REQUEST_LINE)} characters]",
     )
