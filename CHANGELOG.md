@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.33] - 2026-11-16
+
+### Changed
+
+- **logging**: make the log-boundary timing tests robust on busy runners (#840)
+  (f382bb4)
+
+### Fixed
+
+- **ci**: preserve validation for every main commit (#844) (925f8e2)
+
 ## [0.41.32] - 2026-11-16
 
 ### Fixed
