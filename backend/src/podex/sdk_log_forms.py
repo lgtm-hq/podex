@@ -25,6 +25,10 @@ import urllib3
 
 from podex.redaction import REDACTED
 from podex.sdk_log_rules import (
+    MAX_COUNT_TEXT,
+    MAX_IDENTIFIER_TEXT,
+    MAX_PORT_TEXT,
+    MAX_STATUS_TEXT,
     WITHHELD,
     Rendered,
     class_name,
@@ -38,6 +42,7 @@ from podex.sdk_log_rules import (
     is_credential_key,
     method,
     number,
+    number_text_fits,
     qualified_name,
     reason_phrase,
     safe_header_name,
@@ -109,6 +114,7 @@ _TRACE_HOST_RE = re.compile(
 )
 _TRACE_STATUS_RE = re.compile(r"return_value=\(b'(HTTP/[0-9.]{1,5})', ([0-9]{3}), ")
 _TRACE_DETAIL = 320
+_URL_SCHEMES = ("http", "https")
 
 
 def _family(name: str, family: str) -> bool:
@@ -117,11 +123,18 @@ def _family(name: str, family: str) -> bool:
 
 
 def _validated(value: object, pattern: re.Pattern[str]) -> str:
-    """Return short builtin text matching ``pattern``, else withheld."""
-    if (isinstance(value, bytes) and exact_bytes(value)) and len(value) <= 512:
+    """Return short builtin text matching ``pattern``, else withheld.
+
+    An integer longer than any text the pattern is matched against is
+    withheld before it is converted to text.
+    """
+    if (isinstance(value, bytes) and exact_bytes(value)) and (
+        len(value) <= MAX_IDENTIFIER_TEXT
+    ):
         value = value.decode("latin-1")
     if isinstance(value, int) and exact_int(value):
-        value = str(int(value))
+        fits = number_text_fits(value, MAX_IDENTIFIER_TEXT)
+        value = str(int(value)) if fits else None
     shown: str = identifier(value, pattern)
     return shown
 
@@ -131,9 +144,15 @@ def _host(value: object) -> str:
     return _validated(value, _HOST_RE)
 
 
+def _scheme(value: object) -> str:
+    """A URL scheme, ``http`` or ``https``, given as exact text."""
+    shown: str = value if exact_str(value) and value in _URL_SCHEMES else _HIDDEN
+    return shown
+
+
 def _port(value: object) -> str:
     """A port number."""
-    checked = number(value)
+    checked = number(value, limit=MAX_PORT_TEXT)
     return (
         str(checked) if (isinstance(checked, int) and exact_int(checked)) else _HIDDEN
     )
@@ -141,7 +160,13 @@ def _port(value: object) -> str:
 
 def _shown_number(value: object) -> object:
     """A builtin number, or withheld."""
-    checked = number(value)
+    checked = number(value, limit=MAX_COUNT_TEXT)
+    return _HIDDEN if checked is None else checked
+
+
+def _status_number(value: object) -> object:
+    """A status code as the HTTP clients parse it, or withheld."""
+    checked = number(value, limit=MAX_STATUS_TEXT)
     return _HIDDEN if checked is None else checked
 
 
@@ -394,7 +419,7 @@ _FORM_TABLE: dict[str, tuple[tuple[str, ...], Handler]] = {
     'HTTP Response: %s %s "%i %s" %s': (_ANTHROPIC, _llm_response),
     "request_id: %s": (_ANTHROPIC, _each(_request_id)),
     "workspace_id: %s": (_ANTHROPIC, _withheld_arguments),
-    "Retrying due to status code %i": (_ANTHROPIC, _numbers),
+    "Retrying due to status code %i": (_ANTHROPIC, _each(_status_number)),
     "%i retries left": (_ANTHROPIC, _numbers),
     "1 retry left": (_ANTHROPIC, _no_arguments),
     "Not retrying": (_ANTHROPIC, _no_arguments),
@@ -429,13 +454,13 @@ _FORM_TABLE: dict[str, tuple[tuple[str, ...], Handler]] = {
     '%s://%s:%s "%s %s %s" %s %s': (
         _URLLIB3,
         _each(
-            lambda scheme: scheme if scheme in ("http", "https") else _HIDDEN,
+            _scheme,
             _host,
             _port,
             method,
             url_skeleton,
             _version,
-            _shown_number,
+            _status_number,
             _shown_number,
         ),
     ),
@@ -568,7 +593,7 @@ def _spotify_rate_limit(message: str) -> str | None:
     """The rate-limit warning: the delay if it is a number."""
     if not (message.startswith(_SPOTIFY_RATE_LIMIT) and message.endswith(" s")):
         return None
-    delay = number(message[len(_SPOTIFY_RATE_LIMIT) : -2])
+    delay = number(message[len(_SPOTIFY_RATE_LIMIT) : -2], limit=MAX_COUNT_TEXT)
     shown = _HIDDEN if delay is None else delay
     return f"{_SPOTIFY_RATE_LIMIT}{shown} s"
 
