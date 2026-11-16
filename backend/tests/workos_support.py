@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
+from podex.api.v2 import account_deps
 from podex.api.v2 import auth as v2_auth_api
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
 from podex.config import (
@@ -91,7 +92,7 @@ def override_workos(
     app.dependency_overrides[get_app_settings] = lambda: workos_settings(
         secure_cookies=secure_cookies,
     )
-    app.dependency_overrides[v2_auth_api.get_workos_auth_client] = lambda: workos
+    app.dependency_overrides[account_deps.get_workos_auth_client] = lambda: workos
 
 
 def state_cookie(response: httpx2.Response) -> str:

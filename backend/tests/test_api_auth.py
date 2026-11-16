@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from httpx2 import Response
 from sqlalchemy.orm import Session
 
-from podex.api.v2 import auth as v2_auth_api
+from podex.api.v2 import account_deps
 from podex.models import Episode, MagicLinkToken, UserSession
 from tests.conftest import seed_catalog_graph
 
@@ -47,7 +47,7 @@ def _sign_in(client: TestClient) -> str:
     app = client.app
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
-    app.dependency_overrides[v2_auth_api.get_auth_magic_link_sender] = lambda: sender
+    app.dependency_overrides[account_deps.get_auth_magic_link_sender] = lambda: sender
     requested = client.post(
         "/api/v2/auth/magic-link/request",
         json={"email": "reader@example.com"},
@@ -77,7 +77,7 @@ def test_magic_link_session_lifecycle_uses_hashed_credentials(
     app = client.app
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
-    app.dependency_overrides[v2_auth_api.get_auth_magic_link_sender] = lambda: sender
+    app.dependency_overrides[account_deps.get_auth_magic_link_sender] = lambda: sender
 
     requested = client.post(
         "/api/v2/auth/magic-link/request",
@@ -158,7 +158,7 @@ def test_magic_link_email_constrains_redirect_path(
     app = client.app
     if not isinstance(app, FastAPI):
         raise AssertionError("Expected FastAPI test application")
-    app.dependency_overrides[v2_auth_api.get_auth_magic_link_sender] = lambda: sender
+    app.dependency_overrides[account_deps.get_auth_magic_link_sender] = lambda: sender
 
     response = client.post(
         "/api/v2/auth/magic-link/request",
@@ -279,7 +279,7 @@ def test_digest_send_and_preferences(
     app = client.app
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
-    app.dependency_overrides[v2_auth_api.get_digest_sender] = lambda: digest_sender
+    app.dependency_overrides[account_deps.get_digest_sender] = lambda: digest_sender
     client.put(f"/api/v2/me/follows/{graph.podcast_id}", headers=cookie)
     client.post(
         "/api/v2/me/alerts",
