@@ -22,6 +22,7 @@ from spotipy.exceptions import SpotifyException
 from spotipy.util import Retry
 
 from podex.logging_config import configure_logging
+from podex.models import Podcast
 from podex.services.discovery_spotify import SpotifyDiscovery
 
 _CLIENT_ID = f"spotify-client-{token_hex(6)}"
@@ -253,3 +254,49 @@ def test_error_line_for_a_long_query_is_a_skeleton(
     )
     for value in (_PROVIDER_TEXT, _ACCESS_TOKEN, "qqqq"):
         assert_that(_everything(caplog)).does_not_contain(value)
+
+
+def _refuse_token(
+    _session: requests.Session,
+    _method: str,
+    url: str,
+    **_kwargs: Any,
+) -> _JsonResponse:
+    """Reject the client-credentials token request; record any other call."""
+    if not url.startswith("https://accounts.spotify.com/"):
+        raise AssertionError(f"API called without a token: {url}")
+    return _JsonResponse(
+        url,
+        {"error": "invalid_client", "error_description": _PROVIDER_TEXT},
+        status=400,
+    )
+
+
+def test_token_failure_ends_episode_discovery_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A rejected token request yields no episodes and one credential-free warning."""
+    monkeypatch.setattr(requests.Session, "request", _refuse_token)
+    monkeypatch.setattr("spotipy.oauth2.CacheFileHandler", MemoryCacheHandler)
+    configure_logging()
+    caplog.set_level(logging.DEBUG)
+    podcast = Podcast(name="Example Show", slug="example-show", spotify_id=_SHOW_ID)
+
+    episodes = SpotifyDiscovery(
+        client_id=_CLIENT_ID,
+        client_secret=_CLIENT_SECRET,
+    ).discover_episodes(podcast)
+
+    basic = base64.b64encode(f"{_CLIENT_ID}:{_CLIENT_SECRET}".encode()).decode()
+    assert_that(episodes).is_empty()
+    failures = [
+        r.getMessage()
+        for r in caplog.records
+        if r.name == "podex.services.discovery_spotify" and r.levelno >= logging.WARNING
+    ]
+    assert_that(failures).is_equal_to(
+        [f"('episode_fetch', '{_SHOW_ID}') spotify: SpotifyOauthError; request_failed"],
+    )
+    for credential in (_CLIENT_SECRET, basic, _PROVIDER_TEXT):
+        assert_that(_everything(caplog)).does_not_contain(credential)
