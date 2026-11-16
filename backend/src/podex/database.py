@@ -7,6 +7,7 @@ from sqlalchemy import Engine, Select, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from podex.config import Settings, get_settings
+from podex.unusable_settings import checked_database_url
 
 
 def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
@@ -59,13 +60,32 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
     event.listen(target_engine, "connect", _set_pragma)
 
 
-_settings = get_settings()
+def build_engine(settings: Settings) -> Engine:
+    """Build the application engine from the configured database URL.
 
-engine = create_engine(
-    _settings.database.url.get_secret_value(),
-    **build_engine_kwargs(_settings),
-)
-enable_sqlite_foreign_keys(engine)
+    The URL is parsed, and its dialect and driver loaded, on their own first:
+    an unusable URL fails there, reported by setting and error class only
+    (:class:`~podex.unusable_settings.UnusableSettingError`). The engine is
+    then built from the parsed URL, so a fault while building it surfaces
+    unchanged.
+
+    Args:
+        settings: Application settings providing the URL and pool tuning.
+
+    Returns:
+        Engine: The engine, with SQLite foreign keys enforced.
+    """
+    url = checked_database_url(
+        settings.database.url.get_secret_value(),
+        source="PODEX_DATABASE__URL",
+        load_driver=True,
+    )
+    built: Engine = create_engine(url, **build_engine_kwargs(settings))
+    enable_sqlite_foreign_keys(built)
+    return built
+
+
+engine = build_engine(get_settings())
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 

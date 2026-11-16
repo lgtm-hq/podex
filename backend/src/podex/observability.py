@@ -51,6 +51,7 @@ import sentry_sdk
 from sentry_sdk.integrations.logging import ignore_logger
 from sentry_sdk.scrubber import DEFAULT_DENYLIST, EventScrubber
 from sentry_sdk.types import Breadcrumb, BreadcrumbHint, Event, Hint
+from sentry_sdk.utils import Dsn
 
 from podex import __version__
 from podex.api.v2.auth_rejection import RejectedSignInCodeError
@@ -73,6 +74,7 @@ from podex.redaction import (
     undersized_field_paths,
 )
 from podex.services.workos_auth import WorkOSInvalidCodeError
+from podex.unusable_settings import without_setting_text
 
 _logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -493,6 +495,10 @@ def init_sentry(settings: Settings) -> bool:
 
     Returns:
         True when the SDK was initialized, False when disabled.
+
+    Raises:
+        UnusableSettingError: When the DSN cannot be parsed; the message names
+            the setting and the error class only.
     """
     if not settings.observability.sentry_dsn:
         return False
@@ -506,6 +512,15 @@ def init_sentry(settings: Settings) -> bool:
             field_path,
             SHORT_VALUE_LENGTH,
         )
+    # Parsing the DSN can quote it (an invalid project, scheme or port): parse
+    # it with the SDK's own parser first, which raises ValueError (BadDsn is
+    # one) for bad input, where that is reported by class only. The SDK is
+    # then initialised outside that check.
+    without_setting_text(
+        lambda: Dsn(settings.observability.sentry_dsn),
+        source="PODEX_OBSERVABILITY__SENTRY_DSN",
+        failures=(ValueError,),
+    )
     sentry_sdk.init(
         dsn=settings.observability.sentry_dsn,
         environment=settings.observability.sentry_environment,

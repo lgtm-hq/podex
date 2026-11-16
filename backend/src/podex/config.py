@@ -4,13 +4,21 @@ Credentials (API keys, passwords, signing and encryption keys, and URLs that
 can embed a password) are held as :class:`~pydantic.SecretStr`, so ``repr``,
 ``str`` and serialisation of any settings model mask them. Each use reads the
 value explicitly with ``get_secret_value()``.
+
+Validation errors never print the rejected input, only its field path and
+error type: every settings model sets ``hide_input_in_errors``. Inputs are hidden
+by the configuration of the outermost model being validated, so ``Settings``
+covers its nested sections; each section sets it too for when it is validated
+on its own.
 """
 
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import BaseModel, Field, SecretStr, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from podex.logging_config import install_log_boundaries
 
 
 class SecretEncodingError(RuntimeError):
@@ -34,7 +42,13 @@ def _validate_secret_encoding(value: SecretStr, *, setting: str) -> SecretStr:
     return value
 
 
-class DatabaseSettings(BaseModel):
+class SettingsSection(BaseModel):
+    """Base of the nested settings models: errors omit the rejected input."""
+
+    model_config = ConfigDict(hide_input_in_errors=True)
+
+
+class DatabaseSettings(SettingsSection):
     """Database URL and connection-pool tuning.
 
     Nested under ``settings.database``. Environment grammar:
@@ -57,7 +71,7 @@ class DatabaseSettings(BaseModel):
     pool_recycle_seconds: int = Field(default=300, ge=1)
 
 
-class RateLimitSettings(BaseModel):
+class RateLimitSettings(SettingsSection):
     """HTTP rate limiting and Redis store selection.
 
     Nested under ``settings.rate_limit``. Environment grammar:
@@ -77,7 +91,7 @@ class RateLimitSettings(BaseModel):
     redis_prefix: str = "podex:ratelimit"
 
 
-class StatsCacheSettings(BaseModel):
+class StatsCacheSettings(SettingsSection):
     """Aggregate/stats response caching.
 
     Nested under ``settings.stats_cache``. Environment grammar:
@@ -94,7 +108,7 @@ class StatsCacheSettings(BaseModel):
     ttl_seconds: float = Field(default=30.0, ge=0, allow_inf_nan=False)
 
 
-class FeedHttpSettings(BaseModel):
+class FeedHttpSettings(SettingsSection):
     """Public feed HTTP limits under ``PODEX_FEED_HTTP__<FIELD>``."""
 
     connect_timeout_seconds: float = Field(default=5.0, gt=0, allow_inf_nan=False)
@@ -105,7 +119,7 @@ class FeedHttpSettings(BaseModel):
     max_decompressed_bytes: int = Field(default=10_485_760, gt=0)
 
 
-class TranscriptStorageSettings(BaseModel):
+class TranscriptStorageSettings(SettingsSection):
     """Encrypted raw transcript artifact storage (filesystem or S3/R2).
 
     Nested under ``settings.transcripts``. Environment grammar:
@@ -127,7 +141,7 @@ class TranscriptStorageSettings(BaseModel):
     s3_secret_access_key: SecretStr = SecretStr("")
 
 
-class AuthSettings(BaseModel):
+class AuthSettings(SettingsSection):
     """Passwordless auth (magic link + hosted WorkOS AuthKit).
 
     Nested under ``settings.auth``. Environment grammar:
@@ -165,7 +179,7 @@ class AuthSettings(BaseModel):
         )
 
 
-class BillingSettings(BaseModel):
+class BillingSettings(SettingsSection):
     """Paid-tier gates and Paddle Merchant of Record checkout/webhooks.
 
     Nested under ``settings.billing``. Environment grammar:
@@ -208,7 +222,7 @@ class BillingSettings(BaseModel):
         return bool(self.paddle_checkout_url and self.paddle_price_id)
 
 
-class ObservabilitySettings(BaseModel):
+class ObservabilitySettings(SettingsSection):
     """Error tracking (Sentry).
 
     Nested under ``settings.observability``. Environment grammar:
@@ -226,7 +240,7 @@ class ObservabilitySettings(BaseModel):
     sentry_environment: str = "production"
 
 
-class TmdbEnrichmentSettings(BaseModel):
+class TmdbEnrichmentSettings(SettingsSection):
     """TMDB (and TMDB Person) enrichment provider settings.
 
     Nested under ``settings.enrichment.tmdb``. Environment grammar:
@@ -239,7 +253,7 @@ class TmdbEnrichmentSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
 
 
-class OmdbEnrichmentSettings(BaseModel):
+class OmdbEnrichmentSettings(SettingsSection):
     """OMDB enrichment provider settings.
 
     Nested under ``settings.enrichment.omdb``. Environment grammar:
@@ -251,7 +265,7 @@ class OmdbEnrichmentSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
 
 
-class GoogleBooksEnrichmentSettings(BaseModel):
+class GoogleBooksEnrichmentSettings(SettingsSection):
     """Google Books enrichment provider settings.
 
     Nested under ``settings.enrichment.google_books``. Environment grammar:
@@ -263,7 +277,7 @@ class GoogleBooksEnrichmentSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
 
 
-class OpenLibraryEnrichmentSettings(BaseModel):
+class OpenLibraryEnrichmentSettings(SettingsSection):
     """Open Library enrichment provider settings (no API key).
 
     Nested under ``settings.enrichment.open_library``.
@@ -273,7 +287,7 @@ class OpenLibraryEnrichmentSettings(BaseModel):
     base_url: str = "https://openlibrary.org"
 
 
-class ItunesEnrichmentSettings(BaseModel):
+class ItunesEnrichmentSettings(SettingsSection):
     """iTunes Search enrichment provider settings (no API key).
 
     Nested under ``settings.enrichment.itunes``.
@@ -283,7 +297,7 @@ class ItunesEnrichmentSettings(BaseModel):
     base_url: str = "https://itunes.apple.com"
 
 
-class WikipediaEnrichmentSettings(BaseModel):
+class WikipediaEnrichmentSettings(SettingsSection):
     """Wikipedia enrichment provider settings (no API key).
 
     Nested under ``settings.enrichment.wikipedia``. ``base_url`` maps to
@@ -294,7 +308,7 @@ class WikipediaEnrichmentSettings(BaseModel):
     base_url: str = "https://en.wikipedia.org/w/api.php"
 
 
-class PubmedEnrichmentSettings(BaseModel):
+class PubmedEnrichmentSettings(SettingsSection):
     """PubMed/NCBI E-utilities enrichment provider settings.
 
     Nested under ``settings.enrichment.pubmed``. Environment grammar:
@@ -307,7 +321,7 @@ class PubmedEnrichmentSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
 
 
-class SemanticScholarEnrichmentSettings(BaseModel):
+class SemanticScholarEnrichmentSettings(SettingsSection):
     """Semantic Scholar enrichment provider settings.
 
     Nested under ``settings.enrichment.semantic_scholar``.
@@ -318,7 +332,7 @@ class SemanticScholarEnrichmentSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
 
 
-class CrossrefEnrichmentSettings(BaseModel):
+class CrossrefEnrichmentSettings(SettingsSection):
     """CrossRef enrichment provider settings.
 
     Nested under ``settings.enrichment.crossref``. Uses ``mailto`` (not
@@ -331,7 +345,7 @@ class CrossrefEnrichmentSettings(BaseModel):
     mailto: str = ""
 
 
-class EnrichmentSettings(BaseModel):
+class EnrichmentSettings(SettingsSection):
     """External media-enrichment provider configuration.
 
     Nested under ``settings.enrichment``. Environment grammar:
@@ -368,7 +382,7 @@ class EnrichmentSettings(BaseModel):
     )
 
 
-class RetentionSettings(BaseModel):
+class RetentionSettings(SettingsSection):
     """Environment opt-in for irreversible transcript deletion."""
 
     purge_enabled: bool = False
@@ -382,6 +396,7 @@ class Settings(BaseSettings):
         env_nested_delimiter="__",
         env_file=".env",
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     app_name: str = "podex"
@@ -427,5 +442,12 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    """Return the cached application settings."""
+    """Return the cached application settings.
+
+    The log boundary is installed first: whatever the settings library logs
+    while it reads the environment (its debug switch prints the values it
+    found) passes the boundary, whichever entrypoint or import resolves the
+    settings first.
+    """
+    install_log_boundaries()
     return Settings()

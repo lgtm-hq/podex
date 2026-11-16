@@ -1,5 +1,6 @@
 """Alembic migration environment."""
 
+from configparser import InterpolationError
 from logging.config import fileConfig
 
 from alembic import context  # type: ignore[attr-defined]
@@ -8,6 +9,7 @@ from sqlalchemy import engine_from_config, pool, text
 from podex.config import get_settings
 from podex.logging_config import install_log_boundaries
 from podex.models import Base
+from podex.unusable_settings import checked_database_url, without_setting_text
 
 config = context.config
 
@@ -20,7 +22,19 @@ if config.config_file_name is not None:
 # (row values in a driver's DETAIL); the CLI's log format is unchanged.
 install_log_boundaries()
 
-if not config.get_main_option("sqlalchemy.url"):
+_CONFIGURED_SOURCE = "sqlalchemy.url in the Alembic configuration"
+
+# Reading the option interpolates it (ConfigParser), which fails quoting the
+# URL when it holds a lone "%"; read it where a failure names the source and
+# the error class only. Its presence decides where the URL comes from.
+configured_url = without_setting_text(
+    lambda: config.get_main_option("sqlalchemy.url"),
+    source=_CONFIGURED_SOURCE,
+    failures=(InterpolationError,),
+)
+URL_SOURCE = _CONFIGURED_SOURCE if configured_url else "PODEX_DATABASE__URL"
+
+if not configured_url:
     # The option goes through ConfigParser interpolation, which would reject a
     # percent-encoded password (and print the whole URL); "%%" reads back "%".
     config.set_main_option(
@@ -33,8 +47,12 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations without a live database connection."""
+    url = config.get_main_option("sqlalchemy.url") or ""
+    # Parse the URL and load its dialect where an unusable URL is reported by
+    # error class only; the URL can hold a password.
+    checked_database_url(url, source=URL_SOURCE, load_driver=False)
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -46,6 +64,13 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations against a live database connection."""
     section = config.get_section(config.config_ini_section, {}) or {}
+    # An unusable URL is reported by error class only, as for the application;
+    # the engine is then built outside that check.
+    checked_database_url(
+        config.get_main_option("sqlalchemy.url") or "",
+        source=URL_SOURCE,
+        load_driver=True,
+    )
     connectable = engine_from_config(
         section,
         prefix="sqlalchemy.",
