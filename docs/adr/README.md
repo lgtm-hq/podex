@@ -17,6 +17,7 @@ the changelog record _what_ changed.
 | [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test          | proposed | 2026-11-14 |
 | [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text      | proposed | 2026-11-14 |
 | [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |
+| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | proposed | 2026-11-16 |
 
 ## Format
 

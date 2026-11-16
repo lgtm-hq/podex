@@ -4,9 +4,11 @@ Each test starts a fresh interpreter (the ``spawn`` start method), runs one
 entrypoint there (API app factory, scheduler runner, migration
 environment), fails with a database error whose driver message reveals a
 row value, and searches everything the process wrote to its standard
-streams. The child modules import only their own entrypoint, and the
-scheduler and migration processes check that ``podex.main`` was never
-imported, so they cannot rely on the API's logging setup.
+streams. The API, scheduler and migration children also log an HTTP client
+request line whose URL carries the row value as a credential. The child
+modules import only their own entrypoint, and the scheduler and migration
+processes check that ``podex.main`` was never imported, so they cannot rely
+on the API's logging setup.
 """
 
 import multiprocessing
@@ -24,6 +26,7 @@ from tests import (
 )
 from tests.database_error_support import SQLSTATE_DESCRIPTOR
 from tests.process_support import run_in_fresh_process, wait_forever
+from tests.sdk_log_support import SDK_REQUEST_LINE
 
 _NOT_IMPORTED = "podex.main imported: False"
 _OFFLINE_POSTGRES = "postgresql+psycopg://podex@db.invalid:5432/podex"
@@ -78,6 +81,7 @@ def test_scheduler_process_withholds_database_text(
     assert_that(stdout).contains(_NOT_IMPORTED)
     assert_that(stderr).contains("scheduler_tick_failed")
     assert_that(stderr).contains(SQLSTATE_DESCRIPTOR)
+    assert_that(stderr).contains(SDK_REQUEST_LINE)
     assert_that(stdout + stderr).does_not_contain(row_value)
 
 
@@ -126,6 +130,7 @@ def test_migration_process_withholds_database_text(
     assert_that(stdout).contains(_NOT_IMPORTED)
     assert_that(stderr).contains("migration failed")
     assert_that(stderr).contains(SQLSTATE_DESCRIPTOR)
+    assert_that(stderr).contains(SDK_REQUEST_LINE)
     assert_that(stdout + stderr).does_not_contain(row_value)
 
 
@@ -144,4 +149,5 @@ def test_api_process_withholds_database_text(
 
     assert_that(stderr).contains("Exception in ASGI application")
     assert_that(stderr).contains(SQLSTATE_DESCRIPTOR)
+    assert_that(stderr).contains(SDK_REQUEST_LINE)
     assert_that(stdout + stderr).does_not_contain(row_value)
