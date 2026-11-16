@@ -6,18 +6,32 @@ name: PR - All Checks Gate
 # checks, not just the required ones. Keep it in its own workflow file: runs
 # of this file are excluded so the gate never waits on itself.
 
-'on':
+"on":
   push:
     branches: [main]
   pull_request:
     # `edited` too: PR - Title Validation re-runs on title edits.
-    types: [opened, edited, synchronize, reopened, ready_for_review, converted_to_draft]
+    types:
+      [
+        opened,
+        edited,
+        synchronize,
+        reopened,
+        ready_for_review,
+        converted_to_draft,
+      ]
   merge_group:
 
 permissions: {}
 
 concurrency:
-  group: all-checks-gate-${{ github.event.pull_request.number || github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    all-checks-gate-${{ github.event.pull_request.number || github.ref }}${{
+    github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+    format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:

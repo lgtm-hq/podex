@@ -13,7 +13,12 @@ name: CI - Tests
 permissions: {}
 
 concurrency:
-  group: test-ci-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    test-ci-${{ github.ref }}${{ github.event_name == 'push' && github.ref ==
+    'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -25,13 +30,13 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      python-versions: '3.11,3.12,3.13,3.14,3.15'
+      python-versions: "3.11,3.12,3.13,3.14,3.15"
       working-directory: backend
       test-path: tests
       coverage: false
       publish-test-summary: false
       draft-pr-skip: true
-      job-name: '🧪 Python Compatibility'
+      job-name: "🧪 Python Compatibility"
       # Distinct artifact prefixes (lgtm-ci v0.76 #1108): both calls run 3.13,
       # so the shared default `python-results-3.13` would let one call's
       # results overwrite the other's.
@@ -55,8 +60,8 @@ jobs:
     name: 🐘 Postgres Migration Replay
     runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
     if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.draft == false
+      github.event_name != 'pull_request' || github.event.pull_request.draft ==
+      false
     permissions:
       contents: read
     services:
@@ -75,10 +80,8 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U podex -d podex"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "pg_isready -U podex -d podex" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - name: Harden runner
         # The Postgres service container is pulled by the runner before any
@@ -91,27 +94,24 @@ jobs:
         with:
           egress-policy: block
           allowed-endpoints: >
-            github.com:443
-            api.github.com:443
-            objects.githubusercontent.com:443
+            github.com:443 api.github.com:443 objects.githubusercontent.com:443
             raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
-            github-releases.githubusercontent.com:443
-            pypi.org:443
+            github-releases.githubusercontent.com:443 pypi.org:443
             files.pythonhosted.org:443
       - name: Checkout repository
         # Pinned to SHA for supply chain security
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install uv
         # Pinned to SHA for supply chain security
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           # Exact uv release (not `latest`): the action SHA does not pin the
           # uv binary it downloads. Renovate's github-actions manager tracks
           # this input against astral-sh/uv releases.
-          version: '0.13.8'
+          version: "0.13.8"
           enable-cache: false
       - name: Replay migrations on Postgres
         env:
@@ -130,8 +130,8 @@ jobs:
     name: 🐘 Postgres Application Tests
     runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
     if: >-
-      github.event_name != 'pull_request'
-      || github.event.pull_request.draft == false
+      github.event_name != 'pull_request' || github.event.pull_request.draft ==
+      false
     permissions:
       contents: read
     services:
@@ -151,10 +151,8 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U podex -d podex"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+          --health-cmd "pg_isready -U podex -d podex" --health-interval 5s
+          --health-timeout 5s --health-retries 10
     steps:
       - name: Harden runner
         # Same allowlist as test-postgres-migrations: the service image is
@@ -166,25 +164,22 @@ jobs:
         with:
           egress-policy: block
           allowed-endpoints: >
-            github.com:443
-            api.github.com:443
-            objects.githubusercontent.com:443
+            github.com:443 api.github.com:443 objects.githubusercontent.com:443
             raw.githubusercontent.com:443
             release-assets.githubusercontent.com:443
-            github-releases.githubusercontent.com:443
-            pypi.org:443
+            github-releases.githubusercontent.com:443 pypi.org:443
             files.pythonhosted.org:443
       - name: Checkout repository
         # Pinned to SHA for supply chain security
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install uv
         # Pinned to SHA for supply chain security
-        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           # Exact uv release, kept equal to test-postgres-migrations.
-          version: '0.13.8'
+          version: "0.13.8"
           enable-cache: false
       - name: Run PostgreSQL application tests
         env:
@@ -203,7 +198,7 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-python.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      python-version: '3.13'
+      python-version: "3.13"
       working-directory: backend
       test-path: tests
       coverage: true
@@ -212,7 +207,7 @@ jobs:
       upload-coverage: true
       publish-test-summary: true
       draft-pr-skip: true
-      job-name: '🧪 Python Coverage'
+      job-name: "🧪 Python Coverage"
       artifact-prefix: coverage
       egress-policy: block
       egress-preset: quality
@@ -229,7 +224,7 @@ jobs:
     # yamllint disable-line rule:line-length
     uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-test-shell.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
     with:
-      job-name: '🐚 Shell Tests'
+      job-name: "🐚 Shell Tests"
       test-path: tests/bats
       coverage: false
       publish-test-summary: false
@@ -270,7 +265,7 @@ jobs:
     steps:
       - name: Checkout gate script
         # Pinned to SHA for supply chain security
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           sparse-checkout: .github/scripts/evaluate-test-gate.sh
           sparse-checkout-cone-mode: false
@@ -300,7 +295,7 @@ jobs:
     permissions:
       contents: read
     with:
-      job-name: '🧪 Test Suite'
+      job-name: "🧪 Test Suite"
       upstream-result: ${{ needs.test-gate.result }}
       passed-output: ${{ needs.test-gate.outputs.passed }}
       egress-policy: block

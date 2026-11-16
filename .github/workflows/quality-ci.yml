@@ -13,7 +13,12 @@ name: Quality - Lint & Format
 permissions: {}
 
 concurrency:
-  group: quality-ci-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    quality-ci-${{ github.ref }}${{ github.event_name == 'push' && github.ref ==
+    'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -25,12 +30,12 @@ jobs:
       contents: read
       packages: read
     with:
-      job-name: '🛠️ Lintro Code Quality'
+      job-name: "🛠️ Lintro Code Quality"
       working-directory: backend
       # Route semgrep to the repo-local #29 prompt-boundary rules (issue #236)
       # instead of the registry "auto" config, which egress-blocked CI cannot
       # reach anyway.
-      lintro-tool-options: 'semgrep:config=.semgrep/prompt-boundary.yaml'
+      lintro-tool-options: "semgrep:config=.semgrep/prompt-boundary.yaml"
       # yamllint disable-line rule:line-length
       lintro-image: ghcr.io/lgtm-hq/py-lintro:0.180.34@sha256:9f771871ace55abebc495e7c50716b59b91aa42a45fb47f9bf71be46547daded
       egress-policy: block
@@ -51,7 +56,7 @@ jobs:
       contents: read
       packages: read
     with:
-      job-name: '🛠️ Lintro Actionlint'
+      job-name: "🛠️ Lintro Actionlint"
       tools: actionlint
       working-directory: .
       upload-report: false
@@ -67,8 +72,7 @@ jobs:
   lintro-code-quality:
     needs: [quality, actionlint]
     if: >-
-      always() &&
-      (
+      always() && (
         github.event_name != 'pull_request' ||
         github.event.pull_request.draft == false
       )
@@ -77,13 +81,15 @@ jobs:
     permissions:
       contents: read
     with:
-      job-name: '🛠️ Lintro Code Quality'
+      job-name: "🛠️ Lintro Code Quality"
       # quality's result/status unless it succeeded, then actionlint's
       # yamllint disable rule:line-length
       upstream-result: >-
-        ${{ needs.quality.result == 'success' && needs.actionlint.result || needs.quality.result }}
+        ${{ needs.quality.result == 'success' && needs.actionlint.result ||
+        needs.quality.result }}
       status-output: >-
-        ${{ needs.quality.outputs.status == 'passed' && needs.actionlint.outputs.status || needs.quality.outputs.status }}
+        ${{ needs.quality.outputs.status == 'passed' &&
+        needs.actionlint.outputs.status || needs.quality.outputs.status }}
       # yamllint enable rule:line-length
       status-expected: passed
       egress-policy: block
@@ -92,10 +98,8 @@ jobs:
   publish-quality-summary:
     needs: quality
     if: >-
-      !cancelled()
-      && github.event_name == 'pull_request'
-      && github.event.pull_request.head.repo.full_name == github.repository
-      && (
+      !cancelled() && github.event_name == 'pull_request' &&
+      github.event.pull_request.head.repo.full_name == github.repository && (
         github.event.pull_request.draft == false
         || github.event.action == 'ready_for_review'
       )

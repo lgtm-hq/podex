@@ -13,7 +13,12 @@ name: CI - Frontend
 permissions: {}
 
 concurrency:
-  group: frontend-ci-${{ github.ref }}
+  # A push to main gets one group per commit (#44): a later push cannot
+  # replace the pending run of an earlier one, so every main commit keeps a
+  # completed run. Every other run keeps the group without the suffix.
+  group: >-
+    frontend-ci-${{ github.ref }}${{ github.event_name == 'push' && github.ref
+    == 'refs/heads/main' && format('-{0}', github.sha) || '' }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
@@ -25,10 +30,10 @@ jobs:
       working-directory: frontend
       # astro check then vitest with coverage (threshold in vitest.config.ts);
       # the && short-circuits so a check failure also fails the job.
-      test-command: 'bun run check && bun run test:coverage'
+      test-command: "bun run check && bun run test:coverage"
       coverage: true
-      job-name: '🎨 Frontend Checks'
-      node-version: '22'
+      job-name: "🎨 Frontend Checks"
+      node-version: "22"
       draft-pr-skip: true
       # The reusable's default allowlist already covers the node/bun install
       # registries (registry.npmjs.org, bun.sh); no caller override needed.
