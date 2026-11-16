@@ -269,7 +269,8 @@ def is_slug_conflict(error: IntegrityError) -> bool:
     """
     driver_error = error.orig
     if isinstance(driver_error, UniqueViolation):
-        return driver_error.diag.constraint_name == SLUG_UNIQUE_INDEX
+        constraint: str | None = driver_error.diag.constraint_name
+        return constraint == SLUG_UNIQUE_INDEX
     if isinstance(driver_error, sqlite3.IntegrityError):
         return (
             getattr(driver_error, "sqlite_errorname", None)
