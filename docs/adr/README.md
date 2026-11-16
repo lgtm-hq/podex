@@ -21,6 +21,7 @@ the changelog record _what_ changed.
 | [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | proposed | 2026-11-16 |
 | [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | proposed | 2026-11-16 |
 | [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
+| [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | proposed | 2026-11-16 |
 | [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | proposed | 2026-11-16 |
 
 ## Format
