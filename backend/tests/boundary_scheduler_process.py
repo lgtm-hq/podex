@@ -2,15 +2,16 @@
 
 Run in a fresh interpreter by ``tests/test_log_boundary_entrypoints.py``. The
 parent sets the database URL and disables reporting before the child starts.
-The module command uses a one-second interval and stops after its first tick.
+The module command uses a 30-second interval, so a second tick cannot happen
+before the parent's stop signal lands, and stops after its first tick.
 """
 
 import asyncio
-import asyncio.subprocess
 import logging
 import os
 import signal
 import sys
+from asyncio.subprocess import PIPE, Process
 from importlib import import_module
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -60,7 +61,7 @@ def run_one_tick(row_value: str) -> None:
         )
         environment = dict(
             os.environ,
-            PODEX_SCHEDULER_TICK_SECONDS="1",
+            PODEX_SCHEDULER_TICK_SECONDS="30",
             PYTHONPATH=os.pathsep.join(
                 (
                     directory,
@@ -79,17 +80,20 @@ async def _run_module(environment: dict[str, str]) -> None:
         "-m",
         "podex.scheduler_runner",
         env=environment,
-        stderr=asyncio.subprocess.PIPE,
+        stderr=PIPE,
     )
     try:
         await asyncio.wait_for(_stop_after_tick(process), timeout=30)
     finally:
         if process.returncode is None:
             process.kill()
-        await process.communicate()
+        _stdout, remaining = await process.communicate()
+        if remaining:
+            sys.stderr.write(remaining.decode(errors="replace"))
+            sys.stderr.flush()
 
 
-async def _stop_after_tick(process: asyncio.subprocess.Process) -> None:
+async def _stop_after_tick(process: Process) -> None:
     """Forward stderr and signal the process immediately after its first tick."""
     stderr = process.stderr
     if stderr is None:

@@ -32,6 +32,7 @@ from podex.services.recurring_notifications import (
 )
 from podex.services.scheduled_work import plan_due_scheduled_work
 
+# Not __name__: under "python -m" that is "__main__".
 logger = get_logger("podex.scheduler_runner")
 
 

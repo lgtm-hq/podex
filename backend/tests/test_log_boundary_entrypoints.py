@@ -95,9 +95,9 @@ def test_scheduler_process_logs_lifecycle_at_default_level(
     )
 
     assert_that(stdout).contains(_NOT_IMPORTED)
-    assert_that(stderr.count("scheduler_runner_started tick_seconds=1")).is_equal_to(1)
+    assert_that(stderr.count("scheduler_runner_started tick_seconds=30")).is_equal_to(1)
     assert_that(stderr).contains(
-        "INFO podex.scheduler_runner scheduler_runner_started tick_seconds=1",
+        "INFO podex.scheduler_runner scheduler_runner_started tick_seconds=30",
     )
     assert_that(stderr.count("scheduler_tick planned=")).is_equal_to(1)
     assert_that(stderr).matches(
