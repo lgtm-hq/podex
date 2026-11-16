@@ -2,7 +2,7 @@
 
 :func:`install_log_boundaries` installs the credential boundaries every log
 record and uncaught exception passes; :func:`configure_logging` also sets the
-API's log format. Every process entrypoint installs the boundaries: the API
+application's log format. Every process entrypoint installs the boundaries: the API
 (``create_app``), the scheduler runner and the migration environment.
 
 - HTTPX request lines lose URL userinfo, fragments and provider key fields.
@@ -347,9 +347,9 @@ def _install_database_error_boundary() -> None:
 def install_log_boundaries() -> None:
     """Install the credential boundaries without changing log output.
 
-    Every process entrypoint calls this (the API through
-    :func:`configure_logging`, the scheduler and the migration environment
-    directly), so the boundaries hold whichever process logs or fails.
+    Every process entrypoint calls this (the API and scheduler through
+    :func:`configure_logging`, the migration environment directly), so the
+    boundaries hold whichever process logs or fails.
     """
     logging.getLogger("httpx").addFilter(_redact_httpx_credentials)
     for name in _SPOTIFY_LOGGERS:
