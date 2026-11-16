@@ -1,20 +1,23 @@
 """Every entrypoint starts without printing a configured credential.
 
 Each test starts one entrypoint in a new interpreter (the API's import, the
-scheduler module command, the OpenAPI generator, the migration command) with
-a synthetic secret in its environment and searches everything the process
-wrote to its standard streams:
+ASGI server command, the scheduler module command, the OpenAPI generator, the
+migration command offline and online) with a synthetic secret in its
+environment, from a temporary directory (so no local ``.env`` file is read),
+and searches everything the process wrote to its standard streams:
 
 - an invalid value in a credential-bearing setting fails with the field path
   and error type, not the rejected input;
-- an unusable database URL with a password fails with the error class, not
-  the URL;
+- an unusable database URL, a malformed Redis URL or a malformed
+  error-reporting DSN fails with the setting's name and the error class, not
+  the value;
 - with the settings library's debug switch on and DEBUG logging configured
   before the entrypoint loads, valid settings start as before, and the
   library's record of the values it read is withheld.
 """
 
 import os
+import signal
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,11 +26,22 @@ from secrets import token_hex
 import pytest
 from assertpy import assert_that
 
+from tests import process_support
 from tests.process_support import CommandResult, run_command
 
 _BACKEND = Path(__file__).resolve().parent.parent
 _OFFLINE_POSTGRES = "postgresql+psycopg://podex@db.invalid:5432/podex"
 _DEBUG_LOGGING = "import logging; logging.basicConfig(level=logging.DEBUG); "
+_WITHHELD_SETTINGS_RECORD = "pydantic_settings:[record withheld: unrecognised form"
+# The migration command configures logging from alembic.ini, which resets the
+# root logger's level; a handler on the settings library's own logger still
+# prints its records, so the boundary has something to withhold.
+_SETTINGS_LOGGER_HANDLER = (
+    "import sys; handler = logging.StreamHandler(sys.stderr); "
+    "handler.setFormatter(logging.Formatter('%(levelname)s:%(name)s:%(message)s')); "
+    "settings_logger = logging.getLogger('pydantic_settings'); "
+    "settings_logger.setLevel(logging.DEBUG); settings_logger.addHandler(handler); "
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,53 +50,75 @@ class Entrypoint:
 
     Attributes:
         name: Test id.
-        command: Its documented command, after ``python``.
+        command: Its documented command, after ``python``; ``{out}`` is a
+            writable file path and ``{ini}`` the migration configuration.
         debug_code: Python code that configures DEBUG logging, then loads the
-            entrypoint and returns; ``{out}`` is a writable file path.
+            entrypoint and returns; the same placeholders apply.
         valid_output: Text the debug start prints when it succeeds.
-        migrations: Whether it runs from the backend directory against the
-            offline PostgreSQL URL (the migration environment's needs).
+        migrations: Whether it needs the migration configuration and the
+            offline PostgreSQL URL.
     """
 
     name: str
     command: tuple[str, ...]
-    debug_code: str
-    valid_output: str
+    debug_code: str = ""
+    valid_output: tuple[str, ...] = (_WITHHELD_SETTINGS_RECORD,)
     migrations: bool = False
 
 
-_WITHHELD_SETTINGS_RECORD = "pydantic_settings:[record withheld: unrecognised form"
-
-ENTRYPOINTS = (
-    Entrypoint(
-        name="api",
-        command=("-c", "import podex.main"),
-        debug_code="import podex.main",
-        valid_output=_WITHHELD_SETTINGS_RECORD,
-    ),
-    Entrypoint(
-        name="scheduler",
-        command=("-m", "podex.scheduler_runner"),
-        debug_code="import podex.scheduler_runner",
-        valid_output=_WITHHELD_SETTINGS_RECORD,
-    ),
-    Entrypoint(
-        name="openapi",
-        command=("-m", "podex.openapi", "{out}"),
-        debug_code="from podex.openapi import main; main([{out!r}])",
-        valid_output=_WITHHELD_SETTINGS_RECORD,
-    ),
-    Entrypoint(
-        name="migrations",
-        command=("-m", "alembic", "upgrade", "head", "--sql"),
-        debug_code=(
-            "from alembic.config import main; "
-            "main(argv=['upgrade', 'head', '--sql'])"
-        ),
-        valid_output="CREATE TABLE",
-        migrations=True,
-    ),
+API = Entrypoint(
+    name="api",
+    command=("-c", "import podex.main"),
+    debug_code="import podex.main",
 )
+ASGI_SERVER = Entrypoint(
+    name="uvicorn",
+    command=("-m", "uvicorn", "podex.main:app", "--port", "0", "--no-access-log"),
+)
+SCHEDULER = Entrypoint(
+    name="scheduler",
+    command=("-m", "podex.scheduler_runner"),
+    debug_code="import podex.scheduler_runner",
+)
+OPENAPI = Entrypoint(
+    name="openapi",
+    command=("-m", "podex.openapi", "{out}"),
+    debug_code="from podex.openapi import main; main([{out!r}])",
+)
+MIGRATIONS = Entrypoint(
+    name="migrations",
+    command=("-m", "alembic", "-c", "{ini}", "upgrade", "head", "--sql"),
+    debug_code=(
+        _SETTINGS_LOGGER_HANDLER + "from alembic.config import main; "
+        "main(argv=['-c', {ini!r}, 'upgrade', 'head', '--sql'])"
+    ),
+    valid_output=("CREATE TABLE", _WITHHELD_SETTINGS_RECORD),
+    migrations=True,
+)
+MIGRATIONS_ONLINE = Entrypoint(
+    name="migrations-online",
+    command=("-m", "alembic", "-c", "{ini}", "upgrade", "head"),
+    migrations=True,
+)
+ENTRYPOINTS = (API, SCHEDULER, OPENAPI, MIGRATIONS)
+
+
+def _alembic_ini(directory: Path) -> Path:
+    """Write the migration configuration with its paths made absolute.
+
+    Alembic resolves ``script_location`` and ``prepend_sys_path`` against the
+    working directory; absolute paths let the command run from ``directory``.
+    """
+    lines = (_BACKEND / "alembic.ini").read_text(encoding="utf-8").splitlines()
+    replaced = {
+        "script_location = alembic": f"script_location = {_BACKEND / 'alembic'}",
+        "prepend_sys_path = .": f"prepend_sys_path = {_BACKEND}",
+    }
+    rewritten = [replaced.get(line, line) for line in lines]
+    assert_that(rewritten).does_not_contain(*replaced)
+    path = directory / "alembic.ini"
+    path.write_text("\n".join(rewritten) + "\n", encoding="utf-8")
+    return path
 
 
 def _environment(entrypoint: Entrypoint, settings: dict[str, str]) -> dict[str, str]:
@@ -105,19 +141,22 @@ def _start(
     *,
     debug: bool = False,
 ) -> CommandResult:
-    """Start ``entrypoint`` with ``settings`` and return what it printed."""
-    out = str(tmp_path / "openapi.json")
+    """Start ``entrypoint`` from ``tmp_path`` with ``settings``; return its output."""
+    places = {
+        "out": str(tmp_path / "openapi.json"),
+        "ini": str(_alembic_ini(tmp_path)) if entrypoint.migrations else "",
+    }
     if debug:
         arguments: tuple[str, ...] = (
             "-c",
-            _DEBUG_LOGGING + entrypoint.debug_code.format(out=out),
+            _DEBUG_LOGGING + entrypoint.debug_code.format(**places),
         )
     else:
-        arguments = tuple(part.format(out=out) for part in entrypoint.command)
+        arguments = tuple(part.format(**places) for part in entrypoint.command)
     return run_command(
         (sys.executable, *arguments),
         env=_environment(entrypoint, settings),
-        cwd=_BACKEND if entrypoint.migrations else tmp_path,
+        cwd=tmp_path,
     )
 
 
@@ -223,7 +262,11 @@ UNUSABLE_URLS = (
 
 
 @pytest.mark.parametrize("unusable", UNUSABLE_URLS, ids=lambda case: case.name)
-@pytest.mark.parametrize("entrypoint", ENTRYPOINTS, ids=lambda entry: entry.name)
+@pytest.mark.parametrize(
+    "entrypoint",
+    [*ENTRYPOINTS, MIGRATIONS_ONLINE],
+    ids=lambda entry: entry.name,
+)
 def test_unusable_database_url_reports_error_class_only(
     entrypoint: Entrypoint,
     unusable: UnusableUrl,
@@ -241,8 +284,7 @@ def test_unusable_database_url_reports_error_class_only(
     printed = result.stdout + result.stderr
     assert_that(result.returncode).described_as(result.describe()).is_not_zero()
     assert_that(result.stderr).contains(
-        "DatabaseUrlError: The database URL (PODEX_DATABASE__URL) is not usable: "
-        f"{unusable.failure}.",
+        f"UnusableSettingError: PODEX_DATABASE__URL is not usable: {unusable.failure}.",
     )
     assert_that(printed).does_not_contain(secret)
     assert_that(printed).does_not_contain(unusable.userinfo)
@@ -266,15 +308,122 @@ def test_settings_debug_switch_prints_no_credential(
     result = _start(entrypoint, tmp_path, settings, debug=True)
 
     assert_that(result.returncode).described_as(result.describe()).is_zero()
-    assert_that(result.stdout + result.stderr).contains(entrypoint.valid_output)
+    assert_that(result.stdout + result.stderr).contains(*entrypoint.valid_output)
     assert_that(result.stdout + result.stderr).does_not_contain(secret)
+
+
+@dataclass(frozen=True, slots=True)
+class MalformedValue:
+    """A malformed URL or DSN whose parser quoted part of it.
+
+    Attributes:
+        name: Test id.
+        variable: The environment variable set.
+        template: Its value; ``{secret}`` is the synthetic secret.
+        failure: The error class the start-up failure must name.
+    """
+
+    name: str
+    variable: str
+    template: str
+    failure: str
+
+
+_REDIS = "PODEX_RATE_LIMIT__REDIS_URL"
+_DSN = "PODEX_OBSERVABILITY__SENTRY_DSN"
+REDIS_URLS = (
+    # A "/" in the password ends the authority early: the rest is the port.
+    MalformedValue(
+        name="password-read-as-port",
+        variable=_REDIS,
+        template="redis://user:{secret}/tail@cache.invalid:6379/0",
+        failure="ValueError",
+    ),
+    MalformedValue(
+        name="query-option",
+        variable=_REDIS,
+        template="redis://user:pw@cache.invalid:6379/0?socket_timeout={secret}",
+        failure="ValueError",
+    ),
+    MalformedValue(
+        name="port-text",
+        variable=_REDIS,
+        template="redis://user:pw@cache.invalid:port{secret}/0",
+        failure="ValueError",
+    ),
+)
+DSNS = (
+    MalformedValue(
+        name="invalid-project",
+        variable=_DSN,
+        template="https://key@127.0.0.1:1/{secret}",
+        failure="BadDsn",
+    ),
+    MalformedValue(
+        name="unsupported-scheme",
+        variable=_DSN,
+        template="s{secret}://key@127.0.0.1:1/1",
+        failure="BadDsn",
+    ),
+    MalformedValue(
+        name="port-text",
+        variable=_DSN,
+        template="https://key:{secret}@127.0.0.1:p{secret}/1",
+        failure="ValueError",
+    ),
+)
+# Every value through the API's import; the first of each through the other
+# entrypoints that build the same client.
+MALFORMED_STARTS = [
+    *[(API, value) for value in (*REDIS_URLS, *DSNS)],
+    (ASGI_SERVER, REDIS_URLS[0]),
+    (OPENAPI, REDIS_URLS[0]),
+    (ASGI_SERVER, DSNS[0]),
+    (SCHEDULER, DSNS[0]),
+]
+
+
+@pytest.mark.parametrize(
+    ("entrypoint", "malformed"),
+    MALFORMED_STARTS,
+    ids=[
+        f"{entry.name}-{value.variable}-{value.name}"
+        for entry, value in MALFORMED_STARTS
+    ],
+)
+def test_malformed_client_url_reports_setting_and_class_only(
+    entrypoint: Entrypoint,
+    malformed: MalformedValue,
+    tmp_path: Path,
+) -> None:
+    """Building the Redis or error-reporting client names the setting only."""
+    secret = _secret()
+
+    result = _start(
+        entrypoint,
+        tmp_path,
+        {
+            "PODEX_DATABASE__URL": f"sqlite:///{tmp_path / 'podex.db'}",
+            malformed.variable: malformed.template.format(secret=secret),
+        },
+    )
+
+    printed = (result.stdout + result.stderr).lower()
+    assert_that(result.returncode).described_as(result.describe()).is_not_zero()
+    assert_that(result.stderr).contains(
+        f"UnusableSettingError: {malformed.variable} is not usable: "
+        f"{malformed.failure}.",
+    )
+    # The DSN parser lower-cases the scheme it quotes.
+    assert_that(printed).does_not_contain(secret.lower())
 
 
 def test_timed_out_command_is_killed_and_reported(tmp_path: Path) -> None:
     """A command that never finishes is killed, waited for and reported."""
     never_finishes = (
-        "import sys, threading; print('child started', flush=True); "
+        "import sys, threading; "
         "print('still waiting', file=sys.stderr, flush=True); "
+        "print('child started', flush=True); "
         "threading.Event().wait()"
     )
 
@@ -283,9 +432,38 @@ def test_timed_out_command_is_killed_and_reported(tmp_path: Path) -> None:
             (sys.executable, "-c", never_finishes),
             env=dict(os.environ),
             cwd=tmp_path,
-            timeout=2,
+            timeout=0.5,
+            ready="child started",
         )
 
-    assert_that(str(caught.value)).contains("command timed out after 2s")
+    assert_that(str(caught.value)).contains("command timed out after 0.5s")
     assert_that(str(caught.value)).contains("--- stdout ---\nchild started")
     assert_that(str(caught.value)).contains("--- stderr ---\nstill waiting")
+
+
+def test_inherited_pipes_do_not_hold_the_result(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A process left running with the command's pipes cannot hold the result.
+
+    It starts its own session, so the command's cleanup does not reach it;
+    killing it afterwards succeeds only because it was still running, holding
+    the pipes, when the result came back.
+    """
+    monkeypatch.setattr(process_support, "DRAIN_TIMEOUT_SECONDS", 0.5)
+    leaves_a_process = (
+        "import subprocess, sys; "
+        "child = subprocess.Popen([sys.executable, '-c', "
+        "'import time; time.sleep(60)'], start_new_session=True); "
+        "print(child.pid, flush=True)"
+    )
+
+    result = run_command(
+        (sys.executable, "-c", leaves_a_process),
+        env=dict(os.environ),
+        cwd=tmp_path,
+    )
+    os.kill(int(result.stdout.split()[0]), signal.SIGKILL)
+
+    assert_that(result.returncode).described_as(result.describe()).is_zero()

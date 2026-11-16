@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from podex.services.limiter import RateLimiter, SlidingWindowRateLimiter
+from podex.unusable_settings import without_setting_text
 
 if TYPE_CHECKING:
     from podex.config import Settings
@@ -52,6 +53,10 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
 
     Returns:
         RateLimiter: A ready-to-use limiter matching the configured backend.
+
+    Raises:
+        UnusableSettingError: When the Redis URL cannot be parsed; the
+            message names the setting and the error class only.
     """
     redis_url = settings.rate_limit.redis_url.get_secret_value()
     if not redis_url:
@@ -64,10 +69,15 @@ def build_rate_limiter(settings: Settings) -> RateLimiter:
 
     from podex.services.redis_limiter import RedisSlidingWindowRateLimiter
 
-    client = redis.Redis.from_url(
-        redis_url,
-        socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
-        socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+    # Parsing the URL can quote part of its password (a "/", "#" or "?" in it
+    # moves the rest into the port or the query); report it by class only.
+    client: redis.Redis = without_setting_text(
+        lambda: redis.Redis.from_url(
+            redis_url,
+            socket_connect_timeout=_REDIS_CONNECT_TIMEOUT_SECONDS,
+            socket_timeout=_REDIS_SOCKET_TIMEOUT_SECONDS,
+        ),
+        source="PODEX_RATE_LIMIT__REDIS_URL",
     )
     return RedisSlidingWindowRateLimiter(
         client,

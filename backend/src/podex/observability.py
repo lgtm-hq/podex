@@ -73,6 +73,7 @@ from podex.redaction import (
     undersized_field_paths,
 )
 from podex.services.workos_auth import WorkOSInvalidCodeError
+from podex.unusable_settings import without_setting_text
 
 _logger = logging.getLogger(__name__)
 _EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
@@ -493,6 +494,10 @@ def init_sentry(settings: Settings) -> bool:
 
     Returns:
         True when the SDK was initialized, False when disabled.
+
+    Raises:
+        UnusableSettingError: When the DSN cannot be parsed; the message names
+            the setting and the error class only.
     """
     if not settings.observability.sentry_dsn:
         return False
@@ -506,19 +511,24 @@ def init_sentry(settings: Settings) -> bool:
             field_path,
             SHORT_VALUE_LENGTH,
         )
-    sentry_sdk.init(
-        dsn=settings.observability.sentry_dsn,
-        environment=settings.observability.sentry_environment,
-        release=f"podex@{__version__}",
-        before_send=before_send,
-        before_breadcrumb=before_breadcrumb,
-        send_default_pii=False,
-        include_local_variables=False,
-        max_request_body_size="never",
-        event_scrubber=EventScrubber(
-            denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
-            recursive=True,
+    # Parsing the DSN can quote it (an invalid project, scheme or port);
+    # report a malformed DSN by the setting's name and error class only.
+    without_setting_text(
+        lambda: sentry_sdk.init(
+            dsn=settings.observability.sentry_dsn,
+            environment=settings.observability.sentry_environment,
+            release=f"podex@{__version__}",
+            before_send=before_send,
+            before_breadcrumb=before_breadcrumb,
+            send_default_pii=False,
+            include_local_variables=False,
+            max_request_body_size="never",
+            event_scrubber=EventScrubber(
+                denylist=[*DEFAULT_DENYLIST, *_EXTRA_DENYLIST],
+                recursive=True,
+            ),
         ),
+        source="PODEX_OBSERVABILITY__SENTRY_DSN",
     )
     # Access records carry the client address; keep them out of breadcrumbs.
     ignore_logger(_ACCESS_LOGGER)
