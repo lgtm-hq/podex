@@ -48,9 +48,11 @@ from podex.services.ops_metrics import get_operational_metrics
 from podex.services.ops_podcast_commands import (
     CreateOpsPodcastInputData,
     OpsPodcastSourceInputData,
+    OpsPodcastValidationError,
     UpdateOpsPodcastInputData,
     archive_ops_podcast,
     create_ops_podcast,
+    slug_belongs_to_another_podcast,
     update_ops_podcast,
 )
 from podex.services.ops_podcast_queries import get_ops_podcast_by_id, list_ops_podcasts
@@ -76,6 +78,8 @@ from podex.services.transcript_retention import (
 from podex.unusable_settings import UnusableSettingError
 
 router = APIRouter(prefix="/ops", tags=["ops"])
+
+_SLUG_CONFLICT_DETAIL = "Podcast slug already exists"
 
 
 def _require_ops_access(*, request: Request, settings: AppSettings) -> None:
@@ -204,14 +208,14 @@ def create_ops_podcast_endpoint(
                 ),
             ),
         )
-    except ValueError as error:
+    except OpsPodcastValidationError as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(error)) from error
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Podcast slug already exists",
+            detail=_SLUG_CONFLICT_DETAIL,
         ) from error
     record_audit_log(
         db=db,
@@ -260,9 +264,23 @@ def update_ops_podcast_endpoint(
                 ),
             ),
         )
-    except ValueError as error:
+    except OpsPodcastValidationError as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except IntegrityError as error:
+        db.rollback()
+        # Only a slug held by another podcast is a conflict the operator can
+        # resolve; any other constraint failure stays an internal error.
+        if payload.slug is None or not slug_belongs_to_another_podcast(
+            db=db,
+            slug=payload.slug,
+            podcast_id=podcast_id,
+        ):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SLUG_CONFLICT_DETAIL,
+        ) from error
     if updated is None:
         raise HTTPException(status_code=404, detail="Podcast not found")
     record_audit_log(
