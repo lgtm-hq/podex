@@ -10,6 +10,7 @@ the non-ASCII form.
 """
 
 import logging
+import sys
 from dataclasses import dataclass
 
 import pytest
@@ -220,6 +221,81 @@ def test_number_text_is_padded_with_ascii_space_only(
     assert_that(caplog.records[-1].getMessage()).is_equal_to(
         f"Max attempts of {shown} reached.",
     )
+
+
+_STRIPPED = [char for char in map(chr, range(sys.maxunicode + 1)) if not char.strip()]
+"""Every character ``str.strip()`` removes, found by asking the interpreter."""
+
+_ASCII_STRIPPED = [char for char in _STRIPPED if char.isascii()]
+_OTHER_STRIPPED = [char for char in _STRIPPED if not char.isascii()]
+
+_ASCII_STRIPPED_COUNT = 10
+"""Tab, line feed, vertical tab, form feed, carriage return, the four
+information separators (``\\x1c`` to ``\\x1f``) and space."""
+
+_OTHER_STRIPPED_COUNT = 19
+"""Next line, no-break space, Ogham space mark, the eleven spaces from
+U+2000 to U+200A, the line and paragraph separators, the narrow no-break
+and medium mathematical spaces, and the ideographic space."""
+
+_POSITIONS = {
+    "left": "{space}5",
+    "right": "5{space}",
+    "both": "{space}5{space}",
+}
+"""Where the white space is put around the number text."""
+
+
+def _space_cases(spaces: list[str]) -> list[object]:
+    """Return a case for each white space character in each position."""
+    return [
+        pytest.param(position.format(space=space), id=f"U+{ord(space):04X}-{name}")
+        for space in spaces
+        for name, position in _POSITIONS.items()
+    ]
+
+
+def test_the_stripped_characters_are_the_expected_ones() -> None:
+    """The interpreter strips the white space the cases below expect.
+
+    If a new Unicode version adds white space, the counts change here
+    first, and the new characters join the cases below automatically.
+    """
+    assert_that(_ASCII_STRIPPED).is_length(_ASCII_STRIPPED_COUNT)
+    assert_that(_OTHER_STRIPPED).is_length(_OTHER_STRIPPED_COUNT)
+
+
+def _logged_number(caplog: pytest.LogCaptureFixture, text: str) -> str:
+    """Log ``text`` as a number argument and return what the record prints."""
+    with debug_logging(caplog):
+        logging.getLogger("botocore.retries.standard").info(
+            "Max attempts of %s reached.",
+            text,
+        )
+    printed: str = caplog.records[-1].getMessage()
+    return printed
+
+
+@pytest.mark.parametrize("text", _space_cases(_ASCII_STRIPPED))
+def test_number_text_with_ascii_space_around_it_prints(
+    text: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each ASCII white space character may pad number text on either side."""
+    printed = _logged_number(caplog, text)
+
+    assert_that(printed).is_equal_to("Max attempts of 5 reached.")
+
+
+@pytest.mark.parametrize("text", _space_cases(_OTHER_STRIPPED))
+def test_number_text_with_other_space_around_it_is_withheld(
+    text: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Each non-ASCII white space character, on either side, is withheld."""
+    printed = _logged_number(caplog, text)
+
+    assert_that(printed).is_equal_to(f"Max attempts of {WITHHELD} reached.")
 
 
 _FRAME = '  File "/srv/app.py", line <digit>, in fetch'

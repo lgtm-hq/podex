@@ -15,9 +15,9 @@ import pytest
 from assertpy import assert_that
 
 from podex import sdk_log_rules
-from podex.sdk_log_boundary import MAX_SKELETON
+from podex.sdk_log_boundary import MAX_SKELETON, _apply_form
 from podex.sdk_log_forms import FORMS, MAX_PREFORMATTED, SERVER_FORMS
-from podex.sdk_log_rules import MAX_HEADER_VALUE, WITHHELD, header_value
+from podex.sdk_log_rules import MAX_HEADER_VALUE, WITHHELD, Rendered, header_value
 from tests.sdk_log_support import debug_logging
 
 _EXTRA = "k1-extra"
@@ -445,6 +445,70 @@ def test_header_value_of_a_bool_or_int_subclass_is_withheld(value: int) -> None:
     assert_that(header_value(value)).is_equal_to(WITHHELD)
 
 
+_CHOSEN = "k1-chosen-text"
+"""Text a value's own methods would print instead of what was validated."""
+
+
+class _ChosenText(str):
+    """Text that validates as ``a`` but prints other text when represented."""
+
+    __slots__ = ()
+
+    def __repr__(self) -> str:
+        """Return text of the subclass's choosing."""
+        return _CHOSEN
+
+
+class _ChosenBytes(bytes):
+    """Bytes that are ``a`` but decode to text of the subclass's choosing."""
+
+    __slots__ = ()
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        """Return text of the subclass's choosing, whatever the encoding."""
+        del encoding, errors
+        return _CHOSEN
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        _ChosenText("a"),
+        _ChosenBytes(b"a"),
+        bytearray(b"a"),
+        memoryview(b"a"),
+    ],
+    ids=["str-subclass", "bytes-subclass", "bytearray", "memoryview"],
+)
+def test_header_value_of_a_text_or_bytes_lookalike_is_withheld(
+    value: object,
+) -> None:
+    """Only exact ``str`` and ``bytes`` print; a subclass or buffer is withheld.
+
+    Each value is one ASCII letter, so it would validate and print if its
+    type were admitted. A subclass could then print text of its own choosing
+    through its ``__repr__`` or ``decode``.
+    """
+    assert_that(header_value(value)).is_equal_to(WITHHELD)
+
+
+def test_header_value_text_subclass_cannot_choose_the_printed_text(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A text subclass in an allowlisted header prints as withheld."""
+    printed = _printed(
+        caplog,
+        "botocore.parsers",
+        "Response headers: %r",
+        {"content-type": _ChosenText("a")},
+    )
+
+    assert_that(printed).is_equal_to(
+        f"Response headers: {{'content-type': '{WITHHELD}'}}",
+    )
+    assert_that(printed).does_not_contain(_CHOSEN)
+
+
 _REQUEST_LINE = '%s://%s:%s "%s %s %s" %s %s'
 """The connection pool's request line; its status and length are numbers."""
 
@@ -512,4 +576,55 @@ def test_skeleton_one_past_the_output_bound_is_withheld(
     assert_that(printed).is_equal_to(
         "[record withheld: skeleton exceeds the output bound, "
         f"{len(_REQUEST_LINE)} characters]",
+    )
+
+
+_ORIGINAL_MESSAGE = "k1-original message"
+"""The message of the record a skeleton is applied to."""
+
+
+@pytest.mark.parametrize(
+    ("length", "shown"),
+    [(MAX_SKELETON, True), (MAX_SKELETON + 1, False)],
+    ids=["at-bound", "one-over"],
+)
+@pytest.mark.parametrize(
+    "formatted",
+    [False, True],
+    ids=["pre-formatted", "with-argument"],
+)
+def test_output_bound_counts_characters_not_bytes(
+    length: int,
+    shown: bool,
+    formatted: bool,
+) -> None:
+    """A non-ASCII skeleton of exactly the bound, in characters, is printed.
+
+    Validated parts are ASCII, so no record reaches a non-ASCII skeleton
+    through a known form; the bound is applied here to a skeleton built
+    directly, of characters that take two bytes each in UTF-8.
+    """
+    skeleton = _NON_ASCII * length
+    form: tuple[str, tuple[object, ...]] = (
+        ("%s", (Rendered(skeleton),)) if formatted else (skeleton, ())
+    )
+    record = logging.LogRecord(
+        "botocore.auth",
+        logging.DEBUG,
+        __file__,
+        1,
+        _ORIGINAL_MESSAGE,
+        (),
+        None,
+    )
+
+    _apply_form(record, form)
+
+    assert_that(record.getMessage()).is_equal_to(
+        (
+            skeleton
+            if shown
+            else "[record withheld: skeleton exceeds the output bound, "
+            f"{len(_ORIGINAL_MESSAGE)} characters]"
+        ),
     )
