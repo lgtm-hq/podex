@@ -33,14 +33,18 @@ SHA_B=2222222222222222222222222222222222222222
 SHA_C=3333333333333333333333333333333333333333
 MAIN=refs/heads/main
 
-# github_context EVENT REF SHA [PR_NUMBER] -> expression context JSON.
+# github_context EVENT REF SHA [PR_NUMBER] -> expression context JSON. Only
+# these properties are modelled; the helper fails on any other one it has to
+# evaluate. `event.pull_request` is null on events without a pull request, as
+# on GitHub.
 github_context() {
 	jq -cn --arg event "$1" --arg ref "$2" --arg sha "$3" --arg pr "${4:-}" \
 		--arg workflow "${WORKFLOW_NAME}" '
     {github: {
       event_name: $event, ref: $ref, sha: $sha,
       repository: "lgtm-hq/podex", workflow: $workflow,
-      event: (if $pr == "" then {} else {pull_request: {number: ($pr | tonumber)}} end)
+      event: {pull_request:
+        (if $pr == "" then null else {number: ($pr | tonumber)} end)}
     }}'
 }
 
@@ -113,55 +117,83 @@ TRIGGERS_JQ='."on"
     else error("on must be a mapping, a list or an event name") end'
 
 # Whether a push to main runs the workflow, from `on` as `triggers` prints it:
-# "true", "false", or "unsupported: REASON" when a person has to decide.
-# Branch filters are read only as lists of literal branch names. Anything
-# GitHub reads as a pattern (`*`, `**`, `?`, `+`, `[...]`, a leading `!`, a `\`
-# escape) is not interpreted, and neither is a filter that is not a non-empty
-# list. Tag filters need no matching: without a branch filter, their presence
-# alone means a branch push does not run the workflow.
+# "true", "false", "pattern: REASON" when a person has to decide, or
+# "invalid: REASON" for a filter that has to be fixed instead. Branch filters
+# are read only as lists of literal branch names. Anything GitHub reads as a
+# pattern (`*`, `**`, `?`, `+`, `[...]`, a leading `!`, a `\` escape) is not
+# interpreted. Invalid: both branches and branches-ignore, which GitHub
+# rejects; a filter that is not a list; an empty list; an empty or non-string
+# entry; branches with only negated patterns, which GitHub rejects. Tag filters
+# need no matching: without a branch filter, their presence alone means a
+# branch push does not run the workflow.
 PUSH_TO_MAIN_JQ='
-  def literal: type == "string" and length > 0
-    and (test("^!|[*?+\\[\\]\\\\]") | not);
-  def names($key): .[$key] as $names
-    | if ($names | type) == "array" and ($names | length) > 0
-        and ($names | all(literal)) then $names
-      else error("push.\($key) is \($names | tojson), not a list of literal branch names") end;
+  def invalid($why): error({invalid: $why});
+  def names($key): .[$key] as $names | ($names | tojson) as $shown
+    | if ($names | type) != "array" then invalid("push.\($key) is \($shown), not a list")
+      elif ($names | length) == 0 then invalid("push.\($key) is an empty list")
+      elif ($names | any(type != "string" or length == 0)) then
+        invalid("push.\($key) has an empty or non-string entry: \($shown)")
+      elif $key == "branches" and ($names | all(startswith("!"))) then
+        invalid("push.branches is \($shown), only negated patterns")
+      elif ($names | any(test("^!|[*?+\\[\\]\\\\]"))) then
+        error({pattern: "push.\($key) is \($shown), not a list of literal branch names"})
+      else $names end;
   try (
     if has("push") | not then false
     else (.push // {}) as $p
       | if ($p | type) != "object" then true
         elif ($p | has("branches")) and ($p | has("branches-ignore")) then
-          error("push sets both branches and branches-ignore, which GitHub rejects")
+          invalid("push sets both branches and branches-ignore")
         elif ($p | has("branches")) then $p | names("branches") | any(. == "main")
         elif ($p | has("branches-ignore")) then
           $p | names("branches-ignore") | all(. != "main")
         else ($p | has("tags") or has("tags-ignore")) | not end
     end | tostring
-  ) catch "unsupported: \(.)"'
+  ) catch (if type == "object" and has("pattern") then "pattern: \(.pattern)"
+    elif type == "object" and has("invalid") then "invalid: \(.invalid)"
+    else "invalid: \(.)" end)'
 
 # The push filters a hand classification is pinned to.
 PUSH_REF_FILTERS_JQ='.push | with_entries(select(.key
   | IN("branches", "branches-ignore", "tags", "tags-ignore")))'
 
-# Workflows whose push filters PUSH_TO_MAIN_JQ leaves to a person, classified
-# by hand against GitHub's filter pattern rules: "WORKFLOW VERDICT FILTER",
-# where VERDICT is true when a push to main runs the workflow and FILTER is
-# its push branch and tag filters exactly as the failure message prints them.
-# An entry stops applying as soon as the filter changes.
+# Workflows whose push filters PUSH_TO_MAIN_JQ leaves to a person (patterns
+# only, never invalid filters), classified by hand against GitHub's filter
+# pattern rules: "WORKFLOW VERDICT FILTER", where VERDICT is true when a push
+# to main runs the workflow and FILTER is its push branch and tag filters
+# exactly as the failure message prints them. An entry applies only to an
+# identical filter, so it stops applying as soon as the filter changes. A
+# false entry cannot make the suite pass: only validation and release
+# workflows may have a push trigger, and they must run on main.
 PUSH_FILTERS_BY_HAND=()
 
 triggers() {
 	yq -o=json '.' "${WORKFLOWS}/$1.yml" | jq -ce "${TRIGGERS_JQ}"
 }
 
-has_trigger() {
+# trigger_verdict WORKFLOW EVENT -> true or false: whether `on` names EVENT.
+# Fails when `on` cannot be read. Capture the output, as for
+# main_push_verdict; never test the function itself in a condition, where a
+# failure would read as "false".
+trigger_verdict() {
 	local events
 	events="$(triggers "$1")" || return 1
-	jq -e --arg event "$2" 'has($event)' <<<"${events}" >/dev/null
+	jq -r --arg event "$2" 'has($event)' <<<"${events}"
+}
+
+require_trigger() {
+	local verdict
+	verdict="$(trigger_verdict "$1" "$2")" || return 1
+	if [[ "${verdict}" != true ]]; then
+		echo "$1: needs a $2 trigger" >&2
+		return 1
+	fi
 }
 
 lacks_trigger() {
-	if has_trigger "$1" "$2"; then
+	local verdict
+	verdict="$(trigger_verdict "$1" "$2")" || return 1
+	if [[ "${verdict}" != false ]]; then
 		echo "$1: unexpected $2 trigger" >&2
 		return 1
 	fi
@@ -174,10 +206,22 @@ main_push_verdict() {
 	local events verdict filter entry name hand_verdict hand_filter
 	events="$(triggers "$1")" || return 1
 	verdict="$(jq -r "${PUSH_TO_MAIN_JQ}" <<<"${events}")" || return 1
-	if [[ "${verdict}" == true || "${verdict}" == false ]]; then
+	case "${verdict}" in
+	true | false)
 		echo "${verdict}"
 		return 0
-	fi
+		;;
+	"invalid: "*)
+		echo "$1: ${verdict#invalid: }. Fix the push filter; it cannot be" \
+			"classified by hand." >&2
+		return 1
+		;;
+	"pattern: "*) ;;
+	*)
+		echo "$1: unexpected push verdict: ${verdict}" >&2
+		return 1
+		;;
+	esac
 	filter="$(jq -cS "${PUSH_REF_FILTERS_JQ}" <<<"${events}")" || return 1
 	for entry in "${PUSH_FILTERS_BY_HAND[@]}"; do
 		read -r name hand_verdict hand_filter <<<"${entry}"
@@ -189,7 +233,7 @@ main_push_verdict() {
 		echo "${hand_verdict}"
 		return 0
 	done
-	echo "$1: ${verdict#unsupported: }. This test matches literal branch names" \
+	echo "$1: ${verdict#pattern: }. This test matches literal branch names" \
 		"only. Decide from GitHub's filter pattern rules whether a push to main" \
 		"runs $1, then classify it by hand in PUSH_FILTERS_BY_HAND:" \
 		"$1 <true|false> ${filter}" >&2
@@ -200,8 +244,12 @@ no_caller_concurrency() {
 	[[ " ${NO_CALLER_CONCURRENCY[*]} " == *" $1 "* ]]
 }
 
+# require_concurrency WORKFLOW: fails when the block is missing or cannot be
+# read.
 require_concurrency() {
-	if [[ "$(yq -r '.concurrency.group' "${WORKFLOWS}/$1.yml")" == null ]]; then
+	local group
+	group="$(yq -r '.concurrency.group' "${WORKFLOWS}/$1.yml")" || return 1
+	if [[ -z "${group}" || "${group}" == null ]]; then
 		echo "$1: needs its concurrency block (group and cancel-in-progress)" >&2
 		return 1
 	fi
@@ -216,14 +264,25 @@ require_concurrency() {
 		[ "${status}" -eq 0 ]
 		[ "${output}" = "$3" ]
 	}
+	# A reported error: status 3 and the `expression error:` prefix. Any other
+	# failure is a crash of the helper, which must never pass for an error.
+	reported_error() {
+		[ "$1" -eq 3 ] && [[ "$2" == "expression error: "* ]]
+	}
+	fails() {
+		run python3 -I "${EXPRESSION}" "$1" "$2" "${context}"
+		reported_error "${status}" "${output}"
+		[[ "${output}" == *"${3:-}"* ]]
+	}
 	check render "\${{ 'a' == 'A' }}" true
-	check render "x\${{ null }}y\${{ github.missing.key }}" xy
+	check render "x\${{ null }}y\${{ github.event.pull_request.number }}" xy
 	check render "\${{ false && 'a' || 'b' }}" b
 	check render "\${{ 'a' && 'b' }}" b
 	check render "\${{ '' || 0 || 'c' }}" c
 	check render "\${{ 7 == '7' }}" true
 	check render "\${{ !(github.ref != 'refs/heads/MAIN') }}" true
 	check render "\${{ format('-{0}{{1}}', github.sha) }}" "-${SHA_A}{1}"
+	check render "\${{ format('{{0}}-{0}', 'a') }}" "{0}-a"
 	check render "\${{ 'it''s' }}" "it's"
 	check render "\${{ startsWith('refs/tags/v1', 'refs/tags/v') }}" true
 	check render "\${{ github.event.pull_request.number || github.ref }}" \
@@ -238,6 +297,7 @@ require_concurrency() {
 	check render "\${{ false && format('{1}', 'x') }}" false
 	check render "\${{ 0 && format('{1}', 'x') }}" 0
 	check render "\${{ 'a' || github.missing.key }}" a
+	check render "\${{ github.event_name == 'pull_request' && github.run_id || 'x' }}" x
 
 	# Falsy: false, 0, '', null. Everything else, '0' and 'false' included, is
 	# truthy.
@@ -255,21 +315,56 @@ require_concurrency() {
 	check render "\${{ true == '1' }}" true
 	check render "\${{ ' 7 ' == 7 }}" true
 	check render "\${{ '1e1' == 10 }}" true
+	check render "\${{ 0.5 == 0.50 }}" true
 	check render "\${{ '1_0' == 10 }}" false
 	check render "\${{ 'abc' == 0 }}" false
 	check render "\${{ 'abc' != 'ABC' }}" false
 	check render "\${{ github.event == 0 }}" false
+	# Ordinal ignore-case: one character never matches two.
+	check render "\${{ 'ß' == 'SS' }}" false
+	# Context and property names ignore case; a property of null or of a
+	# non-object is null.
+	check render "\${{ GitHub.Event_Name }}" push
+	check render "\${{ github.Ref != 'refs/heads/main' }}" false
+	check render "x\${{ github.sha.length }}" x
+	check render "\${{ 999999999999999 }}" 999999999999999
 
-	# Outside the supported subset is an error, never a guess. The helper must
-	# report it, not crash.
-	fails() {
-		run python3 -I "${EXPRESSION}" "$1" "$2" "${context}"
-		[ "${status}" -eq 1 ]
-		[[ "${output}" == "expression error: "* ]]
-	}
+	# Outside the supported subset is an error, never a guess.
 	fails render "\${{ github.ref > 1 }}"
 	fails render "\${{ hashFiles('x') }}"
 	fails truthy "a\${{ true }}"
+	# A property the context does not define fails, naming it, wherever it is
+	# evaluated.
+	fails render "\${{ github.missing.key }}" "github.missing is not in the test's context"
+	fails render "\${{ github.event.after }}" "github.event.after is not"
+	fails render "\${{ github.event.head_commit.id }}" "github.event.head_commit is not"
+	fails render "\${{ github.event_name == 'push' && github.run_number || '' }}" "github.run_number"
+	fails truthy "\${{ github.ref_name == 'main' }}" "github.ref_name"
+	fails render "\${{ '' || github.run_id }}" "github.run_id"
+	# Objects and arrays are not strings: GitHub renders `Object` or `Array`.
+	fails render "\${{ github.event }}" "an object used as a string"
+	fails render "\${{ format('-{0}', github) }}" "an object used as a string"
+	fails render "\${{ format(github.event, 'x') }}" "an object used as a string"
+	fails render "\${{ startsWith(github.event, 'x') }}" "an object used as a string"
+	fails render "\${{ contains(github, 'sha') }}" "an object used as a string"
+	# Format strings: only `{{`, `}}` and `{N}` with ASCII digits and no
+	# leading zero, and at least one replacement argument.
+	fails render "\${{ format('{-{0}', github.sha) }}" "invalid format string"
+	fails render "\${{ format('}', 'a') }}" "invalid format string"
+	fails render "\${{ format('{0', 'a') }}" "invalid format string"
+	fails render "\${{ format('{00}', 'a') }}" "invalid format string"
+	fails render "\${{ format('{0:x}', 'a') }}" "invalid format string"
+	fails render "\${{ format('{١}', 'a') }}" "invalid format string"
+	fails render "\${{ format('x') }}" "wrong number of arguments for format"
+	# Literals: ASCII digits only, no leading zeros.
+	fails render "\${{ ١ }}" "unsupported syntax"
+	fails render "\${{ 007 }}" "leading zeros"
+	# Numbers render as GitHub does only as integers below 1e15.
+	fails render "\${{ 1000000000000000 }}" "rendering the number"
+	fails render "\${{ 0.5 }}" "rendering the number"
+	# Non-ASCII case mapping is not modelled where it decides a result.
+	fails render "\${{ 'é' == 'É' }}" "non-ASCII case"
+	fails render "\${{ startsWith('Éa', 'é') }}" "non-ASCII case"
 	# The runner reads these strings as numbers; GitHub documents only JSON
 	# numbers.
 	fails render "\${{ '0x10' == 16 }}"
@@ -282,6 +377,15 @@ require_concurrency() {
 	fails render "\${{ true || hashFiles('x') }}"
 	fails render "\${{ true || startsWith('a') }}"
 	fails render "\${{ false && secrets.token }}"
+
+	# A crash is not a reported error: the helper dies on a context that is
+	# not JSON, with exit status 1 and a traceback.
+	run python3 -I "${EXPRESSION}" render "\${{ true }}" '{'
+	[ "${status}" -eq 1 ]
+	if reported_error "${status}" "${output}"; then return 1; fi
+	# Each half of reported_error rejects a crash on its own.
+	if reported_error 1 "expression error: x"; then return 1; fi
+	if reported_error 3 "Traceback (most recent call last):"; then return 1; fi
 }
 
 @test "test_push_to_main_detection_reads_literal_branch_names_only" {
@@ -305,45 +409,82 @@ require_concurrency() {
 	verdict '{"push":{"branches":["develop"],"tags":["v*.*.*"]}}' false
 	verdict '{"pull_request":null,"workflow_dispatch":null}' false
 
-	# Patterns, and filters GitHub would not accept, are left to a person.
+	# Patterns are left to a person.
 	local pattern
 	for pattern in '**' '*' 'release/**' 'main*' 'ma?in' 'mai+n' '[m]ain' \
-		'ma\\in' '!main'; do
-		verdict "{\"push\":{\"branches\":[\"${pattern}\"]}}" unsupported
-		verdict "{\"push\":{\"branches-ignore\":[\"${pattern}\"]}}" unsupported
+		'ma\\in'; do
+		verdict "{\"push\":{\"branches\":[\"${pattern}\"]}}" pattern
+		verdict "{\"push\":{\"branches-ignore\":[\"${pattern}\"]}}" pattern
 	done
-	verdict '{"push":{"branches":["main","!main"]}}' unsupported
-	verdict '{"push":{"branches":"main"}}' unsupported
-	verdict '{"push":{"branches":[]}}' unsupported
-	verdict '{"push":{"branches":[""]}}' unsupported
-	verdict '{"push":{"branches":["main"],"branches-ignore":["x"]}}' unsupported
+	verdict '{"push":{"branches":["main","!main"]}}' pattern
+	verdict '{"push":{"branches-ignore":["!main"]}}' pattern
+	# Filters GitHub rejects, and forms this test does not accept, have to be
+	# fixed.
+	verdict '{"push":{"branches":["!main"]}}' invalid
+	verdict '{"push":{"branches":"main"}}' invalid
+	verdict '{"push":{"branches":[]}}' invalid
+	verdict '{"push":{"branches":[""]}}' invalid
+	verdict '{"push":{"branches-ignore":[]}}' invalid
+	verdict '{"push":{"branches-ignore":[1]}}' invalid
+	verdict '{"push":{"branches":["main"],"branches-ignore":["x"]}}' invalid
 
-	# Such a workflow fails until it is classified by hand, and again when its
-	# filter changes.
+	# A pattern fails until it is classified by hand with that exact filter,
+	# and again when its filter changes.
 	WORKFLOWS="${BATS_TEST_TMPDIR}"
+	local filter='{"branches-ignore":["**"]}'
 	printf '%s\n' 'on:' '  push:' "    branches-ignore: ['**']" \
 		>"${WORKFLOWS}/scratch.yml"
 	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
-	[[ "${output}" == *'classify it by hand in PUSH_FILTERS_BY_HAND: scratch <true|false> {"branches-ignore":["**"]}' ]]
-	PUSH_FILTERS_BY_HAND=('scratch false {"branches-ignore":["**"]}')
+	[[ "${output}" == *"classify it by hand in PUSH_FILTERS_BY_HAND: scratch <true|false> ${filter}" ]]
+	PUSH_FILTERS_BY_HAND=("scratch false ${filter}")
 	run main_push_verdict scratch
 	[ "${status}" -eq 0 ]
 	[ "${output}" = false ]
+	# Only an identical filter matches: not a missing or truncated filter, not
+	# the filter with something appended, not another workflow's entry.
+	local entry
+	for entry in 'scratch false' "scratch false ${filter:0:$((${#filter} - 1))}" \
+		"scratch false ${filter:0:5}" "scratch false ${filter}x" \
+		"other false ${filter}"; do
+		PUSH_FILTERS_BY_HAND=("${entry}")
+		run main_push_verdict scratch
+		[ "${status}" -eq 1 ]
+		[[ "${output}" == *"classify it by hand"* ]]
+	done
 	printf '%s\n' 'on:' '  push:' "    branches: ['release/**']" \
 		>"${WORKFLOWS}/scratch.yml"
+	PUSH_FILTERS_BY_HAND=("scratch false ${filter}")
 	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
 	PUSH_FILTERS_BY_HAND=('scratch maybe {"branches":["release/**"]}')
 	run main_push_verdict scratch
 	[ "${status}" -eq 1 ]
+
+	# An invalid filter fails without offering the hand list, and an entry
+	# for it does not apply.
+	local branches
+	for branches in "branches: [main]
+    branches-ignore: [x]" "branches: []" "branches: ['']" "branches: ['!main']" \
+		"branches: main"; do
+		printf '%s\n' 'on:' '  push:' "    ${branches}" >"${WORKFLOWS}/scratch.yml"
+		filter="$(yq -o=json '.' "${WORKFLOWS}/scratch.yml" |
+			jq -cS "${TRIGGERS_JQ} | ${PUSH_REF_FILTERS_JQ}")"
+		PUSH_FILTERS_BY_HAND=("scratch true ${filter}")
+		run main_push_verdict scratch
+		[ "${status}" -eq 1 ]
+		[[ "${output}" == *"Fix the push filter; it cannot be classified by hand."* ]]
+		[[ "${output}" != *PUSH_FILTERS_BY_HAND* ]]
+	done
 }
 
 @test "test_every_workflow_concurrency_block_is_accounted_for" {
-	local file name class_members count verdict
+	local file name class_members count verdict files=0 pushes=0 classified
 	class_members=" ${MAIN_VALIDATION[*]} ${RELEASE_MUTATORS[*]} ${MAINTENANCE[*]} ${PR_ONLY[*]} ${RUN_FOLLOWERS[*]} "
+	classified=$((${#MAIN_VALIDATION[@]} + ${#RELEASE_MUTATORS[@]} + ${#MAINTENANCE[@]} + ${#PR_ONLY[@]} + ${#RUN_FOLLOWERS[@]}))
 	for file in "${WORKFLOWS}"/*.yml "${WORKFLOWS}"/*.yaml; do
 		[[ -e "${file}" ]] || continue
+		files=$((files + 1))
 		name="$(basename "${file%.*}")"
 		count="$(tr ' ' '\n' <<<"${class_members}" | grep -cFx "${name}" || true)"
 		if [[ "${count}" -ne 1 ]]; then
@@ -351,6 +492,8 @@ require_concurrency() {
 			return 1
 		fi
 	done
+	# Every classified name is a workflow file, so the loops below see them all.
+	[ "${files}" -eq "${classified}" ]
 	for name in ${class_members}; do
 		[ -f "${WORKFLOWS}/${name}.yml" ]
 		# Every `on` must be a form GitHub accepts and this test understands.
@@ -364,12 +507,14 @@ require_concurrency() {
 	for file in "${WORKFLOWS}"/*.yml; do
 		name="$(basename "${file%.yml}")"
 		verdict="$(main_push_verdict "${name}")"
+		pushes=$((pushes + 1))
 		if [[ "${verdict}" == true ]] &&
 			[[ " ${MAIN_VALIDATION[*]} ${RELEASE_MUTATORS[*]} " != *" ${name} "* ]]; then
 			echo "${name}: runs on pushes to main but is not a validation or release workflow" >&2
 			return 1
 		fi
 	done
+	[ "${pushes}" -eq "${classified}" ]
 	for name in "${MAIN_VALIDATION[@]}" "${RELEASE_MUTATORS[@]}"; do
 		verdict="$(main_push_verdict "${name}")"
 		if [[ "${verdict}" != true ]]; then
@@ -378,7 +523,7 @@ require_concurrency() {
 		fi
 	done
 	for name in "${MAINTENANCE[@]}"; do
-		has_trigger "${name}" schedule
+		require_trigger "${name}" schedule
 		lacks_trigger "${name}" push
 		lacks_trigger "${name}" pull_request
 	done
@@ -390,6 +535,64 @@ require_concurrency() {
 		run yq -r '."on" | keys | join(",")' "${WORKFLOWS}/${name}.yml"
 		[ "${output}" = workflow_run ]
 	done
+}
+
+@test "test_every_concurrency_expression_evaluates_for_every_trigger" {
+	# Each group and cancel-in-progress value is evaluated for every event
+	# that starts the workflow, so an operand that only one event reaches is
+	# evaluated too. An event without a model here fails the test.
+	local name events event verdict tags runs=0 workflows=0 considered=0
+	for name in "${MAIN_VALIDATION[@]}" "${RELEASE_MUTATORS[@]}" \
+		"${MAINTENANCE[@]}" "${PR_ONLY[@]}" "${RUN_FOLLOWERS[@]}"; do
+		considered=$((considered + 1))
+		no_caller_concurrency "${name}" && continue
+		require_concurrency "${name}"
+		workflows=$((workflows + 1))
+		events="$(triggers "${name}")"
+		events="$(jq -r 'keys[]' <<<"${events}")"
+		[ -n "${events}" ]
+		for event in ${events}; do
+			case "${event}" in
+			push)
+				verdict="$(main_push_verdict "${name}")"
+				if [[ "${verdict}" == true ]]; then
+					arrival p "${name}" push "${MAIN}" "${SHA_A}" >/dev/null
+					runs=$((runs + 1))
+				fi
+				tags="$(yq -r '."on".push.tags // [] | length' "${WORKFLOWS}/${name}.yml")"
+				if [[ "${tags}" -gt 0 ]]; then
+					arrival t "${name}" push refs/tags/v1.2.3 "${SHA_A}" >/dev/null
+					runs=$((runs + 1))
+				fi
+				;;
+			pull_request)
+				arrival r "${name}" pull_request refs/pull/7/merge "${SHA_A}" 7 >/dev/null
+				runs=$((runs + 1))
+				;;
+			merge_group)
+				arrival q "${name}" merge_group \
+					"refs/heads/gh-readonly-queue/main/pr-7-${SHA_A}" "${SHA_A}" >/dev/null
+				runs=$((runs + 1))
+				;;
+			workflow_dispatch)
+				arrival d "${name}" workflow_dispatch "${MAIN}" "${SHA_A}" >/dev/null
+				arrival o "${name}" workflow_dispatch refs/heads/other "${SHA_A}" >/dev/null
+				runs=$((runs + 2))
+				;;
+			schedule)
+				arrival s "${name}" schedule "${MAIN}" "${SHA_A}" >/dev/null
+				runs=$((runs + 1))
+				;;
+			*)
+				echo "${name}: no ${event} event is modelled here; add one" >&2
+				return 1
+				;;
+			esac
+		done
+	done
+	[ "${considered}" -eq $((${#MAIN_VALIDATION[@]} + ${#RELEASE_MUTATORS[@]} + ${#MAINTENANCE[@]} + ${#PR_ONLY[@]} + ${#RUN_FOLLOWERS[@]})) ]
+	[ "${workflows}" -gt 0 ]
+	[ "${runs}" -ge "${workflows}" ]
 }
 
 @test "test_main_validation_groups_differ_by_sha" {
@@ -429,17 +632,21 @@ require_concurrency() {
 }
 
 @test "test_main_validation_pushes_are_not_replaced_by_other_main_runs" {
-	local name entries=()
+	local name dispatch schedule entries=() examined=0 dispatched=0 scheduled=0
 	for name in "${MAIN_VALIDATION[@]}"; do
 		entries=("$(arrival "${name}-push-a" "${name}" push "${MAIN}" "${SHA_A}")")
-		if has_trigger "${name}" workflow_dispatch; then
+		dispatch="$(trigger_verdict "${name}" workflow_dispatch)"
+		schedule="$(trigger_verdict "${name}" schedule)"
+		if [[ "${dispatch}" == true ]]; then
+			dispatched=$((dispatched + 1))
 			entries+=("$(arrival "${name}-dispatch-1" "${name}" workflow_dispatch "${MAIN}" "${SHA_A}")")
 			entries+=("$(arrival "${name}-dispatch-2" "${name}" workflow_dispatch "${MAIN}" "${SHA_B}")")
 			# Manual runs on main keep one group per ref and never cancel.
 			[ "$(cut -f2 <<<"${entries[1]}")" = "$(cut -f2 <<<"${entries[2]}")" ]
 			[ "$(cut -f3 <<<"${entries[1]}")" = false ]
 		fi
-		if has_trigger "${name}" schedule; then
+		if [[ "${schedule}" == true ]]; then
+			scheduled=$((scheduled + 1))
 			entries+=("$(arrival "${name}-schedule" "${name}" schedule "${MAIN}" "${SHA_B}")")
 			[ "$(cut -f3 <<<"${entries[${#entries[@]} - 1]}")" = false ]
 		fi
@@ -453,14 +660,20 @@ require_concurrency() {
 			echo "${name}: main push runs cancelled: ${output}" >&2
 			return 1
 		fi
+		examined=$((examined + 1))
 	done
+	[ "${examined}" -eq "${#MAIN_VALIDATION[@]}" ]
+	[ "${dispatched}" -gt 0 ]
+	[ "${scheduled}" -gt 0 ]
 }
 
 @test "test_pr_supersession_cancels_and_separate_prs_do_not" {
 	local name ref=refs/pull/7/merge other_ref=refs/pull/8/merge
-	local a b c other main_push verdict
+	local a b c other main_push verdict on_pr considered=0 examined=0
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
-		has_trigger "${name}" pull_request || continue
+		on_pr="$(trigger_verdict "${name}" pull_request)"
+		considered=$((considered + 1))
+		[[ "${on_pr}" == true ]] || continue
 		no_caller_concurrency "${name}" && continue
 		require_concurrency "${name}"
 		a="$(arrival "${name}-pr7-a" "${name}" pull_request "${ref}" "${SHA_A}" 7)"
@@ -480,13 +693,19 @@ require_concurrency() {
 			run replay "${main_push}" "${a}" "${b}" "${other}"
 			[ "${output}" = "${name}-pr7-a" ]
 		fi
+		examined=$((examined + 1))
 	done
+	[ "${considered}" -eq $((${#MAIN_VALIDATION[@]} + ${#PR_ONLY[@]})) ]
+	[ "${examined}" -gt 0 ]
 }
 
 @test "test_merge_group_runs_keep_their_own_groups" {
 	local name q7 q8 main_push pr verdict queue=refs/heads/gh-readonly-queue/main
+	local queued considered=0 examined=0
 	for name in "${MAIN_VALIDATION[@]}" "${PR_ONLY[@]}"; do
-		has_trigger "${name}" merge_group || continue
+		queued="$(trigger_verdict "${name}" merge_group)"
+		considered=$((considered + 1))
+		[[ "${queued}" == true ]] || continue
 		no_caller_concurrency "${name}" && continue
 		require_concurrency "${name}"
 		q7="$(arrival q7 "${name}" merge_group "${queue}/pr-7-${SHA_A}" "${SHA_A}")"
@@ -502,24 +721,28 @@ require_concurrency() {
 		fi
 		[ "${status}" -eq 0 ]
 		[ -z "${output}" ]
+		examined=$((examined + 1))
 	done
+	[ "${considered}" -eq $((${#MAIN_VALIDATION[@]} + ${#PR_ONLY[@]})) ]
+	[ "${examined}" -gt 0 ]
 }
 
 @test "test_release_tag_groups_stay_serialized_per_tag" {
-	local name t1 t2 other
+	local name t1 t2 other main_push
 	for name in docker-ci sbom; do
 		yq -e '(."on".push.tags // []) | any_c(. == "v*.*.*")' \
 			"${WORKFLOWS}/${name}.yml" >/dev/null
 		t1="$(arrival t1 "${name}" push refs/tags/v1.2.3 "${SHA_A}")"
 		t2="$(arrival t2 "${name}" push refs/tags/v1.2.3 "${SHA_B}")"
 		other="$(arrival t3 "${name}" push refs/tags/v1.2.4 "${SHA_C}")"
+		main_push="$(arrival main "${name}" push "${MAIN}" "${SHA_A}")"
 		# One group per tag, no commit suffix, never cancelled.
 		[ "$(cut -f2 <<<"${t1}")" = "$(cut -f2 <<<"${t2}")" ]
 		[ "$(cut -f2 <<<"${t1}")" = "${name}-refs/tags/v1.2.3" ]
 		[ "$(cut -f3 <<<"${t1}")" = false ]
 		[ "$(cut -f2 <<<"${t1}")" != "$(cut -f2 <<<"${other}")" ]
-		run replay "${t1}" "${t2}" "${other}" \
-			"$(arrival main "${name}" push "${MAIN}" "${SHA_A}")"
+		run replay "${t1}" "${t2}" "${other}" "${main_push}"
+		[ "${status}" -eq 0 ]
 		[ -z "${output}" ]
 	done
 }
