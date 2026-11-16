@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.36] - 2026-11-16
+
+### Changed
+
+- **api**: split api/v2/auth.py into auth and account routers (#857) (6f0a8b8)
+
+### Fixed
+
+- **logging**: make header-name, method, host and scheme checks exact and bound printed
+  integers (#860) (cd9c339)
+
 ## [0.41.35] - 2026-11-16
 
 ### Changed

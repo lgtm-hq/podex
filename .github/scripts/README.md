@@ -318,6 +318,28 @@ or event name, when a main validation job has a `concurrency` key of its own,
 and when a workflow outside `ai-review`, `pr-auto-assign`, `pr-labeler` and
 `auto-rerun-on-infra-failure` loses its block.
 
+Anything the helper does not model fails the test instead of producing a value.
+Every group and `cancel-in-progress` value is evaluated for each event that
+starts the workflow. The context defines only `github.event_name`, `ref`, `sha`,
+`repository`, `workflow` and `event.pull_request` (null without a pull request),
+so any other context property that an evaluated operand reads fails the test
+with its name. Other expressions with no single GitHub result also fail: an
+object used as a string, a malformed `format` string, a number that is not an
+integer below 1e15, and non-ASCII case deciding a comparison.
+
+Whether a push to `main` runs a workflow is read from its `push` filters, which
+the test compares only as literal branch names. A `branches` or
+`branches-ignore` entry that GitHub reads as a pattern (`*`, `**`, `?`, `+`,
+`[...]`, a leading `!`, a `\` escape) fails the test, which prints the filter.
+Decide from GitHub's filter pattern rules whether a push to `main` runs the
+workflow and record it in `PUSH_FILTERS_BY_HAND` with that filter. The entry
+applies only to an identical filter, so it stops applying when the filter
+changes. A `false` entry can never make the test pass, because only validation
+and release workflows may have a `push` trigger and they must run on `main`. A
+filter that is not a list, an empty list, an empty entry, `branches` with only
+negated patterns, or `branches` together with `branches-ignore` fails without
+the hand list: fix the filter.
+
 The test reads only this repository's files. When the lgtm-ci pin is bumped,
 check the called reusable workflows for `concurrency` blocks keyed on the ref
 with cancellation, because such a block would cancel main runs again and the
