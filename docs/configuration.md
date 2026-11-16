@@ -33,6 +33,10 @@ explicitly empty value does not generally select the default:
   the scheduler do not start;
 - an empty `PODEX_DATABASE__URL` passes validation but stops start-up and
   migrations, because SQLAlchemy cannot parse it;
+- a value that fails, at start-up or in migrations, is reported without the
+  value: a settings error names the field path and error type, and an unusable
+  database URL names the error class only (an `@` or `:` in a URL password must
+  be percent-encoded);
 - the optional credential and provider strings in the table below treat an empty
   value as not configured, exactly as described in each row; this is why
   `.env.example` can leave them empty.

@@ -3,9 +3,10 @@
 from logging.config import fileConfig
 
 from alembic import context  # type: ignore[attr-defined]
-from sqlalchemy import engine_from_config, pool, text
+from sqlalchemy import engine_from_config, make_url, pool, text
 
 from podex.config import get_settings
+from podex.database_url import without_url_text
 from podex.logging_config import install_log_boundaries
 from podex.models import Base
 
@@ -33,8 +34,12 @@ target_metadata = Base.metadata
 
 def run_migrations_offline() -> None:
     """Run migrations without a live database connection."""
+    url = config.get_main_option("sqlalchemy.url") or ""
+    # Parse the URL and load its dialect where an unusable URL is reported by
+    # error class only; the URL can hold a password.
+    without_url_text(lambda: make_url(url).get_dialect())
     context.configure(
-        url=config.get_main_option("sqlalchemy.url"),
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -46,12 +51,15 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     """Run migrations against a live database connection."""
     section = config.get_section(config.config_ini_section, {}) or {}
-    connectable = engine_from_config(
-        section,
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-        # As for the application engine: keep bound values out of errors.
-        hide_parameters=True,
+    # An unusable URL is reported by error class only, as for the application.
+    connectable = without_url_text(
+        lambda: engine_from_config(
+            section,
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+            # As for the application engine: keep bound values out of errors.
+            hide_parameters=True,
+        ),
     )
     with connectable.connect() as connection:
         if connection.dialect.name == "postgresql":

@@ -7,6 +7,7 @@ from sqlalchemy import Engine, Select, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 
 from podex.config import Settings, get_settings
+from podex.database_url import without_url_text
 
 
 def build_engine_kwargs(settings: Settings) -> dict[str, Any]:
@@ -61,9 +62,11 @@ def enable_sqlite_foreign_keys(target_engine: Engine) -> None:
 
 _settings = get_settings()
 
-engine = create_engine(
-    _settings.database.url.get_secret_value(),
-    **build_engine_kwargs(_settings),
+engine: Engine = without_url_text(
+    lambda: create_engine(
+        _settings.database.url.get_secret_value(),
+        **build_engine_kwargs(_settings),
+    ),
 )
 enable_sqlite_foreign_keys(engine)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)

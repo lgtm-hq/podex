@@ -3,7 +3,10 @@
 :func:`install_log_boundaries` installs the credential boundaries every log
 record and uncaught exception passes; :func:`configure_logging` also sets the
 application's log format. Every process entrypoint installs the boundaries: the API
-(``create_app``), the scheduler runner and the migration environment.
+(``create_app``), the scheduler runner and the migration environment. Settings
+resolution (:func:`podex.config.get_settings`) installs them before it reads the
+environment, so they hold before anything an entrypoint imports resolves
+settings or builds the database engine.
 
 - Records from third-party library loggers (the LLM SDK, the HTTP clients
   and their transports, the Spotify SDK, the object storage client, the
@@ -333,7 +336,8 @@ def install_log_boundaries() -> None:
     """Install the credential boundaries without changing log output.
 
     Every process entrypoint calls this (the API and scheduler through
-    :func:`configure_logging`, the migration environment directly), so the
+    :func:`configure_logging`, the migration environment directly), and so
+    does settings resolution before it reads the environment, so the
     boundaries hold whichever process logs or fails. They live in the log
     record factory and the exception hooks, which logging configuration
     (``basicConfig``, ``fileConfig``, ``dictConfig``) does not replace, and
