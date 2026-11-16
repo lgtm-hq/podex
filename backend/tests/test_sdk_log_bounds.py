@@ -14,7 +14,7 @@ from http import HTTPStatus
 import pytest
 from assertpy import assert_that
 
-from podex import sdk_log_rules
+from podex import sdk_log_boundary, sdk_log_rules
 from podex.sdk_log_boundary import MAX_SKELETON, _apply_form
 from podex.sdk_log_forms import FORMS, MAX_PREFORMATTED, SERVER_FORMS
 from podex.sdk_log_rules import MAX_HEADER_VALUE, WITHHELD, Rendered, header_value
@@ -517,20 +517,30 @@ _ARABIC_VERSION = "HTTP/\N{ARABIC-INDIC DIGIT ONE}.\N{ARABIC-INDIC DIGIT ONE}"
 withholds: validated parts are ASCII, so a skeleton is ASCII text."""
 
 
-def _request_line(version: str, length: int) -> tuple[object, ...]:
-    """Return request-line arguments whose skeleton is ``length`` characters.
+def _request_line(version: str) -> tuple[object, ...]:
+    """Return request-line arguments with ``version``, all of them valid."""
+    return (
+        "https",
+        "storage.example.test",
+        443,
+        "GET",
+        "/artifacts/1",
+        version,
+        200,
+        5,
+    )
 
-    The status and length fields carry the digits, split between two
-    integers so that each stays within the interpreter's default limit on
-    converting integers to text.
+
+def _bound_at(length: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Set the output bound to ``length`` characters.
+
+    Every part of a known form is bounded, and the longest skeleton a known
+    form builds is shorter than :data:`MAX_SKELETON`, so a logged record
+    reaches the bound only once it is set below that length. The bound at
+    its own value is applied in :func:`test_output_bound_counts_characters_not_bytes`.
     """
-    head = ("https", "storage.example.test", 443, "GET", "/artifacts/1", version)
-    fixed = len(_REQUEST_LINE % (*head, "", ""))
-    digits = length - fixed
-    first, second = digits // 2, digits - digits // 2
-    limit = sys.get_int_max_str_digits()
-    assert_that(limit == 0 or second <= limit).is_true()
-    return (*head, 10 ** (first - 1), 10 ** (second - 1))
+    assert_that(length).is_less_than(MAX_SKELETON)
+    monkeypatch.setattr(sdk_log_boundary, "MAX_SKELETON", length)
 
 
 @pytest.mark.parametrize(
@@ -544,6 +554,7 @@ def test_skeleton_at_the_output_bound_is_printed(
     version: str,
     shown: str,
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A skeleton exactly as long as the bound, in characters, is printed.
 
@@ -551,8 +562,9 @@ def test_skeleton_at_the_output_bound_is_printed(
     with non-ASCII digits is withheld, and the skeleton printing
     ``[withheld]`` in its place is still printed at exactly the bound.
     """
-    arguments = _request_line(shown, MAX_SKELETON)
+    arguments = _request_line(shown)
     logged_arguments = (*arguments[:5], version, *arguments[6:])
+    _bound_at(len(_REQUEST_LINE % arguments), monkeypatch)
 
     printed = _printed(
         caplog,
@@ -561,15 +573,17 @@ def test_skeleton_at_the_output_bound_is_printed(
         *logged_arguments,
     )
 
-    assert_that(len(printed)).is_equal_to(MAX_SKELETON)
+    assert_that(len(printed)).is_equal_to(sdk_log_boundary.MAX_SKELETON)
     assert_that(printed).is_equal_to(_REQUEST_LINE % arguments)
 
 
 def test_skeleton_one_past_the_output_bound_is_withheld(
     caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A skeleton one character past the bound withholds the record."""
-    arguments = _request_line("HTTP/1.1", MAX_SKELETON + 1)
+    arguments = _request_line("HTTP/1.1")
+    _bound_at(len(_REQUEST_LINE % arguments) - 1, monkeypatch)
 
     printed = _printed(caplog, "urllib3.connectionpool", _REQUEST_LINE, *arguments)
 

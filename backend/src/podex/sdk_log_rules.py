@@ -5,7 +5,8 @@ safe by construction (:mod:`podex.sdk_log_forms`). This module validates
 those parts; anything that does not validate is printed as ``[withheld]``:
 
 - :func:`method`: an HTTP method from a fixed set.
-- :func:`number` and :func:`status`: values that parse as numbers.
+- :func:`number` and :func:`status`: values that parse as numbers, each
+  within the printed length of what its position carries.
 - :func:`url_skeleton`: scheme, host, port and path, each validated;
   userinfo and fragment dropped; query names kept if they match a
   conservative pattern, credential-named values masked, other values kept
@@ -17,7 +18,10 @@ those parts; anything that does not validate is printed as ``[withheld]``:
 - :func:`reason_phrase`: the standard phrase for a status code.
 
 Every builder is bounded: a fixed number of headers and query fields, a
-fixed value length and a fixed URL length.
+fixed value length, a fixed URL length and a fixed printed length for every
+number. Text that is case-mapped or stripped before it is compared must be
+ASCII first: Unicode case rules map some other characters to ASCII letters
+(the Kelvin sign lowercases to ``k``, the long s uppercases to ``S``).
 """
 
 import contextlib
@@ -162,6 +166,28 @@ MAX_URL = 2_048
 MAX_ITEMS = 1_000
 """Header entries read from a container; past it, they are only counted."""
 
+MAX_STATUS_TEXT = 3
+"""Longest status code printed where a form takes any number as its status.
+
+The HTTP clients' parsers accept three digits only: ``http.client`` rejects
+a status outside 100 to 999, and the ``h11`` parser requires three digits.
+"""
+
+MAX_PORT_TEXT = 5
+"""Longest port printed: a TCP port is at most 65535."""
+
+MAX_COUNT_TEXT = 20
+"""Longest integer part of any other number printed.
+
+Byte counts, connection and retry counts, pool sizes and delays: the
+libraries hold them as machine-sized integers or as floats of seconds or
+minutes, and the widest 64-bit integer (``18446744073709551615`` or
+``-9223372036854775808``) is 20 characters.
+"""
+
+MAX_IDENTIFIER_TEXT = 512
+"""Longest text matched against an identifier pattern; longer is withheld."""
+
 _MAX_NAME = 256
 _NON_ALNUM_RE = re.compile(r"[^a-z0-9]")
 _WORD_SPLIT_RE = re.compile(r"[\s.\-]+")
@@ -299,9 +325,9 @@ def safe_header_name(name: object) -> str | None:
         str | None: The lowercased name, or None if it may not be printed.
     """
     text = _text_name(name)
-    if text is None or is_credential_key(text):
+    if text is None or not text.isascii() or is_credential_key(text):
         return None
-    lowered = text.strip().lower()
+    lowered = text.strip(_ASCII_SPACE).lower()
     if lowered in SAFE_HEADERS:
         return lowered
     if lowered.startswith(SAFE_HEADER_PREFIXES) and _SAFE_PREFIX_NAME_RE.fullmatch(
@@ -325,7 +351,8 @@ def header_value(value: object) -> str:
         str: The value, or ``[withheld]``.
     """
     if exact_int(value):
-        return str(int(value)) if _int_text_fits(value) else WITHHELD
+        fits = number_text_fits(value, MAX_HEADER_VALUE)
+        return str(int(value)) if fits else WITHHELD
     raw: str | bytes
     if exact_bytes(value) or exact_str(value):
         raw = value
@@ -337,15 +364,22 @@ def header_value(value: object) -> str:
     return text if _HEADER_VALUE_RE.fullmatch(text) else WITHHELD
 
 
-def _int_text_fits(value: int) -> bool:
-    """Return whether ``str(value)`` is at most :data:`MAX_HEADER_VALUE` long.
+def number_text_fits(value: int | float, limit: int) -> bool:
+    """Return whether a number's integer part prints in ``limit`` characters.
 
-    Decided by comparing with powers of ten, never by building the text, so
-    an integer of any size is measured cheaply and never meets the
+    Decided by comparing with a power of ten, never by building the text, so
+    a number of any size is measured cheaply and an integer never meets the
     interpreter's limit on converting integers to text. A minus sign takes
-    one character of the bound.
+    one character of the bound. Not-a-number and the infinities never fit.
+
+    Args:
+        value: An exact ``int`` or ``float``.
+        limit: Most characters its integer part may print as.
+
+    Returns:
+        bool: True when ``str(int(value))`` is at most ``limit`` long.
     """
-    digits = MAX_HEADER_VALUE - 1 if value < 0 else MAX_HEADER_VALUE
+    digits = limit - 1 if value < 0 else limit
     bound: int = 10**digits
     return -bound < value < bound
 
@@ -470,12 +504,25 @@ def url_skeleton(url: object) -> str:
     if parts.scheme or parts.netloc:
         if parts.scheme not in _SCHEMES:
             return WITHHELD
-        host = parts.hostname or ""
-        shown_host = host if _HOST_RE.fullmatch(host) else WITHHELD
-        authority = f"{parts.scheme}://{shown_host}{f':{port}' if port else ''}"
+        address = _host_and_port(parts.netloc, parts.hostname, port)
+        authority = f"{parts.scheme}://{address}"
     path = parts.path if _PATH_RE.fullmatch(parts.path) else f"/{WITHHELD}"
     query = f"?{_query_skeleton(parts.query)}" if parts.query else ""
     return f"{authority}{path}{query}"
+
+
+def _host_and_port(netloc: str, hostname: str | None, port: int | None) -> str:
+    """Print a URL's validated host and port; withheld unless written in ASCII.
+
+    The parser lowercases the host by Unicode rules, so the host and port
+    are checked as written: the part of the authority after the userinfo,
+    split off as the parser splits it.
+    """
+    if not netloc.rpartition("@")[2].isascii():
+        return WITHHELD
+    host = hostname or ""
+    shown_host = host if _HOST_RE.fullmatch(host) else WITHHELD
+    return f"{shown_host}{f':{port}' if port else ''}"
 
 
 def method(value: object) -> str:
@@ -489,29 +536,42 @@ def method(value: object) -> str:
     """
     if exact_bytes(value) and len(value) <= 16:
         value = value.decode("latin-1")
-    if exact_str(value) and len(value) <= 16 and value.upper() in METHODS:
+    if (
+        exact_str(value)
+        and len(value) <= 16
+        and value.isascii()
+        and value.upper() in METHODS
+    ):
         return str.upper(value)
     return WITHHELD
 
 
-def number(value: object) -> int | float | None:
+def number(value: object, *, limit: int) -> int | float | None:
     """Return a value that is, or parses as, a number; None otherwise.
+
+    A number whose integer part would print longer than ``limit``
+    characters, or a float that is not finite, is None too; it is measured
+    before any conversion to text (:func:`number_text_fits`).
 
     Args:
         value: An int, float or numeric text.
+        limit: Most characters the integer part may print as.
 
     Returns:
         int | float | None: The number.
     """
+    checked: int | float | None = None
     if exact_int(value):
-        return int(value)
-    if exact_float(value):
-        return float(value)
-    if exact_str(value) and len(value) <= 32:
+        checked = int(value)
+    elif exact_float(value):
+        checked = float(value)
+    elif exact_str(value) and len(value) <= 32:
         text = value.strip(_ASCII_SPACE)
         if _NUMBER_TEXT_RE.fullmatch(text):
-            return float(text) if "." in text else int(text)
-    return None
+            checked = float(text) if "." in text else int(text)
+    if checked is None or not number_text_fits(checked, limit):
+        return None
+    return checked
 
 
 def status(value: object) -> int | None:
@@ -555,7 +615,11 @@ def identifier(value: object, pattern: re.Pattern[str]) -> str:
     Returns:
         str: The text, or ``[withheld]``.
     """
-    if exact_str(value) and len(value) <= 512 and pattern.fullmatch(value):
+    if (
+        exact_str(value)
+        and len(value) <= MAX_IDENTIFIER_TEXT
+        and pattern.fullmatch(value)
+    ):
         return str(value)
     return WITHHELD
 
