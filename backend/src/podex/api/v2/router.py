@@ -4,6 +4,9 @@ from fastapi import APIRouter
 
 from podex.api.deps import AppSettings
 from podex.api.v2 import (
+    account,
+    account_billing,
+    account_library,
     auth,
     billing,
     episodes,
@@ -34,6 +37,9 @@ api_v2_router.include_router(episodes.router)
 api_v2_router.include_router(media.router)
 api_v2_router.include_router(stats.router)
 api_v2_router.include_router(auth.router)
+api_v2_router.include_router(account.router)
+api_v2_router.include_router(account_library.router)
+api_v2_router.include_router(account_billing.router)
 api_v2_router.include_router(billing.router)
 api_v2_router.include_router(ops.router)
 api_v2_router.include_router(takedowns.router)

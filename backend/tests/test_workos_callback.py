@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.api.deps import get_app_settings
+from podex.api.v2 import account_deps
 from podex.api.v2 import auth as v2_auth_api
 from podex.models import AccountUser, UserSession
 from podex.services.limiter import RateLimitDecision, SlidingWindowRateLimiter
@@ -268,7 +269,7 @@ def test_login_redirects_with_state_cookie(client: TestClient) -> None:
     if not isinstance(app, FastAPI):  # pragma: no cover - narrowed
         raise AssertionError
     app.dependency_overrides[get_app_settings] = workos_settings
-    app.dependency_overrides[v2_auth_api.get_workos_auth_client] = lambda: (
+    app.dependency_overrides[account_deps.get_workos_auth_client] = lambda: (
         build_workos_auth_client(settings=workos_settings())
     )
 
