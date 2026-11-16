@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0012. First-use setting failures carry no configured value
+# 0013. First-use setting failures carry no configured value
 
 - Status: proposed
 - Date: 2026-11-16
