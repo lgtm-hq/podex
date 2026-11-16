@@ -173,12 +173,15 @@ def run_overlapping(
     first: Callable[[Session], FirstResult],
     second: Callable[[Session], SecondResult],
     expected: ExpectedWait,
+    rollback_first: bool = False,
 ) -> tuple[FirstResult, SecondResult]:
     """Hold ``first`` open, start ``second`` until it shows ``expected``, commit.
 
     ``first`` runs and stays uncommitted; ``second`` runs on another connection
     in a worker thread and must block on ``expected`` behind ``first``.
-    Exceptions from ``second`` propagate to the caller.
+    Exceptions from ``second`` propagate to the caller. With
+    ``rollback_first``, ``first`` is rolled back instead of committed once
+    ``second`` waits.
 
     Returns:
         The first and second steps' results.
@@ -199,7 +202,10 @@ def run_overlapping(
                     expected=expected,
                 )
             finally:
-                first_db.commit()
+                if rollback_first:
+                    first_db.rollback()
+                else:
+                    first_db.commit()
             return first_result, future.result(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
     finally:
         first_db.close()
