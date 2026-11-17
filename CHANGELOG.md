@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.46] - 2026-11-17
+
+### Changed
+
+- **deps**: update lintro to 0.181.4 (patch) (#906) (0a44846)
+
+### Fixed
+
+- **derivatives**: record a failed embedding without a stale vector and catch every
+  provider error (#899) (ffa9286)
+
 ## [0.41.45] - 2026-11-17
 
 ### Fixed
