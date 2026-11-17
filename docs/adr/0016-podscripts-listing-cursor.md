@@ -2,7 +2,7 @@
 
 # 0016. Catalog as the podscripts listing cursor after a complete walk
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-17
 - Tags: discovery, scheduler
 

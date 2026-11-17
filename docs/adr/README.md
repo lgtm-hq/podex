@@ -17,15 +17,15 @@ the changelog record _what_ changed.
 | [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test          | proposed | 2026-11-14 |
 | [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text      | proposed | 2026-11-14 |
 | [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |
-| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | proposed | 2026-11-16 |
-| [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | proposed | 2026-11-16 |
-| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | proposed | 2026-11-16 |
-| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
-| [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | proposed | 2026-11-16 |
-| [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | proposed | 2026-11-16 |
-| [0016](./0016-podscripts-listing-cursor.md)             | Catalog as the podscripts listing cursor after a complete walk  | proposed | 2026-11-17 |
-| [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | proposed | 2026-11-17 |
-| [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | proposed | 2026-11-17 |
+| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | accepted | 2026-11-16 |
+| [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | accepted | 2026-11-16 |
+| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | accepted | 2026-11-16 |
+| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | accepted | 2026-11-16 |
+| [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | accepted | 2026-11-16 |
+| [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | accepted | 2026-11-16 |
+| [0016](./0016-podscripts-listing-cursor.md)             | Catalog as the podscripts listing cursor after a complete walk  | accepted | 2026-11-17 |
+| [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | accepted | 2026-11-17 |
+| [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | accepted | 2026-11-17 |
 
 ## Format
 
