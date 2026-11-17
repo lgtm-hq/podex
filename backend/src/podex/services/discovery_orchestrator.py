@@ -14,7 +14,6 @@ from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from rapidfuzz import fuzz
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -33,6 +32,7 @@ from podex.services.discovery import (
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
+from podex.services.episode_matching import group_same_episodes
 from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
@@ -289,80 +289,11 @@ class DiscoveryOrchestrator:
     ) -> list[DiscoveredEpisode]:
         """Deduplicate and merge episodes from multiple sources.
 
-        Uses multiple matching strategies:
-        1. Exact match on source-specific IDs and source URLs.
-        2. Fuzzy match on title + date.
+        Records are grouped by the rule in ``podex.services.episode_matching``
+        (ADR 0019). The catalog lookup in ``_find_existing_episode`` is not
+        part of that rule.
         """
-        if not episodes:
-            return []
-
-        # Group episodes by potential matches
-        merged: list[DiscoveredEpisode] = []
-        used: set[int] = set()
-
-        for i, ep1 in enumerate(episodes):
-            if i in used:
-                continue
-
-            # Find all episodes that match this one
-            matches = [ep1]
-            used.add(i)
-
-            for j, ep2 in enumerate(episodes):
-                if j in used:
-                    continue
-
-                if self._episodes_match(ep1, ep2):
-                    matches.append(ep2)
-                    used.add(j)
-
-            # Merge matched episodes
-            merged_ep = self._merge_episodes(matches)
-            merged.append(merged_ep)
-
-        return merged
-
-    def _episodes_match(
-        self,
-        ep1: DiscoveredEpisode,
-        ep2: DiscoveredEpisode,
-    ) -> bool:
-        """Check if two episodes are the same.
-
-        Returns True if they match by ID or by title similarity + date.
-        """
-        # A matching source identifier is sufficient to establish identity.
-        if any(
-            getattr(ep1, name) and getattr(ep1, name) == getattr(ep2, name)
-            for name in ("youtube_id", "spotify_uri", "rss_guid", "episode_url")
-        ):
-            return True
-
-        # Match by episode number if both have one
-        if (
-            ep1.episode_number
-            and ep2.episode_number
-            and ep1.episode_number == ep2.episode_number
-        ):
-            return True
-
-        # Match by fuzzy title + date
-        title_ratio = fuzz.ratio(ep1.title.lower(), ep2.title.lower())
-        if title_ratio < 80:
-            return False
-
-        # If titles are similar, check dates
-        if ep1.published_at and ep2.published_at:
-            # Same day = match
-            if ep1.published_at.date() == ep2.published_at.date():
-                return True
-            # Within a week and high title match = probably match
-            days_diff = abs((ep1.published_at - ep2.published_at).days)
-            if days_diff <= 7 and title_ratio >= 90:
-                return True
-
-        # High title similarity alone (>95) = probably match
-        return bool(title_ratio >= 95)
+        return [self._merge_episodes(group) for group in group_same_episodes(episodes)]
 
     def _merge_episodes(
         self,
