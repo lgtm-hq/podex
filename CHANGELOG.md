@@ -22,6 +22,12 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.41] - 2026-11-17
+
+### Fixed
+
+- **takedowns**: keep suppression in force across rebuilds (#867) (33305f2)
+
 ## [0.41.40] - 2026-11-17
 
 ### Changed
