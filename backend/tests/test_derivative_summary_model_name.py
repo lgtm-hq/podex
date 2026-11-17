@@ -11,7 +11,7 @@ what is checked or stored.
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 from unittest.mock import Mock
 
 import pytest
@@ -19,12 +19,15 @@ from assertpy import assert_that
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    ContentSuppressedError,
     DerivativeGenerationRun,
+    DerivativeGenerationRunStatus,
     Episode,
     EpisodeSummary,
     Media,
     MediaSummary,
 )
+from podex.services import derivative_generation, derivative_summaries
 from podex.services.derivative_generation import generate_episode_derivatives
 from podex.services.derivative_summaries import (
     GeneratedSummaryData,
@@ -42,6 +45,7 @@ from tests.model_name_support import (
     UnreadableName,
 )
 from tests.sdk_log_support import logged, synthetic_secret
+from tests.takedown_support import take_down_episode
 
 _INVALID_MODEL_NAME = "summary_invalid_model_name"
 
@@ -52,10 +56,12 @@ class RecordingProvider:
 
     name: Callable[[], object]
     requests: list[SummarySourceData] = field(default_factory=list)
+    reads: int = 0
 
     @property
     def model_name(self) -> object:
-        """Return the configured name, or raise what reading it raises."""
+        """Count the read; return the configured name or raise what it raises."""
+        self.reads += 1
         return self.name()
 
     def summarize(self, source: SummarySourceData) -> GeneratedSummaryData:
@@ -212,6 +218,7 @@ def test_str_subclass_name_is_stored_as_an_exact_str(
 _UNREADABLE_CASES = [
     pytest.param(_episode_summary, _unreadable_property, id="episode-property"),
     pytest.param(_media_summary, _unreadable_property, id="media-property"),
+    pytest.param(_derivative_run, _unreadable_property, id="derivative-run-property"),
     *(
         pytest.param(write, UnreadableName, id=f"{write_id}-type-check")
         for write_id, write in _WRITES.items()
@@ -238,3 +245,184 @@ def test_model_name_read_that_raises_is_the_providers_failure(
 
     assert_that(provider.requests).is_empty()
     assert_that(_derived_rows(db_session)).is_empty()
+
+
+_GOOD_NAME = "summary-model-v1"
+_OVER_LONG_NAME = "m" * (MODEL_COLUMN_LENGTH + 1)
+
+
+def _changing_name(*names: str) -> Callable[[], object]:
+    """Return a name reader giving ``names`` in turn, then the last one forever."""
+    remaining = list(names)
+
+    def read() -> object:
+        return remaining.pop(0) if len(remaining) > 1 else remaining[0]
+
+    return read
+
+
+def test_derivative_run_reads_a_good_name_once_and_ignores_later_changes(
+    db_session: Session,
+) -> None:
+    """The orchestrator reads the name once and hands it to every summary.
+
+    The property turns unstorable after its first read; that change is never
+    seen, so the run, the episode summary and the media summary all complete.
+    """
+    seed_catalog_graph(db_session)
+    provider = RecordingProvider(name=_changing_name(_GOOD_NAME, _OVER_LONG_NAME))
+
+    run = generate_episode_derivatives(
+        db=db_session,
+        episode=db_session.query(Episode).one(),
+        summary_provider=cast(SummaryProvider, provider),
+    )
+    db_session.commit()
+
+    assert_that(provider.reads).is_equal_to(1)
+    assert_that(provider.requests).is_length(2)
+    assert_that(run.status).is_equal_to(DerivativeGenerationRunStatus.COMPLETED.value)
+    assert_that(_stored_model_names(db_session)).is_equal_to([_GOOD_NAME] * 3)
+
+
+def test_derivative_run_refuses_a_bad_first_read_whatever_follows(
+    db_session: Session,
+) -> None:
+    """A bad first read refuses the run; a later good name is never read."""
+    seed_catalog_graph(db_session)
+    provider = RecordingProvider(name=_changing_name(_OVER_LONG_NAME, _GOOD_NAME))
+
+    with pytest.raises(PipelineFailure):
+        _derivative_run(db_session, cast(SummaryProvider, provider))
+    db_session.commit()
+
+    assert_that(provider.reads).is_equal_to(1)
+    assert_that(provider.requests).is_empty()
+    assert_that(_derived_rows(db_session)).is_empty()
+
+
+def _handed_episode_summary(
+    db: Session,
+    provider: SummaryProvider,
+    model_name: str,
+) -> None:
+    generate_episode_summary(
+        db=db,
+        episode=db.query(Episode).one(),
+        provider=provider,
+        model_name=model_name,
+        pipeline_version="v1",
+        prompt_version="p1",
+    )
+
+
+def _handed_media_summary(
+    db: Session,
+    provider: SummaryProvider,
+    model_name: str,
+) -> None:
+    generate_media_summary(
+        db=db,
+        media=db.query(Media).one(),
+        provider=provider,
+        model_name=model_name,
+        pipeline_version="v1",
+        prompt_version="p1",
+    )
+
+
+_HANDED_WRITES = {
+    "episode-summary": _handed_episode_summary,
+    "media-summary": _handed_media_summary,
+}
+
+
+@pytest.mark.parametrize(
+    "write",
+    _HANDED_WRITES.values(),
+    ids=_HANDED_WRITES.keys(),
+)
+def test_handed_model_name_is_used_without_reading_the_provider(
+    db_session: Session,
+    write: Callable[[Session, SummaryProvider, str], None],
+) -> None:
+    """A name handed in is validated and stored; the provider's is never read."""
+    seed_catalog_graph(db_session)
+    provider = RecordingProvider(name=_unreadable_property)
+
+    write(db_session, cast(SummaryProvider, provider), _GOOD_NAME)
+    db_session.commit()
+    with pytest.raises(PipelineFailure):
+        write(db_session, cast(SummaryProvider, provider), _OVER_LONG_NAME)
+
+    assert_that(provider.reads).is_zero()
+    assert_that(provider.requests).is_length(1)
+    assert_that(_stored_model_names(db_session)).is_equal_to([_GOOD_NAME])
+
+
+_SUPPRESSIBLE_WRITES = {
+    "episode-summary": _episode_summary,
+    "derivative-run": _derivative_run,
+}
+
+
+@pytest.mark.parametrize(
+    "write",
+    _SUPPRESSIBLE_WRITES.values(),
+    ids=_SUPPRESSIBLE_WRITES.keys(),
+)
+def test_suppressed_episode_is_refused_before_the_model_name_is_read(
+    db_session: Session,
+    write: Callable[[Session, SummaryProvider], None],
+) -> None:
+    """Authorisation comes first: a takedown wins over an unstorable name."""
+    graph = seed_catalog_graph(db_session)
+    take_down_episode(db_session, graph.episode_id, "suppress_derivatives")
+    provider = RecordingProvider(name=lambda: _OVER_LONG_NAME)
+
+    with pytest.raises(ContentSuppressedError):
+        write(db_session, cast(SummaryProvider, provider))
+
+    assert_that(provider.reads).is_zero()
+    assert_that(provider.requests).is_empty()
+
+
+# Reads of the episode's text or transcript that must follow the name check.
+_SOURCE_READS = (
+    (derivative_summaries, "build_episode_summary_source"),
+    (derivative_summaries, "build_media_summary_source"),
+    (derivative_generation, "build_episode_summary_source"),
+    (derivative_generation, "_latest_transcript"),
+    (derivative_generation, "_run_source_hash"),
+)
+
+
+@pytest.mark.parametrize("write", _WRITES.values(), ids=_WRITES.keys())
+def test_model_name_is_checked_before_any_source_is_read(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    write: Callable[[Session, SummaryProvider], None],
+) -> None:
+    """A refused name stops the write before the text or transcript is read."""
+    seed_catalog_graph(db_session)
+    reads: list[str] = []
+    for module, name in _SOURCE_READS:
+        original = getattr(module, name)
+
+        def record(
+            *args: Any,
+            _name: str = name,
+            _original: Callable[..., Any] = original,
+            **kwargs: Any,
+        ) -> Any:
+            reads.append(_name)
+            return _original(*args, **kwargs)
+
+        monkeypatch.setattr(module, name, record)
+    provider = RecordingProvider(name=lambda: _OVER_LONG_NAME)
+
+    with pytest.raises(PipelineFailure):
+        write(db_session, cast(SummaryProvider, provider))
+
+    assert_that(reads).is_empty()
+    assert_that(provider.reads).is_equal_to(1)

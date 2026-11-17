@@ -12,6 +12,7 @@ from podex.models import (
     DerivativeGenerationRun,
     DerivativeGenerationRunStatus,
     Episode,
+    EpisodeSummary,
     Media,
     Mention,
     Transcript,
@@ -87,8 +88,10 @@ def generate_episode_derivatives(
             takedown lock until this transaction ends, so no takedown of the
             episode commits while its text is with a provider.
         PipelineFailure: ``summary_invalid_model_name`` if the summary
-            provider's model name cannot be stored. It is raised after
-            authorisation and before any provider call or run row.
+            provider's model name cannot be stored. The name is read once,
+            right after authorisation and before the transcript or source
+            text is read, any provider is called or the run row is written;
+            every summary of the run uses that one reading.
     """
     if summary_provider is not None:
         # Media summaries lock their media rows; the shared order takes media
@@ -98,6 +101,9 @@ def generate_episode_derivatives(
             media_ids=[media.id for media in _episode_media(db=db, episode=episode)],
         )
     authorize_episode_text(db=db, episode_ids=[episode.id])
+    summary_model = (
+        summary_model_name(summary_provider) if summary_provider is not None else None
+    )
     config = config or DerivativeGenerationConfig()
     now = now or datetime.now(UTC)
     transcript = transcript or _latest_transcript(db=db, episode=episode)
@@ -112,12 +118,7 @@ def generate_episode_derivatives(
             pipeline_version=config.pipeline_version,
             chunk_pipeline_version=config.chunk_pipeline_version,
             summary_prompt_version=config.summary_prompt_version,
-            # Read before any provider call or run row; refused if unstorable.
-            summary_model=(
-                summary_model_name(summary_provider)
-                if summary_provider is not None
-                else None
-            ),
+            summary_model=summary_model,
             source_text_hash=_run_source_hash(
                 db=db,
                 episode=episode,
@@ -137,27 +138,17 @@ def generate_episode_derivatives(
             now=now,
         )
 
-    episode_summary = None
+    episode_summary: EpisodeSummary | None = None
     media_summary_count = 0
-    if summary_provider is not None:
-        episode_summary = generate_episode_summary(
+    if summary_provider is not None and summary_model is not None:
+        episode_summary, media_summary_count = _generate_summaries(
             db=db,
             episode=episode,
             provider=summary_provider,
-            pipeline_version=config.pipeline_version,
-            prompt_version=config.summary_prompt_version,
-            generated_at=now,
+            model_name=summary_model,
+            config=config,
+            now=now,
         )
-        for media in _episode_media(db=db, episode=episode):
-            generate_media_summary(
-                db=db,
-                media=media,
-                provider=summary_provider,
-                pipeline_version=config.pipeline_version,
-                prompt_version=config.summary_prompt_version,
-                generated_at=now,
-            )
-            media_summary_count += 1
 
     for graph_triple in graph_triples or []:
         upsert_graph_triple(db=db, payload=graph_triple)
@@ -241,6 +232,55 @@ def stable_derivative_generation_run_key(
         ).encode("utf-8"),
     ).hexdigest()
     return f"derivative-run:{digest[:64]}"
+
+
+# One named input per summary field the run shares with its summaries.
+# pylint: disable-next=too-many-arguments
+def _generate_summaries(
+    *,
+    db: Session,
+    episode: Episode,
+    provider: SummaryProvider,
+    model_name: str,
+    config: DerivativeGenerationConfig,
+    now: datetime,
+) -> tuple[EpisodeSummary, int]:
+    """Summarise the episode and each media it mentions under one model name.
+
+    Args:
+        db: Database session.
+        episode: Episode being processed.
+        provider: Summary provider.
+        model_name: The provider's model name, read once by the caller; the
+            provider's ``model_name`` is not read again.
+        config: Versioned derivative generation configuration.
+        now: Generation timestamp.
+
+    Returns:
+        The episode summary and the number of media summaries written.
+    """
+    episode_summary = generate_episode_summary(
+        db=db,
+        episode=episode,
+        provider=provider,
+        model_name=model_name,
+        pipeline_version=config.pipeline_version,
+        prompt_version=config.summary_prompt_version,
+        generated_at=now,
+    )
+    media_summary_count = 0
+    for media in _episode_media(db=db, episode=episode):
+        generate_media_summary(
+            db=db,
+            media=media,
+            provider=provider,
+            model_name=model_name,
+            pipeline_version=config.pipeline_version,
+            prompt_version=config.summary_prompt_version,
+            generated_at=now,
+        )
+        media_summary_count += 1
+    return episode_summary, media_summary_count
 
 
 def _upsert_generation_run(
