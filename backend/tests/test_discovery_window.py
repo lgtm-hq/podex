@@ -213,6 +213,43 @@ def test_failed_page_is_a_run_error_and_the_next_run_walks_in_full(
     assert_that(_walked_at(podcast)).is_equal_to(_NOW)
 
 
+def test_failed_page_clears_an_existing_walk_record(
+    db_session: Session,
+    orchestrator: DiscoveryOrchestrator,
+    site: _Site,
+) -> None:
+    """A gap left by a failed page is filled by the next run, not skipped."""
+    podcast = _podcast(db_session, walked_at=_NOW - timedelta(days=1))
+    for number in range(12, 4, -1):
+        _store(db_session, podcast, number, url=_url(_slug(number)))
+    site.pages = _numbered_pages(
+        (18, 17),
+        (16, 15),
+        (14, 13),
+        (12, 11),
+        (10, 9),
+        (8, 7),
+        (6, 5),
+    )
+    site.failing = {3: 404}
+
+    first = orchestrator.discover_for_podcast(podcast)
+
+    assert_that(first.errors).is_length(1)
+    assert_that(_walked_at(podcast)).is_none()
+
+    site.failing = {}
+    site.requested.clear()
+    orchestrator.discover_for_podcast(podcast)
+
+    assert_that(site.requested).is_equal_to([1, 2, 3, 4, 5, 6, 7, 8])
+    assert_that(_stored_urls(db_session, podcast)).contains(
+        _url(_slug(14)),
+        _url(_slug(13)),
+    )
+    assert_that(_walked_at(podcast)).is_equal_to(_NOW)
+
+
 def test_walk_is_not_recorded_when_storing_its_episodes_fails(
     db_session: Session,
     orchestrator: DiscoveryOrchestrator,

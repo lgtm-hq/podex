@@ -36,9 +36,10 @@ Nothing guaranteed that:
    the run's start time when a walk reached the listing's real end (an empty
    page) with no failed page, no early stop and below the page limit. It is
    committed with that run's episodes. While it is unset, discovery reads the
-   whole listing as before. It is cleared when the podcast's podscripts slug
-   changes through the ops update; setting it to NULL by hand forces the next
-   run to read the whole listing.
+   whole listing as before. It is cleared when a run hits a failed page (that
+   run may have left a gap below known pages) and when the podcast's
+   podscripts slug changes through the ops update; setting it to NULL by hand
+   forces the next run to read the whole listing.
 3. **Stopping matches by listing URL only.** A page counts as known only when
    every listing URL on it is already stored for this podcast. Matching by
    episode number still prevents duplicate rows on save, as before, but never

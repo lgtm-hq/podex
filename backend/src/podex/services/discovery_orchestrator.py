@@ -111,6 +111,10 @@ class DiscoveryOrchestrator:
                 )
                 discovered.extend(listing.episodes)
                 errors.extend(listing.errors)
+                if listing.errors:
+                    # A failed page may have left a gap below known pages; the
+                    # next run must read the whole listing to fill it.
+                    podcast.podscripts_listing_walked_at = None
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
