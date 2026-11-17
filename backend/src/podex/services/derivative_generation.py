@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -310,12 +311,16 @@ def _episode_media(
     db: Session,
     episode: Episode,
 ) -> list[Media]:
-    """Return media mentioned in an episode exactly once."""
-    return list(
-        db.query(Media)
-        .join(Mention, Mention.media_id == Media.id)
-        .filter(Mention.episode_id == episode.id)
-        .order_by(Media.id)
-        .distinct()
-        .all(),
+    """Return media mentioned in an episode once each, in ascending id.
+
+    The rows are matched with ``EXISTS`` rather than a join and ``DISTINCT``:
+    ``media`` has JSON columns, which PostgreSQL cannot compare for equality,
+    so a ``DISTINCT`` over whole rows is rejected there. Callers lock the rows
+    in this order.
+    """
+    mentioned = (
+        select(Mention.id)
+        .where(Mention.media_id == Media.id, Mention.episode_id == episode.id)
+        .exists()
     )
+    return list(db.scalars(select(Media).where(mentioned).order_by(Media.id)))

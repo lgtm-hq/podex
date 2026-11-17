@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from math import ceil
 
-from sqlalchemy import and_, or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Query, Session
 
 from podex.models import (
@@ -237,22 +237,25 @@ def _eligible_candidates(
 
 
 def _with_retained_raw_payload(query: Query[Transcript]) -> Query[Transcript]:
-    """Include legacy inline inputs and encrypted artifact-backed inputs."""
-    return (
-        query.outerjoin(
-            TranscriptArtifact,
-            and_(
-                TranscriptArtifact.transcript_id == Transcript.id,
-                TranscriptArtifact.purged_at.is_(None),
-            ),
+    """Include legacy inline inputs and encrypted artifact-backed inputs.
+
+    Artifacts are matched with ``EXISTS`` rather than a join and ``DISTINCT``:
+    ``transcripts`` has JSON columns, which PostgreSQL cannot compare for
+    equality, so a ``DISTINCT`` over whole rows is rejected there.
+    """
+    retained_artifact = (
+        select(TranscriptArtifact.id)
+        .where(
+            TranscriptArtifact.transcript_id == Transcript.id,
+            TranscriptArtifact.purged_at.is_(None),
         )
-        .filter(
-            or_(
-                Transcript.raw_text.is_not(None),
-                TranscriptArtifact.id.is_not(None),
-            ),
-        )
-        .distinct()
+        .exists()
+    )
+    return query.filter(
+        or_(
+            Transcript.raw_text.is_not(None),
+            retained_artifact,
+        ),
     )
 
 
