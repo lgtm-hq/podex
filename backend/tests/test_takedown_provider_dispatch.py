@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from podex.database import enable_sqlite_foreign_keys
 from podex.models import (
+    EMBEDDING_DIMENSIONS,
     Base,
     ContentSuppressedError,
     ContentSuppressionScope,
@@ -90,9 +91,11 @@ def sides_fixture(tmp_path: Path) -> Iterator[_Sides]:
 
 
 def _provider() -> Mock:
-    provider = Mock(model_name="model", dimensions=2)
+    provider = Mock(model_name="model", dimensions=EMBEDDING_DIMENSIONS)
     provider.summarize.return_value = GeneratedSummaryData(summary_text="summary")
-    provider.embed_texts.side_effect = lambda texts: [[0.1, 0.2] for _ in texts]
+    provider.embed_texts.side_effect = lambda texts: [
+        [0.1] * EMBEDDING_DIMENSIONS for _ in texts
+    ]
     return provider
 
 

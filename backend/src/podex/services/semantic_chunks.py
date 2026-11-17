@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import struct
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -12,6 +13,7 @@ from typing import Protocol
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    EMBEDDING_DIMENSIONS,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
@@ -25,6 +27,10 @@ from podex.services.failure_descriptors import (
 )
 
 logger = logging.getLogger(__name__)
+
+# pgvector stores each element as a 4-byte float and refuses a value that
+# overflows it, so the largest finite float32 bounds every stored element.
+_FLOAT32_MAX: float = struct.unpack("<f", b"\xff\xff\x7f\x7f")[0]
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,7 +98,12 @@ class TranscriptSegmentData:
 
 
 class EmbeddingProvider(Protocol):
-    """Protocol for model-backed embedding providers."""
+    """Protocol for model-backed embedding providers.
+
+    ``dimensions`` must equal the embedding column's dimension
+    (``EMBEDDING_DIMENSIONS``): a provider declaring any other value is never
+    called, and every chunk it would embed is marked failed.
+    """
 
     model_name: str
     dimensions: int
@@ -162,7 +173,9 @@ def sync_semantic_chunks_for_transcript(
         now: Timestamp used for deterministic embedded timestamps.
 
     Returns:
-        Summary of created, updated, deleted, and embedded chunks.
+        Summary of created, updated, deleted, and embedded chunks. A vector the
+        embedding column cannot store marks only its own chunk failed; it is
+        never sent to the database.
 
     Raises:
         ContentSuppressedError: If an approved takedown suppresses the
@@ -260,7 +273,11 @@ def _embed_chunks(
     provider: EmbeddingProvider | None,
     now: datetime,
 ) -> tuple[int, int]:
-    """Apply one validated embedding batch to the pending chunks.
+    """Apply one embedding batch, storing only vectors the column accepts.
+
+    A provider whose declared dimension differs from the column is refused
+    before it is called. A provider error or a wrong vector count fails the
+    whole batch; a single vector that cannot be stored fails only its chunk.
 
     Args:
         chunks: Ordered chunks awaiting embeddings.
@@ -273,29 +290,49 @@ def _embed_chunks(
     if provider is None or not chunks:
         return 0, 0
     try:
+        _check_provider_dimensions(provider.dimensions)
         vectors = provider.embed_texts(texts=[chunk.text for chunk in chunks])
-        _validate_embeddings(
-            vectors=vectors,
-            expected_count=len(chunks),
-            expected_dimensions=provider.dimensions,
-        )
+        _validate_embedding_count(vectors=vectors, expected_count=len(chunks))
     except (RuntimeError, ValueError, TypeError) as error:
-        descriptor = persisted_failure(describe_failure("embedding", error))
-        log_failure(logger, descriptor, error)
-        for chunk in chunks:
-            chunk.embedding_status = SemanticChunkEmbeddingStatus.FAILED.value
-            chunk.embedding_model = provider.model_name
-            chunk.embedding_dimensions = provider.dimensions
-            chunk.embedding_error = descriptor
+        _mark_embedding_failed(chunks=chunks, provider=provider, error=error)
         return 0, len(chunks)
+    embedded_count = 0
     for chunk, vector in zip(chunks, vectors, strict=True):
+        try:
+            stored_vector = _storable_embedding(vector)
+        except PipelineFailure as error:
+            _mark_embedding_failed(chunks=[chunk], provider=provider, error=error)
+            continue
         chunk.embedding_status = SemanticChunkEmbeddingStatus.EMBEDDED.value
         chunk.embedding_model = provider.model_name
         chunk.embedding_dimensions = provider.dimensions
-        chunk.embedding_vector = vector
+        chunk.embedding_vector = stored_vector
         chunk.embedding_error = None
         chunk.embedded_at = now
-    return len(chunks), 0
+        embedded_count += 1
+    return embedded_count, len(chunks) - embedded_count
+
+
+def _mark_embedding_failed(
+    *,
+    chunks: list[SemanticChunk],
+    provider: EmbeddingProvider,
+    error: Exception,
+) -> None:
+    """Record one bounded embedding failure on each of ``chunks``.
+
+    Args:
+        chunks: Chunks whose embedding failed.
+        provider: Provider the embedding was requested from.
+        error: Failure, whose message is never stored or logged.
+    """
+    descriptor = persisted_failure(describe_failure("embedding", error))
+    log_failure(logger, descriptor, error)
+    for chunk in chunks:
+        chunk.embedding_status = SemanticChunkEmbeddingStatus.FAILED.value
+        chunk.embedding_model = provider.model_name
+        chunk.embedding_dimensions = provider.dimensions
+        chunk.embedding_error = descriptor
 
 
 def _segments_from_transcript(
@@ -482,24 +519,94 @@ def _semantic_chunk_needs_update(
     )
 
 
-def _validate_embeddings(
+def _check_provider_dimensions(dimensions: object) -> None:
+    """Refuse a provider whose vectors could never fit the embedding column.
+
+    Args:
+        dimensions: Dimension the provider declares.
+
+    Raises:
+        PipelineFailure: If ``dimensions`` is not ``EMBEDDING_DIMENSIONS``.
+    """
+    if (
+        isinstance(dimensions, bool)
+        or not isinstance(dimensions, int)
+        or dimensions != EMBEDDING_DIMENSIONS
+    ):
+        raise PipelineFailure(
+            "embedding provider dimensions differ from the embedding column",
+            reason=FailureReason.EMBEDDING_DIMENSIONS_MISMATCH,
+        )
+
+
+def _validate_embedding_count(
     *,
     vectors: list[list[float]],
     expected_count: int,
-    expected_dimensions: int,
 ) -> None:
-    """Validate embedding provider output shape."""
+    """Require one vector per requested text.
+
+    Args:
+        vectors: Vectors returned by the provider.
+        expected_count: Number of texts sent.
+
+    Raises:
+        PipelineFailure: If the provider returned another number of vectors.
+    """
     if len(vectors) != expected_count:
         raise PipelineFailure(
             "embedding provider returned an unexpected vector count",
             reason=FailureReason.EMBEDDING_COUNT_MISMATCH,
         )
-    for vector in vectors:
-        if len(vector) != expected_dimensions:
-            raise PipelineFailure(
-                "embedding provider returned unexpected dimensions",
-                reason=FailureReason.EMBEDDING_DIMENSIONS_MISMATCH,
-            )
+
+
+def _storable_embedding(vector: object) -> list[float]:
+    """Return ``vector`` as floats if the embedding column can store it.
+
+    The bind would otherwise convert numeric strings and booleans, and pass
+    NaN, infinity and float32 overflow on to the database, which rejects the
+    whole flush.
+
+    Args:
+        vector: One vector returned by the provider.
+
+    Returns:
+        The vector's elements as floats.
+
+    Raises:
+        PipelineFailure: If ``vector`` is not a list or tuple of exactly
+            ``EMBEDDING_DIMENSIONS`` elements, or an element is not an
+            ``int`` or ``float`` (strings and booleans included) finite in
+            float32.
+    """
+    if not isinstance(vector, list | tuple) or len(vector) != EMBEDDING_DIMENSIONS:
+        raise PipelineFailure(
+            "embedding vector does not match the embedding column dimension",
+            reason=FailureReason.EMBEDDING_DIMENSIONS_MISMATCH,
+        )
+    if not all(_storable_element(item) for item in vector):
+        raise PipelineFailure(
+            "embedding vector has an element the embedding column cannot store",
+            reason=FailureReason.EMBEDDING_INVALID_VALUE,
+        )
+    return [float(item) for item in vector]
+
+
+def _storable_element(item: object) -> bool:
+    """Return whether ``item`` is an ``int`` or ``float`` finite in float32.
+
+    ``bool`` is an ``int`` but is refused. NaN fails both comparisons, so it
+    is refused with the infinities.
+
+    Args:
+        item: One vector element.
+
+    Returns:
+        Whether the embedding column can store ``item``.
+    """
+    if isinstance(item, bool) or not isinstance(item, int | float):
+        return False
+    return -_FLOAT32_MAX <= item <= _FLOAT32_MAX
 
 
 def _transcript_text(

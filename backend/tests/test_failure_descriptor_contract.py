@@ -15,6 +15,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    EMBEDDING_DIMENSIONS,
     IngestionRun,
     Podcast,
     ScheduledWorkItemModel,
@@ -144,7 +145,10 @@ def test_embedding_failure_persists_a_descriptor(
     )
     db_session.add(transcript)
     db_session.flush()
-    provider = Mock(model_name="fixture-embedding", dimensions=3)
+    provider = Mock(
+        model_name="fixture-embedding",
+        dimensions=EMBEDDING_DIMENSIONS,
+    )
     provider.embed_texts.side_effect = RuntimeError(_PRIVATE_VALUE)
     result = sync_semantic_chunks_for_transcript(
         db=db_session,

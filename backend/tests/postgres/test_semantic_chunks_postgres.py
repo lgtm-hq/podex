@@ -6,13 +6,16 @@ component as a 4-byte float: values exactly representable in float32 read back
 equal, others read back as the nearest float32 (compared at that precision).
 """
 
+import json
+import math
 import struct
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import Any
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import select, text
+from sqlalchemy import Row, event, select, text
 from sqlalchemy.exc import DataError
 from sqlalchemy.orm import Session
 
@@ -25,6 +28,7 @@ from podex.models import (
 )
 from podex.services.semantic_chunks import (
     SemanticChunkingPolicy,
+    SemanticChunkSyncResultData,
     sync_semantic_chunks_for_transcript,
 )
 from tests.postgres.conftest import PostgresDatabase
@@ -291,3 +295,177 @@ def test_sync_bulk_inserts_embedded_chunks_in_one_pass(
     assert_that(list(vectors)).is_equal_to(
         [_quarter_vector(index) for index in range(3)],
     )
+
+
+_DIMENSIONS_MISMATCH = "embedding: PipelineFailure; embedding_dimensions_mismatch"
+_INVALID_VALUE = "embedding: PipelineFailure; embedding_invalid_value"
+
+
+def _with_element(element: float) -> list[float]:
+    """Return a full-dimension vector of quarters with ``element`` in the middle."""
+    vector = [0.25] * DIMENSIONS
+    vector[DIMENSIONS // 2] = element
+    return vector
+
+
+# Vectors the vector(1536) column refuses, each with its chunk's stored error.
+_REJECTED_VECTORS: dict[str, tuple[list[float], str]] = {
+    "one-element-short": ([0.25] * (DIMENSIONS - 1), _DIMENSIONS_MISMATCH),
+    "provider-sized": ([0.5, 1.0, 2.0], _DIMENSIONS_MISMATCH),
+    "nan": (_with_element(math.nan), _INVALID_VALUE),
+    "positive-infinity": (_with_element(math.inf), _INVALID_VALUE),
+    "negative-infinity": (_with_element(-math.inf), _INVALID_VALUE),
+    "float32-overflow": (_with_element(1e39), _INVALID_VALUE),
+}
+
+
+@dataclass(slots=True)
+class MiddleVectorEmbeddingProvider:
+    """Provider returning ``middle`` for the second of three texts."""
+
+    middle: list[float]
+    model_name: str = "middle-embedding-v1"
+    dimensions: int = DIMENSIONS
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Return float32-exact vectors around ``middle``."""
+        assert_that(texts).is_length(3)
+        return [_quarter_vector(0), self.middle, _quarter_vector(2)]
+
+
+def _sent_vectors(postgres: PostgresDatabase, write: Callable[[], None]) -> list[str]:
+    """Run ``write`` and return every vector text bound to a statement it sends.
+
+    Vectors bind as pgvector text (``[...]``); no other chunk value starts
+    with ``[``.
+    """
+    sent: list[str] = []
+
+    def record(*args: object) -> None:
+        parameters = args[3]
+        batches = parameters if isinstance(parameters, list | tuple) else [parameters]
+        sent.extend(
+            value
+            for batch in batches
+            if isinstance(batch, dict)
+            for value in batch.values()
+            if isinstance(value, str) and value.startswith("[")
+        )
+
+    event.listen(postgres.engine, "before_cursor_execute", record)
+    try:
+        write()
+    finally:
+        event.remove(postgres.engine, "before_cursor_execute", record)
+    return sent
+
+
+def _stored_chunks(postgres: PostgresDatabase) -> list[Row[Any]]:
+    """Read status, error, vector and SQL nullness of every chunk in order."""
+    with postgres.sessions() as db:
+        return list(
+            db.execute(
+                select(
+                    SemanticChunk.embedding_status,
+                    SemanticChunk.embedding_error,
+                    SemanticChunk.embedding_vector,
+                    SemanticChunk.embedding_vector.is_(None).label("is_null"),
+                ).order_by(SemanticChunk.chunk_index),
+            ).all(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("vector", "error"),
+    _REJECTED_VECTORS.values(),
+    ids=_REJECTED_VECTORS.keys(),
+)
+def test_sync_never_sends_a_rejected_vector(
+    postgres: PostgresDatabase,
+    vector: list[float],
+    error: str,
+) -> None:
+    """A rejected vector fails its chunk and never reaches the database."""
+    words = " ".join(f"word{index}" for index in range(9))
+    policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
+    results: list[SemanticChunkSyncResultData] = []
+    with postgres.sessions() as db:
+        transcript = _add_transcript(db, slug="rejected-vector", text_value=words)
+        db.commit()
+
+        def write() -> None:
+            results.append(
+                sync_semantic_chunks_for_transcript(
+                    db=db,
+                    transcript=transcript,
+                    embedding_provider=MiddleVectorEmbeddingProvider(middle=vector),
+                    policy=policy,
+                ),
+            )
+            db.commit()
+
+        sent = _sent_vectors(postgres, write)
+
+    rows = _stored_chunks(postgres)
+    assert_that(results[0].embedded_count).is_equal_to(2)
+    assert_that(results[0].failed_count).is_equal_to(1)
+    assert_that(sorted(json.loads(value) for value in sent)).is_equal_to(
+        sorted([_quarter_vector(0), _quarter_vector(2)]),
+    )
+    assert_that([row.embedding_status for row in rows]).is_equal_to(
+        [
+            SemanticChunkEmbeddingStatus.EMBEDDED.value,
+            SemanticChunkEmbeddingStatus.FAILED.value,
+            SemanticChunkEmbeddingStatus.EMBEDDED.value,
+        ],
+    )
+    assert_that([row.embedding_error for row in rows]).is_equal_to(
+        [None, error, None],
+    )
+    assert_that([row.is_null for row in rows]).is_equal_to([False, True, False])
+    assert_that([row.embedding_vector for row in rows]).is_equal_to(
+        [_quarter_vector(0), None, _quarter_vector(2)],
+    )
+
+
+@pytest.mark.parametrize(
+    ("vector", "error"),
+    [_REJECTED_VECTORS["one-element-short"], _REJECTED_VECTORS["nan"]],
+    ids=["one-element-short", "nan"],
+)
+def test_sync_update_never_sends_a_rejected_vector(
+    postgres: PostgresDatabase,
+    vector: list[float],
+    error: str,
+) -> None:
+    """Embedding stored pending chunks updates only those with storable vectors."""
+    words = " ".join(f"word{index}" for index in range(9))
+    policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
+    with postgres.sessions() as db:
+        transcript = _add_transcript(db, slug="rejected-update", text_value=words)
+        sync_semantic_chunks_for_transcript(
+            db=db,
+            transcript=transcript,
+            policy=policy,
+        )
+        db.commit()
+
+        def write() -> None:
+            sync_semantic_chunks_for_transcript(
+                db=db,
+                transcript=transcript,
+                embedding_provider=MiddleVectorEmbeddingProvider(middle=vector),
+                policy=policy,
+            )
+            db.commit()
+
+        sent = _sent_vectors(postgres, write)
+
+    rows = _stored_chunks(postgres)
+    assert_that(sorted(json.loads(value) for value in sent)).is_equal_to(
+        sorted([_quarter_vector(0), _quarter_vector(2)]),
+    )
+    assert_that([row.embedding_error for row in rows]).is_equal_to(
+        [None, error, None],
+    )
+    assert_that([row.is_null for row in rows]).is_equal_to([False, True, False])
