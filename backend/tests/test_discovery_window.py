@@ -643,7 +643,7 @@ def test_each_episode_is_matched_against_the_catalog_once(
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
-    # Two unknown episodes, each tried by listing URL and then by number.
+    # Two unknown episodes, each tried by number and then by listing URL.
     assert_that(statements).is_length(4)
 
 

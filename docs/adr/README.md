@@ -24,6 +24,7 @@ the changelog record _what_ changed.
 | [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | proposed | 2026-11-16 |
 | [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | proposed | 2026-11-16 |
 | [0016](./0016-podscripts-listing-cursor.md)             | Catalog as the podscripts listing cursor after a complete walk  | proposed | 2026-11-17 |
+| [0018](./0018-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | proposed | 2026-11-17 |
 
 ## Format
 
