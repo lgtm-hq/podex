@@ -1,3 +1,3 @@
 """Podex backend package."""
 
-__version__ = "0.41.48"
+__version__ = "0.41.49"
