@@ -287,22 +287,25 @@ def test_concurrent_move_without_the_episode_lock_fails(
         _stale_copy_race(postgres)
 
 
-def _hold_podcast_for_edit(db: Session, *, podcast_id: int) -> int:
-    """Lock a podcast row in the mode an operator's update takes, and hold it.
-
-    ``FOR NO KEY UPDATE`` is what an ``UPDATE`` of the row takes; locking
-    without updating lets the waiter show the tuple lock the race helper
-    observes.
+def _edit_podcast(db: Session, *, podcast_id: int) -> int:
+    """Update a podcast row as an operator edit does, without committing.
 
     Returns:
         The podcast id.
     """
-    db.execute(
-        select(Podcast.id)
-        .where(Podcast.id == podcast_id)
-        .with_for_update(key_share=True),
-    ).one()
+    db.get_one(Podcast, podcast_id).name = "Renamed"
+    db.flush()
     return podcast_id
+
+
+# The moving flush's own foreign-key check already holds the joined podcast
+# row FOR KEY SHARE, so PostgreSQL makes its later FOR SHARE wait on the
+# blocking transaction without a tuple lock. The statement and the blocker
+# still identify the guard's lock.
+_JOINED_PODCAST_WAITS = ExpectedWait(
+    statement_patterns=(r"\bFROM podcasts\b", r"\bFOR SHARE OF podcasts\b"),
+    row_lock_table=None,
+)
 
 
 def _move_with_mention(db: Session, *, shows: _Shows) -> int:
@@ -332,9 +335,9 @@ def test_moved_episode_locks_the_podcast_it_joins_after_the_write(
 
     _, mention_id = run_overlapping(
         postgres,
-        first=partial(_hold_podcast_for_edit, podcast_id=shows.other),
+        first=partial(_edit_podcast, podcast_id=shows.other),
         second=partial(_move_with_mention, shows=shows),
-        expected=_MOVE_WAITS,
+        expected=_JOINED_PODCAST_WAITS,
     )
 
     assert_that(mention_id).is_positive()
