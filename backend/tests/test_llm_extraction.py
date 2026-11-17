@@ -143,7 +143,6 @@ def test_cleaner_applies_corrections_and_context() -> None:
     """Cleanup parses corrections and forwards podcast context."""
     payload = json.dumps(
         {
-            "cleaned_text": "fixed transcript",
             "corrections": [
                 {"original": "alot", "corrected": "a lot", "reason": "boundary"},
             ],
@@ -152,14 +151,14 @@ def test_cleaner_applies_corrections_and_context() -> None:
     client = _fake_client(text=payload)
 
     result = TranscriptCleaner(client=client).cleanup_transcript(
-        _LONG_TEXT,
+        _LONG_TEXT + "alot",
         podcast_name="Example Show",
         host_name="Host Example",
         guest_name="Guest Example",
         terminology=["podex"],
     )
 
-    assert_that(result.cleaned_text).is_equal_to("fixed transcript")
+    assert_that(result.cleaned_text).is_equal_to(_LONG_TEXT + "a lot")
     assert_that(result.correction_count).is_equal_to(1)
     sent = client.messages.calls[0]
     assert_that(sent["system"]).is_equal_to(DEFAULT_CLEANUP_SYSTEM_PROMPT)

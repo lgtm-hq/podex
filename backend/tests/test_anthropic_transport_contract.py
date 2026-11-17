@@ -28,7 +28,10 @@ import pytest
 from assertpy import assert_that
 
 from podex.services.llm_extraction import LLMExtractor
-from podex.services.llm_transcript_cleanup import TranscriptCleaner
+from podex.services.llm_transcript_cleanup import (
+    CorrectionRejection,
+    TranscriptCleaner,
+)
 
 _API_KEY = "test-key-not-a-credential"
 _MESSAGES_URL = "https://api.anthropic.com/v1/messages"
@@ -52,11 +55,12 @@ _EXTRACTION_SYSTEM_ANCHORS = (
     "Return ONLY a valid JSON array.",
 )
 _CLEANUP_SYSTEM_SHA256 = (
-    "c50aa63b22cf6ced6fb0771b3bd5b41ed63c19583dd8fecd9d211a7233ef2c34"
+    "76c67abbbdf6f9897765c7069382525e2b4c2ba0498950d5ea047e60cac036ae"
 )
 _CLEANUP_SYSTEM_ANCHORS = (
     "DO NOT:",
-    "Only include corrections that were actually made.",
+    "Do not return the transcript itself.",
+    '"original" must occur exactly once in the transcript.',
     "untrusted third-party data",
 )
 _CLEANUP_USER_MESSAGE = (
@@ -69,8 +73,8 @@ _CLEANUP_USER_MESSAGE = (
     "TRANSCRIPT TO CLEAN:\n"
     f"<transcript>\n{_TRANSCRIPT}\n</transcript>\n"
     "\n"
-    "Please analyze the transcript and fix any transcription errors. "
-    "Return as JSON."
+    "Please list corrections for any transcription errors in the "
+    "transcript. Return as JSON."
 )
 
 Handler = Callable[[httpx2.Request], httpx2.Response]
@@ -276,9 +280,8 @@ def test_cleanup_sends_messages_request_and_decodes_corrections() -> None:
     """The cleaner's request and response pass through the real SDK."""
     payload = json.dumps(
         {
-            "cleaned_text": "a cleaned transcript",
             "corrections": [
-                {"original": "alot", "corrected": "a lot", "reason": "spelling"},
+                {"original": "word ", "corrected": "Word ", "reason": "ambiguous"},
             ],
         },
     )
@@ -295,8 +298,8 @@ def test_cleanup_sends_messages_request_and_decodes_corrections() -> None:
     )
 
     assert_that(result.errors).is_empty()
-    assert_that(result.cleaned_text).is_equal_to("a cleaned transcript")
-    assert_that(result.corrections_made[0].corrected).is_equal_to("a lot")
+    assert_that(result.cleaned_text).is_equal_to(_TRANSCRIPT)
+    assert_that(result.rejections).is_equal_to({CorrectionRejection.AMBIGUOUS: 1})
     assert_that(provider.requests).is_length(1)
     _assert_messages_request(provider.requests[0])
     body = provider.bodies()[0]

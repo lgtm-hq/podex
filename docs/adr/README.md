@@ -6,27 +6,28 @@ the changelog record _what_ changed.
 
 ## Index
 
-| Number                                                  | Title                                                           | Status   | Date       |
-| ------------------------------------------------------- | --------------------------------------------------------------- | -------- | ---------- |
-| [0001](./0001-nested-settings-models.md)                | Nested settings models with hard cutover                        | accepted | 2026-07-20 |
-| [0002](./0002-enrichment-provider-registry.md)          | Enrichment provider registry                                    | accepted | 2026-07-21 |
-| [0003](./0003-bounded-public-feed-http.md)              | Bounded public feed HTTP boundary                               | proposed | 2026-11-14 |
-| [0004](./0004-keyset-sweep-checkpoints.md)              | Keyset checkpoints for recurring batched sweeps                 | proposed | 2026-11-14 |
-| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source             | proposed | 2026-11-14 |
-| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction | proposed | 2026-11-14 |
-| [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test          | proposed | 2026-11-14 |
-| [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text      | proposed | 2026-11-14 |
-| [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |
-| [0010](./0010-third-party-sdk-log-boundary.md)          | Third-party log records are allowlisted by form                 | accepted | 2026-11-16 |
-| [0011](./0011-safe-startup-configuration-errors.md)     | Start-up errors carry no credential                             | accepted | 2026-11-16 |
-| [0012](./0012-main-validation-per-commit.md)            | Every main commit keeps its own validation run                  | accepted | 2026-11-16 |
-| [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | accepted | 2026-11-16 |
-| [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | accepted | 2026-11-16 |
-| [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | accepted | 2026-11-16 |
-| [0016](./0016-podscripts-listing-cursor.md)             | Catalog as the podscripts listing cursor after a complete walk  | accepted | 2026-11-17 |
-| [0017](./0017-suppression-identity-changes.md)          | Moves and deletes that would lift a suppression are refused     | proposed | 2026-11-17 |
-| [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | accepted | 2026-11-17 |
-| [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | accepted | 2026-11-17 |
+| Number                                                   | Title                                                            | Status   | Date       |
+| -------------------------------------------------------- | ---------------------------------------------------------------- | -------- | ---------- |
+| [0001](./0001-nested-settings-models.md)                 | Nested settings models with hard cutover                         | accepted | 2026-07-20 |
+| [0002](./0002-enrichment-provider-registry.md)           | Enrichment provider registry                                     | accepted | 2026-07-21 |
+| [0003](./0003-bounded-public-feed-http.md)               | Bounded public feed HTTP boundary                                | proposed | 2026-11-14 |
+| [0004](./0004-keyset-sweep-checkpoints.md)               | Keyset checkpoints for recurring batched sweeps                  | proposed | 2026-11-14 |
+| [0005](./0005-verified-transcript-purge-proof.md)        | Transcript purge proof identifies a verified source              | proposed | 2026-11-14 |
+| [0006](./0006-transcript-bound-retention-confidence.md)  | Retention confidence comes from the transcript's own extraction  | proposed | 2026-11-14 |
+| [0007](./0007-postgres-test-lane.md)                     | PostgreSQL test lane with a migrated database per test           | proposed | 2026-11-14 |
+| [0008](./0008-masked-secret-settings.md)                 | Secret settings are masked types; reports redact free text       | proposed | 2026-11-14 |
+| [0009](./0009-ingestion-failure-descriptors.md)          | Persist allowlisted ingestion failure descriptors                | proposed | 2026-11-14 |
+| [0010](./0010-third-party-sdk-log-boundary.md)           | Third-party log records are allowlisted by form                  | accepted | 2026-11-16 |
+| [0011](./0011-safe-startup-configuration-errors.md)      | Start-up errors carry no credential                              | accepted | 2026-11-16 |
+| [0012](./0012-main-validation-per-commit.md)             | Every main commit keeps its own validation run                   | accepted | 2026-11-16 |
+| [0013](./0013-safe-first-use-setting-failures.md)        | First-use setting failures carry no configured value             | accepted | 2026-11-16 |
+| [0014](./0014-partial-transcript-cleanup-keeps-tail.md)  | Partial transcript cleanup keeps the uncleaned tail              | accepted | 2026-11-16 |
+| [0015](./0015-durable-takedown-suppression.md)           | Takedowns leave a durable suppression checked on every write     | accepted | 2026-11-16 |
+| [0016](./0016-podscripts-listing-cursor.md)              | Catalog as the podscripts listing cursor after a complete walk   | accepted | 2026-11-17 |
+| [0017](./0017-suppression-identity-changes.md)           | Moves and deletes that would lift a suppression are refused      | proposed | 2026-11-17 |
+| [0018](./0018-embedding-failure-state.md)                | Failed embeddings keep no vector; provider errors are failures   | accepted | 2026-11-17 |
+| [0019](./0019-episode-identity-precedence.md)            | Precedence of episode identity evidence in discovery             | accepted | 2026-11-17 |
+| [0021](./0021-transcript-cleanup-applies-corrections.md) | Transcript cleanup applies the model's corrections, not its text | proposed | 2026-11-17 |
 
 ## Format
 
