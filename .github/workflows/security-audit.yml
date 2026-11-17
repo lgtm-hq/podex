@@ -32,7 +32,7 @@ jobs:
     with:
       job-name: "🔐 Security Audit"
       # yamllint disable-line rule:line-length
-      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.181.2@sha256:092387678fe6fc843da688dc16c3e6d38a2635dd51b8fbb02f8414fa2d5a9594
+      lintro-image: ghcr.io/lgtm-hq/py-lintro:0.181.3@sha256:20c7c6666d0a8ccd53c304958bdb070883d96bbdaf31ceba6436d0e6a49bb57b
       upload-comment-artifact: ${{ github.event_name == 'pull_request' }}
       egress-policy: block
       egress-preset: quality

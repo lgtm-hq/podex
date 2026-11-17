@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "podex"
-version = "0.41.40"
+version = "0.41.42"
 description = "Podex backend — podcast media-index API and ingestion pipeline."
 requires-python = ">=3.11.5"
 license = "AGPL-3.0-only"
@@ -55,7 +55,7 @@ dev = [
   "assertpy>=1.1",
   "fakeredis[lua]>=2.26",
   "httpx>=0.28",
-  "lintro==0.181.2",
+  "lintro==0.181.3",
   "mypy>=1.14",
   # Match CI and local framework inference to the same Pylint/Astroid release.
   "pylint==4.1.4",

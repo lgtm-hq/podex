@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any
@@ -10,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.types import TypeDecorator
+from sqlalchemy.types import TypeDecorator, TypeEngine, UserDefinedType
 
 from podex.models.base import Base
 
@@ -19,6 +20,69 @@ if TYPE_CHECKING:
 
     from podex.models.episode import Episode
     from podex.models.transcript import Transcript
+
+
+def _checked_dimensions(dimensions: object) -> int:
+    """Return ``dimensions`` if it is a positive integer.
+
+    Args:
+        dimensions: Requested vector dimension.
+
+    Returns:
+        The validated dimension.
+
+    Raises:
+        TypeError: If ``dimensions`` is not an integer (``bool`` included).
+        ValueError: If ``dimensions`` is not positive.
+    """
+    if isinstance(dimensions, bool) or not isinstance(dimensions, int):
+        raise TypeError(
+            f"vector dimensions must be an integer, got {type(dimensions).__name__}",
+        )
+    if dimensions <= 0:
+        raise ValueError(f"vector dimensions must be positive, got {dimensions}")
+    return dimensions
+
+
+class PostgresVectorBind(UserDefinedType[list[float] | None]):
+    """PostgreSQL implementation type of ``PgVectorType``.
+
+    ``render_bind_cast`` makes the psycopg dialect, which renders a cast on
+    every bound parameter, write ``%(name)s::vector(N)`` instead of the
+    ``::VARCHAR`` it would render for the ``Text`` implementation, which
+    PostgreSQL refuses to assign to a ``vector`` column. ``None`` therefore
+    binds as ``NULL::vector(N)``. The value itself stays pgvector's text form.
+    """
+
+    cache_ok = True
+    render_bind_cast = True
+    # TypeEngine refuses COLLATE by raising NotImplementedError, which reads as
+    # an abstract method; vectors keep that refusal unchanged.
+    _with_collation = UserDefinedType._with_collation
+
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = _checked_dimensions(dimensions)
+
+    def get_col_spec(self, **_kwargs: Any) -> str:
+        """Return the pgvector type with this column's dimension."""
+        return f"vector({self.dimensions})"
+
+    def literal_processor(self, _dialect: Dialect) -> Callable[[str], str]:
+        """Render a serialized vector as a quoted literal cast to this type.
+
+        Args:
+            _dialect: SQLAlchemy dialect rendering the literal.
+
+        Returns:
+            Function turning pgvector text into a ``'...'::vector(N)`` literal.
+        """
+        spec = self.get_col_spec()
+
+        def process(value: str) -> str:
+            escaped = value.replace("'", "''")
+            return f"'{escaped}'::{spec}"
+
+        return process
 
 
 # SQLAlchemy uses process_bind_param for literal fallback when this optional
@@ -36,7 +100,20 @@ class PgVectorType(TypeDecorator[list[float] | None]):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.dimensions = dimensions
+        self.dimensions = _checked_dimensions(dimensions)
+
+    def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
+        """Bind as pgvector on PostgreSQL and as text everywhere else.
+
+        Args:
+            dialect: SQLAlchemy dialect the type is used with.
+
+        Returns:
+            The implementation type for ``dialect``.
+        """
+        if dialect.name == "postgresql":
+            return PostgresVectorBind(self.dimensions)
+        return super().load_dialect_impl(dialect)
 
     def process_bind_param(
         self,
@@ -69,6 +146,9 @@ class PgVectorType(TypeDecorator[list[float] | None]):
 
         Returns:
             Embedding vector as floats, or ``None``.
+
+        Raises:
+            TypeError: If the driver returned neither text, a list nor ``None``.
         """
         if value is None:
             return None
@@ -76,7 +156,10 @@ class PgVectorType(TypeDecorator[list[float] | None]):
             return [float(item) for item in value]
         if isinstance(value, str):
             return [float(item) for item in json.loads(value)]
-        return None
+        raise TypeError(
+            f"unexpected embedding value type from the database: "
+            f"{type(value).__name__}",
+        )
 
 
 def _compile_pgvector_type(

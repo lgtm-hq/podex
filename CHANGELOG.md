@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.42] - 2026-11-17
+
+### Fixed
+
+- **derivatives**: bind the embedding column so semantic chunks insert on PostgreSQL
+  (#878) (4800518)
+
+## [0.41.41] - 2026-11-17
+
+### Fixed
+
+- **takedowns**: keep suppression in force across rebuilds (#867) (33305f2)
+
 ## [0.41.40] - 2026-11-17
 
 ### Changed
