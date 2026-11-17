@@ -9,21 +9,26 @@ This module provides the DiscoveryOrchestrator class which:
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import fields, replace
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from podex.config import get_settings
 from podex.models import Episode
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveryProvider,
     DiscoveryResult,
-    KnownEpisodes,
-    published_after,
+    EpisodeListing,
+    ListingCursor,
+    ListingCursorProvider,
+    as_utc,
+    published_in_window,
 )
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
@@ -36,15 +41,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _utc_now() -> datetime:
+    """Return the current time in UTC."""
+    return datetime.now(UTC)
+
+
 class DiscoveryOrchestrator:
     """Coordinate discovery across multiple sources.
 
     Args:
         session: SQLAlchemy session for database operations
+        full_walk_interval: Longest gap between complete walks of a paged
+            listing; defaults to the discovery setting.
+        clock: Source of the current time.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(
+        self,
+        session: Session,
+        *,
+        full_walk_interval: timedelta | None = None,
+        clock: Callable[[], datetime] = _utc_now,
+    ) -> None:
         self.session = session
+        self._full_walk_interval = (
+            full_walk_interval
+            if full_walk_interval is not None
+            else timedelta(
+                hours=get_settings().discovery.podscripts_full_walk_interval_hours,
+            )
+        )
+        self._clock = clock
         self._sources: dict[str, DiscoveryProvider] = {
             "podscripts": PodscriptsDiscovery(),
             "rss": RSSDiscovery(),
@@ -58,33 +85,32 @@ class DiscoveryOrchestrator:
     ) -> DiscoveryResult:
         """Discover new episodes for a podcast from all configured sources.
 
-        Episodes dated at or before ``since`` are dropped once their date is
-        known, from any source or from the matching catalog episode.
+        Episodes dated before ``since`` are neither created nor returned once
+        their date is known, from any source or from the matching catalog
+        episode. Matching catalog rows are still enriched with missing fields.
 
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published after this date
+            since: Only discover episodes published at or after this date
 
         Returns:
             DiscoveryResult with counts and any errors
         """
         discovered: list[DiscoveredEpisode] = []
         errors: list[str] = []
+        started_at = self._clock()
+        listing = EpisodeListing()
 
         # Try each source that has configuration for this podcast
         if podcast.podscripts_slug:
             try:
-                source = self._sources["podscripts"]
-                if isinstance(source, PodscriptsDiscovery):
-                    eps = source.discover_episodes(
-                        podcast,
-                        since=since,
-                        known=self._known_episodes(podcast),
-                    )
-                else:
-                    eps = source.discover_episodes(podcast, since=since)
-                logger.info("Discovered %s episodes from podscripts.co", len(eps))
-                discovered.extend(eps)
+                listing = self._read_podscripts(podcast, since=since, now=started_at)
+                logger.info(
+                    "Discovered %s episodes from podscripts.co",
+                    len(listing.episodes),
+                )
+                discovered.extend(listing.episodes)
+                errors.extend(listing.errors)
             # Keep other providers and tasks running after this failure.
             # pylint: disable-next=broad-exception-caught
             except Exception as e:
@@ -121,54 +147,75 @@ class DiscoveryOrchestrator:
         # Deduplicate and merge
         merged = self._deduplicate_episodes(discovered)
         logger.info("After deduplication: %s unique episodes", len(merged))
-        if since is not None:
-            merged = [
-                episode
-                for episode in merged
-                if self._within_window(podcast, episode, since)
-            ]
-            logger.info("Inside the requested window: %s episodes", len(merged))
 
         # Create/update episode records
-        new_count, updated_count = self._upsert_episodes(podcast, merged)
+        in_window, new_count, updated_count = self._store_episodes(
+            podcast,
+            merged,
+            since=since,
+            listing_walked_at=started_at if listing.complete else None,
+        )
 
         return DiscoveryResult(
             new_episodes=new_count,
             updated_episodes=updated_count,
             total_discovered=len(discovered),
             errors=errors,
-            discovered_episodes=merged,
+            discovered_episodes=in_window,
         )
 
-    def _known_episodes(self, podcast: Podcast) -> KnownEpisodes:
-        """Return the identifiers of the catalog's episodes for ``podcast``."""
-        rows = self.session.execute(
-            select(Episode.episode_url, Episode.episode_number).where(
-                Episode.podcast_id == podcast.id,
-            ),
-        ).all()
-        return KnownEpisodes(
-            episode_urls=frozenset(url for url, _ in rows if url),
-            episode_numbers=frozenset(number for _, number in rows if number),
-        )
-
-    def _within_window(
+    def _read_podscripts(
         self,
         podcast: Podcast,
-        discovered: DiscoveredEpisode,
-        since: datetime,
-    ) -> bool:
-        """Return whether an episode is published after ``since``.
+        *,
+        since: datetime | None,
+        now: datetime,
+    ) -> EpisodeListing:
+        """Read the podscripts source, through its listing capability if offered."""
+        source = self._sources["podscripts"]
+        if isinstance(source, ListingCursorProvider):
+            listing: EpisodeListing = source.discover_listing(
+                podcast,
+                cursor=self._listing_cursor(podcast, now=now),
+            )
+            return listing
+        return EpisodeListing(episodes=source.discover_episodes(podcast, since=since))
 
-        An undated discovery takes the date of the catalog episode it matches;
-        one with no date anywhere is kept.
+    def _listing_cursor(
+        self,
+        podcast: Podcast,
+        *,
+        now: datetime,
+    ) -> ListingCursor | None:
+        """Return the cursor for a paged listing, or None to read it all.
+
+        The catalog serves as the cursor only after a complete walk has been
+        recorded, and only until that walk is older than the full-walk
+        interval. The cursor holds this podcast's stored episode URLs.
         """
-        published_at = discovered.published_at
-        if published_at is None:
-            existing = self._find_existing_episode(podcast, discovered)
-            published_at = existing.published_at if existing else None
-        inside: bool = published_after(published_at, since)
-        return inside
+        walked_at = podcast.podscripts_listing_walked_at
+        if walked_at is None:
+            logger.info(
+                "Reading the whole podscripts.co listing for %s: "
+                "no complete walk is recorded",
+                podcast.slug,
+            )
+            return None
+        if as_utc(walked_at) + self._full_walk_interval <= now:
+            logger.info(
+                "Reading the whole podscripts.co listing for %s: "
+                "the last complete walk is older than %s",
+                podcast.slug,
+                self._full_walk_interval,
+            )
+            return None
+        urls = self.session.scalars(
+            select(Episode.episode_url).where(
+                Episode.podcast_id == podcast.id,
+                Episode.episode_url.is_not(None),
+            ),
+        ).all()
+        return ListingCursor(known_episode_urls=frozenset(url for url in urls if url))
 
     def _deduplicate_episodes(
         self,
@@ -294,25 +341,54 @@ class DiscoveryOrchestrator:
         Returns:
             Tuple of (new_count, updated_count)
         """
+        _, new_count, updated_count = self._store_episodes(podcast, episodes)
+        return new_count, updated_count
+
+    def _store_episodes(
+        self,
+        podcast: Podcast,
+        episodes: list[DiscoveredEpisode],
+        *,
+        since: datetime | None = None,
+        listing_walked_at: datetime | None = None,
+    ) -> tuple[list[DiscoveredEpisode], int, int]:
+        """Create or update episodes in the database, inside the ``since`` window.
+
+        Each episode is matched against the catalog once. An undated episode
+        takes the date of the catalog row it matches for the ``since`` window.
+        Episodes outside the window are not created or returned, but a
+        matching catalog row is still enriched with fields it lacks.
+
+        Returns:
+            Tuple of (episodes inside the window, new_count, updated_count)
+        """
+        in_window: list[DiscoveredEpisode] = []
         new_count = 0
         updated_count = 0
 
         for discovered in episodes:
-            # Try to find existing episode
             existing = self._find_existing_episode(podcast, discovered)
+            published_at = discovered.published_at
+            if published_at is None and existing is not None:
+                published_at = existing.published_at
+            inside = published_in_window(published_at, since)
 
-            if existing:
-                # Update existing episode
-                updated = self._update_episode(existing, discovered)
-                if updated:
+            if existing is not None:
+                if self._update_episode(existing, discovered):
                     updated_count += 1
-            else:
-                # Create new episode
+            elif inside:
                 self._create_episode(podcast, discovered)
                 new_count += 1
 
+            if inside:
+                in_window.append(discovered)
+
+        if listing_walked_at is not None:
+            # Recorded only once every episode of the complete walk is stored,
+            # and committed with them.
+            podcast.podscripts_listing_walked_at = listing_walked_at
         self.session.commit()
-        return new_count, updated_count
+        return in_window, new_count, updated_count
 
     def _find_existing_episode(
         self,

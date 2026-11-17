@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from podex.models import Podcast
@@ -113,9 +113,9 @@ class DiscoveryProvider(Protocol):
 
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published strictly after this
-                date. Episodes without a publication date are kept, since
-                nothing shows them to be older (see ``published_after``).
+            since: Only discover episodes published at or after this date.
+                Episodes without a publication date are kept, since nothing
+                shows them to be older (see ``published_in_window``).
 
         Returns:
             List of discovered episodes
@@ -124,60 +124,80 @@ class DiscoveryProvider(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
-class KnownEpisodes:
-    """Identifiers of the episodes the catalog already holds for one podcast.
+class ListingCursor:
+    """Catalog state that lets a listing walk stop before the listing ends.
 
-    An episode counts as known when it would match an existing catalog row by
-    the identifiers a listing carries: its episode URL or its episode number.
+    Only listing URLs count: an episode is known when the catalog already
+    stores its listing URL for this podcast. A number-only match is not
+    evidence that the catalog holds that listing entry.
     """
 
-    episode_urls: frozenset[str] = frozenset()
-    episode_numbers: frozenset[int] = frozenset()
+    known_episode_urls: frozenset[str]
 
-    @property
-    def is_empty(self) -> bool:
-        """Return whether the catalog holds no identifiable episode."""
-        return not self.episode_urls and not self.episode_numbers
 
-    def includes(self, episode: DiscoveredEpisode) -> bool:
-        """Return whether ``episode`` is already in the catalog.
+@dataclass(slots=True)
+class EpisodeListing:
+    """Episodes read from one provider listing, and how the walk ended.
+
+    Attributes:
+        episodes: Episodes read, in listing order.
+        errors: Failure descriptors for pages that could not be read.
+        complete: True only when the walk reached the listing's real end
+            (an empty page) without a failed page and without stopping early.
+    """
+
+    episodes: list[DiscoveredEpisode] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    complete: bool = False
+
+
+@runtime_checkable
+class ListingCursorProvider(Protocol):
+    """Optional discovery capability: a paged listing that can use a cursor."""
+
+    def discover_listing(
+        self,
+        podcast: Podcast,
+        *,
+        cursor: ListingCursor | None = None,
+    ) -> EpisodeListing:
+        """Walk the podcast's listing, stopping early only through ``cursor``.
 
         Args:
-            episode: A discovered episode.
+            podcast: The podcast to discover episodes for.
+            cursor: Catalog state allowing an early stop, or None to walk the
+                whole listing.
 
         Returns:
-            True when its URL or episode number is already known.
+            The episodes read, page failures, and whether the walk completed.
         """
-        if episode.episode_url and episode.episode_url in self.episode_urls:
-            return True
-        return bool(
-            episode.episode_number and episode.episode_number in self.episode_numbers,
-        )
+        ...
 
 
-def published_after(
+def published_in_window(
     published_at: datetime | None,
     since: datetime | None,
 ) -> bool:
     """Return whether an episode falls inside a ``since`` discovery window.
 
-    The window is strictly after ``since``: an episode dated exactly at the
-    cut-off is outside it. Undated episodes are inside it, since nothing shows
-    them to be older. Naive datetimes are read as UTC.
+    The window is at or after ``since``: an episode dated exactly at the
+    cut-off is inside it, so a day-granular date at midnight UTC is not lost.
+    Undated episodes are inside it, since nothing shows them to be older.
+    Naive datetimes are read as UTC.
 
     Args:
         published_at: The episode's publication time, when known.
-        since: The window's exclusive lower bound, or None for no bound.
+        since: The window's inclusive lower bound, or None for no bound.
 
     Returns:
         True when the episode belongs in the window.
     """
     if since is None or published_at is None:
         return True
-    return _as_utc(published_at) > _as_utc(since)
+    return as_utc(published_at) >= as_utc(since)
 
 
-def _as_utc(value: datetime) -> datetime:
+def as_utc(value: datetime) -> datetime:
     """Return ``value`` with UTC attached when it carries no timezone."""
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 

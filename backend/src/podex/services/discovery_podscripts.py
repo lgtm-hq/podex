@@ -20,7 +20,8 @@ from bs4 import BeautifulSoup, Tag
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
-    KnownEpisodes,
+    EpisodeListing,
+    ListingCursor,
 )
 from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.podscripts_client import (
@@ -37,6 +38,9 @@ logger = logging.getLogger(__name__)
 
 MAX_LISTING_PAGES = 200
 """Most listing pages one discovery run requests for one podcast."""
+
+MIN_FALLING_PAIRS = 2
+"""Falling episode-number pairs needed, with no rise, to call a listing newest first."""
 
 
 def _html_attr_to_str(value: object) -> str:
@@ -64,11 +68,12 @@ class _ListingOrder:
 
     Listing pages carry no publication dates, so the episode numbers in the
     links are the only evidence of order. The order counts as newest first
-    only once numbers have been seen falling and never rising.
+    only after ``MIN_FALLING_PAIRS`` consecutive numbered episodes have been
+    seen falling and none rising, anywhere in the pages read so far.
     """
 
     previous: int | None = None
-    falling: bool = False
+    falling_pairs: int = 0
     rising: bool = False
 
     def observe(self, episodes: Iterable[DiscoveredEpisode]) -> None:
@@ -78,7 +83,7 @@ class _ListingOrder:
             if number is None:
                 continue
             if self.previous is not None and number < self.previous:
-                self.falling = True
+                self.falling_pairs += 1
             elif self.previous is not None and number > self.previous:
                 self.rising = True
             self.previous = number
@@ -86,7 +91,7 @@ class _ListingOrder:
     @property
     def newest_first(self) -> bool:
         """Return whether the listing is shown to be newest first."""
-        return self.falling and not self.rising
+        return self.falling_pairs >= MIN_FALLING_PAIRS and not self.rising
 
 
 class PodscriptsDiscovery:
@@ -178,100 +183,126 @@ class PodscriptsDiscovery:
         self,
         podcast: Podcast,
         since: datetime | None = None,
-        *,
-        known: KnownEpisodes | None = None,
     ) -> list[DiscoveredEpisode]:
         """Discover episodes for a podcast from podscripts.co.
 
         All discovered episodes have has_transcript=True since
-        podscripts.co only lists episodes with transcripts.
-
-        Listing pages carry no publication dates, so this provider cannot
-        apply ``since`` itself; the caller applies it once a date is known.
-        Paging instead stops at the first page whose episodes are all
-        ``known``, provided the listing is shown to be newest first. When the
-        order cannot be shown, every page is read, up to
-        ``MAX_LISTING_PAGES``.
+        podscripts.co only lists episodes with transcripts. The whole listing
+        is read; a page that cannot be fetched ends the walk and is logged.
 
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published after this date. Unused
-                here: listing pages carry no dates.
-            known: Episodes the catalog already holds for this podcast.
+            since: Only discover episodes published at or after this date.
+                Unused here: listing pages carry no dates, so the caller
+                applies it once a date is known.
 
         Returns:
             List of discovered episodes
         """
         del since  # Listing pages carry no dates; the caller filters by date.
-        if not podcast.podscripts_slug:
-            logger.warning("Podcast %s has no podscripts_slug", podcast.slug)
-            return []
+        episodes: list[DiscoveredEpisode] = self.discover_listing(podcast).episodes
+        return episodes
 
-        if known is None:
-            known = KnownEpisodes()
+    def discover_listing(
+        self,
+        podcast: Podcast,
+        *,
+        cursor: ListingCursor | None = None,
+    ) -> EpisodeListing:
+        """Walk the podcast's podscripts.co listing page by page.
+
+        Without a cursor every page is read until an empty page ends the
+        listing, up to ``MAX_LISTING_PAGES``. With a cursor, paging stops at
+        the first page whose listing URLs are all known, provided the listing
+        is shown to be newest first. A page that cannot be fetched ends the
+        walk, is reported in ``errors`` and leaves the walk incomplete.
+
+        Args:
+            podcast: The podcast to discover episodes for.
+            cursor: Listing URLs the catalog already holds, or None to read
+                the whole listing.
+
+        Returns:
+            The episodes read, page failures, and whether the walk completed.
+        """
+        listing = EpisodeListing()
+        slug = podcast.podscripts_slug
+        if not slug:
+            logger.warning("Podcast %s has no podscripts_slug", podcast.slug)
+            return listing
+
         order = _ListingOrder()
-        episodes: list[DiscoveredEpisode] = []
+        order_noted = False
 
         for page in range(1, MAX_LISTING_PAGES + 1):
-            page_episodes = self._fetch_episode_page(podcast.podscripts_slug, page)
-
-            if not page_episodes:
+            try:
+                page_episodes = self._fetch_episode_page(slug, page)
+            except httpx.HTTPError as e:
+                error = describe_failure("podscripts", e)
+                log_failure(logger, error, e, context=("episode_page", slug, page))
+                listing.errors.append(error)
                 break
 
-            episodes.extend(page_episodes)
+            if not page_episodes:
+                listing.complete = True
+                break
+
+            listing.episodes.extend(page_episodes)
             order.observe(page_episodes)
 
-            if known.is_empty or not all(map(known.includes, page_episodes)):
+            if cursor is None or any(
+                episode.episode_url not in cursor.known_episode_urls
+                for episode in page_episodes
+            ):
                 continue
             if order.newest_first:
                 logger.info(
                     "Stopped podscripts.co listing for %s at page %s: "
                     "every episode on it is already known",
-                    podcast.podscripts_slug,
+                    slug,
                     page,
                 )
                 break
+            if not order_noted:
+                order_noted = True
+                logger.info(
+                    "Read on past fully known page %s of podscripts.co listing "
+                    "for %s: its order is not shown to be newest first",
+                    page,
+                    slug,
+                )
         else:
             logger.warning(
-                "Stopped podscripts.co listing for %s at the %s-page limit "
-                "before the listing ended",
-                podcast.podscripts_slug,
+                "Stopped podscripts.co listing for %s at the %s-page limit; "
+                "any later pages were not requested",
+                slug,
                 MAX_LISTING_PAGES,
             )
 
-        if not known.is_empty and not order.newest_first:
-            logger.info(
-                "Read podscripts.co listing for %s without stopping early: "
-                "its order is not shown to be newest first",
-                podcast.podscripts_slug,
-            )
-
-        logger.info("Discovered %s episodes from podscripts.co", len(episodes))
-        return episodes
+        logger.info(
+            "Discovered %s episodes from podscripts.co",
+            len(listing.episodes),
+        )
+        return listing
 
     def _fetch_episode_page(
         self,
         slug: str,
         page: int,
     ) -> list[DiscoveredEpisode]:
-        """Fetch a single page of episodes."""
+        """Fetch a single page of episodes.
+
+        Raises:
+            httpx.HTTPError: When the page cannot be fetched.
+        """
         url = f"{BASE_URL}/podcasts/{slug}?page={page}"
         logger.debug("Fetching page %s: %s", page, url)
 
-        try:
-            html = fetch_podscripts_html(
-                client=self.client,
-                url=url,
-                retry_delay_seconds=self.delay,
-            )
-        except httpx.HTTPError as e:
-            log_failure(
-                logger,
-                describe_failure("podscripts", e),
-                e,
-                context=("episode_page", slug, page),
-            )
-            return []
+        html = fetch_podscripts_html(
+            client=self.client,
+            url=url,
+            retry_delay_seconds=self.delay,
+        )
 
         soup = BeautifulSoup(html, "html.parser")
         episodes = []

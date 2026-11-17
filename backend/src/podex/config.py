@@ -382,6 +382,14 @@ class EnrichmentSettings(SettingsSection):
     )
 
 
+class DiscoverySettings(SettingsSection):
+    """Episode discovery cadence beyond the scheduler interval."""
+
+    # Discovery reads a podcast's whole podscripts listing at least this
+    # often, so episodes inserted below the newest known page are found.
+    podscripts_full_walk_interval_hours: int = Field(default=168, ge=1)
+
+
 class RetentionSettings(SettingsSection):
     """Environment opt-in for irreversible transcript deletion."""
 
@@ -419,6 +427,7 @@ class Settings(BaseSettings):
     )
     enrichment: EnrichmentSettings = Field(default_factory=EnrichmentSettings)
     retention: RetentionSettings = Field(default_factory=RetentionSettings)
+    discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
 
     # Ops console API. The ops surface stays disabled until a key is
     # configured by the deployment environment; requests must present it in

@@ -19,7 +19,7 @@ import feedparser
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
-    published_after,
+    published_in_window,
     slugify_podcast_name,
 )
 from podex.services.feed_http import FeedFetcher, FeedHttpClient
@@ -99,7 +99,7 @@ class RSSDiscovery:
 
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published after this date
+            since: Only discover episodes published at or after this date
 
         Returns:
             List of discovered episodes
@@ -121,7 +121,7 @@ class RSSDiscovery:
 
             if episode:
                 # Filter by date if specified
-                if not published_after(episode.published_at, since):
+                if not published_in_window(episode.published_at, since):
                     continue
 
                 episodes.append(episode)

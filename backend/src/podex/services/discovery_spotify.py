@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
-    published_after,
+    published_in_window,
     slugify_podcast_name,
 )
 from podex.services.failure_codes import FailureReason, PipelineFailure
@@ -145,7 +145,7 @@ class SpotifyDiscovery:
 
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published after this date
+            since: Only discover episodes published at or after this date
             limit: Maximum episodes per API call (Spotify max is 50)
 
         Returns:
@@ -198,10 +198,10 @@ class SpotifyDiscovery:
 
                 if episode:
                     # Filter by date if specified
-                    if not published_after(episode.published_at, since):
+                    if not published_in_window(episode.published_at, since):
                         # Spotify returns newest first, so we can stop
                         logger.debug(
-                            "Stopping at episode %s (not after %s)",
+                            "Stopping at episode %s (before %s)",
                             episode.title,
                             since,
                         )

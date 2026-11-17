@@ -13,7 +13,7 @@ from assertpy import assert_that
 
 from podex.models import Podcast
 from podex.services import discovery_podscripts
-from podex.services.discovery import KnownEpisodes
+from podex.services.discovery import ListingCursor
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 
 _LOGGER = discovery_podscripts.__name__
@@ -226,9 +226,13 @@ def _numbered(*numbers: int) -> list[str]:
     return [f"{number}-episode" for number in numbers]
 
 
-def _urls(*slugs: str) -> frozenset[str]:
-    """Return the episode URLs the catalog stores for ``slugs``."""
-    return frozenset(f"https://podscripts.co/podcasts/show/{slug}" for slug in slugs)
+def _cursor(*slugs: str) -> ListingCursor:
+    """Return a cursor whose catalog stores the listing URLs of ``slugs``."""
+    return ListingCursor(
+        known_episode_urls=frozenset(
+            f"https://podscripts.co/podcasts/show/{slug}" for slug in slugs
+        ),
+    )
 
 
 _NEWEST_FIRST = {
@@ -244,32 +248,25 @@ def _requested_pages(requested: list[str]) -> list[int]:
     return [int(path.rsplit("=", 1)[1]) for path in requested]
 
 
-@pytest.mark.parametrize(
-    "known",
-    [
-        KnownEpisodes(episode_urls=_urls(*_numbered(9, 8, 7, 6, 5))),
-        KnownEpisodes(episode_numbers=frozenset({9, 8, 7, 6, 5})),
-    ],
-    ids=["known-by-url", "known-by-number"],
-)
-def test_known_episodes_stop_paging_at_the_first_fully_known_page(
+def test_cursor_stops_a_newest_first_listing_at_the_first_fully_known_page(
     serve: Callable[[Route], PodscriptsDiscovery],
     caplog: pytest.LogCaptureFixture,
-    known: KnownEpisodes,
 ) -> None:
-    """A newest-first listing is read only up to the first page that is all known."""
+    """With a cursor, paging ends at the first page whose listing URLs are known."""
     requested: list[str] = []
     caplog.set_level(logging.INFO, logger=_LOGGER)
 
-    episodes = serve(_recorded(_pages(_NEWEST_FIRST), requested)).discover_episodes(
+    listing = serve(_recorded(_pages(_NEWEST_FIRST), requested)).discover_listing(
         _podcast(),
-        known=known,
+        cursor=_cursor(*_numbered(9, 8, 7, 6, 5)),
     )
 
     assert_that(_requested_pages(requested)).is_equal_to([1, 2, 3])
-    assert_that([episode.episode_number for episode in episodes]).is_equal_to(
+    assert_that([episode.episode_number for episode in listing.episodes]).is_equal_to(
         [12, 11, 10, 9, 8, 7],
     )
+    assert_that(listing.complete).is_false()
+    assert_that(listing.errors).is_empty()
     assert_that(_records(caplog, logging.INFO)).is_equal_to(
         [
             "Stopped podscripts.co listing for show at page 3: "
@@ -277,30 +274,24 @@ def test_known_episodes_stop_paging_at_the_first_fully_known_page(
             "Discovered 6 episodes from podscripts.co",
         ],
     )
-    assert_that(_records(caplog, logging.WARNING)).is_empty()
 
 
-@pytest.mark.parametrize(
-    "known",
-    [None, KnownEpisodes()],
-    ids=["no-known-argument", "empty-catalog"],
-)
-def test_first_run_reads_the_whole_listing(
+def test_walk_without_a_cursor_reads_to_the_end_and_is_complete(
     serve: Callable[[Route], PodscriptsDiscovery],
     caplog: pytest.LogCaptureFixture,
-    known: KnownEpisodes | None,
 ) -> None:
-    """With no known episodes every page is read until the listing ends."""
+    """Without a cursor every page is read until an empty page ends the listing."""
     requested: list[str] = []
     caplog.set_level(logging.INFO, logger=_LOGGER)
 
-    episodes = serve(_recorded(_pages(_NEWEST_FIRST), requested)).discover_episodes(
+    listing = serve(_recorded(_pages(_NEWEST_FIRST), requested)).discover_listing(
         _podcast(),
-        known=known,
     )
 
     assert_that(_requested_pages(requested)).is_equal_to([1, 2, 3, 4, 5])
-    assert_that(episodes).is_length(8)
+    assert_that(listing.episodes).is_length(8)
+    assert_that(listing.complete).is_true()
+    assert_that(listing.errors).is_empty()
     assert_that(_records(caplog, logging.INFO)).is_equal_to(
         ["Discovered 8 episodes from podscripts.co"],
     )
@@ -324,7 +315,7 @@ def test_first_run_reads_the_whole_listing(
                 2: _listing(*_numbered(5, 3)),
                 3: _listing(*_numbered(2, 1)),
             },
-            _numbered(5, 3, 2, 1),
+            _numbered(6, 4, 5, 3),
         ),
         (
             {
@@ -332,10 +323,27 @@ def test_first_run_reads_the_whole_listing(
                 2: _listing("finale", "special"),
                 3: _listing("recap", "trailer"),
             },
-            ["finale", "special", "recap", "trailer"],
+            ["pilot", "bonus", "finale", "special"],
+        ),
+        (
+            {
+                1: _listing(
+                    "pilot", "10-things-we-learned", "intro", "5-ways-to-start"
+                ),
+                2: _listing("bonus", "recap"),
+                3: _listing("new-guest", "trailer"),
+            },
+            [
+                "pilot",
+                "10-things-we-learned",
+                "intro",
+                "5-ways-to-start",
+                "bonus",
+                "recap",
+            ],
         ),
     ],
-    ids=["oldest-first", "mixed-order", "unnumbered"],
+    ids=["oldest-first", "mixed-order", "unnumbered", "one-falling-pair"],
 )
 def test_listing_not_shown_newest_first_is_read_in_full(
     serve: Callable[[Route], PodscriptsDiscovery],
@@ -343,52 +351,83 @@ def test_listing_not_shown_newest_first_is_read_in_full(
     pages: dict[int, str],
     known_slugs: list[str],
 ) -> None:
-    """A fully known page ends paging only when the listing is shown newest first."""
+    """Fully known pages end paging only on consistent newest-first evidence."""
     requested: list[str] = []
     caplog.set_level(logging.INFO, logger=_LOGGER)
 
-    episodes = serve(_recorded(_pages(pages), requested)).discover_episodes(
+    listing = serve(_recorded(_pages(pages), requested)).discover_listing(
         _podcast(),
-        known=KnownEpisodes(episode_urls=_urls(*known_slugs)),
+        cursor=_cursor(*known_slugs),
     )
 
     assert_that(_requested_pages(requested)).is_equal_to([1, 2, 3, 4])
-    assert_that(episodes).is_length(6)
-    assert_that(_records(caplog, logging.INFO)).is_equal_to(
-        [
-            "Read podscripts.co listing for show without stopping early: "
-            "its order is not shown to be newest first",
-            "Discovered 6 episodes from podscripts.co",
-        ],
+    assert_that(listing.complete).is_true()
+    assert_that(_records(caplog, logging.INFO)).contains(
+        "Read on past fully known page 1 of podscripts.co listing for show: "
+        "its order is not shown to be newest first",
     )
 
 
+@pytest.mark.parametrize("failing_page", [1, 3])
+def test_failed_page_is_an_error_and_leaves_the_walk_incomplete(
+    serve: Callable[[Route], PodscriptsDiscovery],
+    caplog: pytest.LogCaptureFixture,
+    failing_page: int,
+) -> None:
+    """A page that cannot be fetched is reported, never read as the listing's end."""
+    requested: list[str] = []
+    caplog.set_level(logging.INFO, logger=_LOGGER)
+
+    listing = serve(
+        _recorded(_pages(_NEWEST_FIRST, failing={failing_page: 404}), requested),
+    ).discover_listing(_podcast(), cursor=_cursor(*_numbered(6, 5)))
+
+    assert_that(_requested_pages(requested)).is_equal_to(
+        list(range(1, failing_page + 1)),
+    )
+    assert_that(listing.complete).is_false()
+    assert_that(listing.errors).is_equal_to(
+        ["podscripts: HTTPStatusError (HTTP 404); request_failed"],
+    )
+    assert_that(listing.episodes).is_length(2 * (failing_page - 1))
+    assert_that(
+        [message for message in _records(caplog, logging.INFO) if "Read on" in message],
+    ).is_empty()
+
+
+@pytest.mark.parametrize(
+    ("last_page", "expected_requests"),
+    [(None, [1, 2, 3]), (3, [1, 2, 3])],
+    ids=["listing-goes-on", "listing-has-exactly-the-limit"],
+)
 def test_page_limit_is_explicit_and_recorded_when_hit(
     serve: Callable[[Route], PodscriptsDiscovery],
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
+    last_page: int | None,
+    expected_requests: list[int],
 ) -> None:
-    """Paging stops at the page limit and logs a warning that the listing was cut."""
+    """At the page limit the walk stops, is incomplete, and says pages went unread."""
     monkeypatch.setattr(discovery_podscripts, "MAX_LISTING_PAGES", 3)
     requested: list[int] = []
     caplog.set_level(logging.INFO, logger=_LOGGER)
 
-    def endless(request: httpx.Request) -> httpx.Response:
+    def listing_pages(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params["page"])
         requested.append(page)
+        if last_page is not None and page > last_page:
+            return httpx.Response(200, text="")
         return httpx.Response(200, text=_listing(f"{1000 - page}-episode"))
 
-    episodes = serve(endless).discover_episodes(
-        _podcast(),
-        known=KnownEpisodes(episode_numbers=frozenset({1})),
-    )
+    listing = serve(listing_pages).discover_listing(_podcast())
 
-    assert_that(requested).is_equal_to([1, 2, 3])
-    assert_that(episodes).is_length(3)
+    assert_that(requested).is_equal_to(expected_requests)
+    assert_that(listing.episodes).is_length(3)
+    assert_that(listing.complete).is_false()
     assert_that(_records(caplog, logging.WARNING)).is_equal_to(
         [
-            "Stopped podscripts.co listing for show at the 3-page limit "
-            "before the listing ended",
+            "Stopped podscripts.co listing for show at the 3-page limit; "
+            "any later pages were not requested",
         ],
     )
 
