@@ -76,6 +76,12 @@ packages = ["src/podex"]
 testpaths = ["tests"]
 # pytester runs inner sessions for the PostgreSQL suite guards.
 addopts = ["--strict-markers", "--strict-config", "-p", "pytester"]
+# A test still running after this many seconds gets every thread's stack
+# dumped to stderr, so a hung CI job shows where it is stuck (#846). It only
+# prints: the test keeps running until it ends or the job's timeout-minutes in
+# .github/workflows/test-ci.yml stops it. The slowest test takes about 11 s;
+# keep this below every test job's limit.
+faulthandler_timeout = 300
 markers = [
   "postgres: needs PostgreSQL via PODEX_DATABASE__URL; skipped without it, failed with --require-postgres",
   "launches_pytest: starts an inner pytest run (tests/isolated_suite.py); refused inside an inner run",

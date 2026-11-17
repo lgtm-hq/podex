@@ -279,6 +279,39 @@ These are additive probes and smoke gates. Roll back by reverting this change or
 deploying the previous image digest; no production migration or backfill is
 added.
 
+## Test job time limits
+
+A backend test that blocks forever fails its job after a fixed limit, and the
+log shows where it is stuck (#846):
+
+- `test` (every Python version) and `test-coverage`: 20 minutes, through the
+  `timeout-minutes` input of the pinned reusable. Slowest observed runs: 268 and
+  283 seconds.
+- `test-postgres-migrations` and `test-postgres-application`: 30 minutes, as
+  job-level `timeout-minutes`. Slowest observed runs: 503 and 625 seconds.
+
+The observed figures are the slowest successful runs among 40 `CI - Tests` runs
+before the change. The PostgreSQL maxima include an `Install uv` step that
+stalled for about 450 seconds and then succeeded; without that stall the replay
+took at most 93 seconds and the application tests at most 234 seconds. The
+pinned `reusable-test-python.yml` (v0.98.3) applies its `timeout-minutes` input
+(default 60) to each per-version test job; its prepare and aggregate jobs keep
+their own 10-minute caps.
+
+`faulthandler_timeout = 300` in `backend/pyproject.toml` makes pytest dump the
+stack of every thread to the log when one test runs for more than 300 seconds
+(the slowest test takes about 11 seconds). It only prints: the test keeps
+running until the job limit stops it. Because it is pytest configuration, it
+applies to every pytest run in `backend/`, including both PostgreSQL scripts and
+local runs. The dump names the test file and function in its frames, so the
+cause is visible without reproducing the hang.
+
+A job stopped by its limit concludes `cancelled`; `evaluate-test-gate.sh` fails
+on `cancelled`, so `test-suite / 🧪 Test Suite` fails. There is no per-test
+limit and no retry. `backend/tests/test_ci_test_time_limits.py` fails if any of
+these limits is removed or `faulthandler_timeout` is not below every one of
+them.
+
 ## Concurrency for main commits
 
 GitHub keeps at most one running and one pending run per concurrency group. A
