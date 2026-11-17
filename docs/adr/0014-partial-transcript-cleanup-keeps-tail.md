@@ -2,7 +2,7 @@
 
 # 0014. Partial transcript cleanup keeps the uncleaned tail
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: ingestion, extraction, transcripts
 

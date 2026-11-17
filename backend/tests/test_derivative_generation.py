@@ -1,8 +1,10 @@
 """Tests for derivative generation orchestration."""
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from assertpy import assert_that
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -20,12 +22,14 @@ from podex.models import (
 )
 from podex.services.derivative_generation import (
     DerivativeGenerationConfig,
+    _episode_media,
     generate_episode_derivatives,
 )
 from podex.services.derivative_summaries import GeneratedSummaryData, SummarySourceData
 from podex.services.graph_relations import GraphTripleInputData
 from podex.services.semantic_chunks import SemanticChunkingPolicy
 from tests.conftest import create_jre_episode
+from tests.json_comparison import captured_statements, json_distinct_columns
 
 
 # This adapter implements one protocol operation; extra methods have no purpose.
@@ -169,3 +173,119 @@ def _create_episode_graph(
     )
     db_session.flush()
     return episode, transcript, media
+
+
+@dataclass
+class RecordingSummaryProvider:
+    """Summary provider that records each source it summarises, in order."""
+
+    model_name: str = "fake-summary-v1"
+    sources: list[tuple[str, int]] = field(default_factory=list)
+
+    def summarize(
+        self,
+        source: SummarySourceData,
+    ) -> GeneratedSummaryData:
+        """Record the source, then return stable text."""
+        self.sources.append((source.resource_kind, source.resource_id))
+        return FakeSummaryProvider().summarize(source)
+
+
+def media_with_json(title: str) -> Media:
+    """Return an unsaved book whose JSON columns hold values."""
+    return Media(
+        type=MediaType.BOOK.value,
+        title=title,
+        metadata_json={"source": "test"},
+        verification_sources=["test"],
+    )
+
+
+def test_json_distinct_columns_flags_distinct_media_rows() -> None:
+    """The PostgreSQL check names the JSON columns a whole-row DISTINCT compares."""
+    statement = select(Media).join(Mention, Mention.media_id == Media.id).distinct()
+
+    assert_that(json_distinct_columns(statement)).contains(
+        "media.metadata_json",
+        "media.verification_sources",
+    )
+
+
+def test_episode_media_query_compares_no_json_column_on_postgresql(
+    db_session: Session,
+) -> None:
+    """Listing an episode's media compiles to SQL PostgreSQL accepts."""
+    episode, first, second, _other = _create_repeated_mentions(db_session)
+
+    with captured_statements(db_session) as statements:
+        media = _episode_media(db=db_session, episode=episode)
+
+    assert_that([item.id for item in media]).is_equal_to([first.id, second.id])
+    assert_that(statements).is_not_empty()
+    for statement in statements:
+        assert_that(json_distinct_columns(statement)).is_empty()
+
+
+def test_generate_episode_derivatives_summarises_each_media_once_in_id_order(
+    db_session: Session,
+) -> None:
+    """Repeated mentions yield one media summary per record, in ascending id."""
+    episode, first, second, other = _create_repeated_mentions(db_session)
+    provider = RecordingSummaryProvider()
+
+    run = generate_episode_derivatives(
+        db=db_session,
+        episode=episode,
+        summary_provider=provider,
+    )
+    db_session.commit()
+
+    media_sources = [
+        resource_id for kind, resource_id in provider.sources if kind == "media"
+    ]
+    assert_that(media_sources).is_equal_to([first.id, second.id])
+    assert_that(run.status).is_equal_to(DerivativeGenerationRunStatus.COMPLETED.value)
+    assert_that(run.media_summaries_generated).is_equal_to(2)
+    summarised = [
+        media_id
+        for (media_id,) in db_session.query(MediaSummary.media_id)
+        .order_by(MediaSummary.media_id)
+        .all()
+    ]
+    assert_that(summarised).is_equal_to([first.id, second.id])
+    assert_that(summarised).does_not_contain(other.id)
+
+
+def _create_repeated_mentions(
+    db_session: Session,
+) -> tuple[Episode, Media, Media, Media]:
+    """Create an episode mentioning two media records several times each.
+
+    The record with the higher id is mentioned first, and a third record is
+    mentioned only in another episode. Every record carries JSON values.
+
+    Returns:
+        The episode, its two media records in ascending id, and the record
+        mentioned only elsewhere.
+    """
+    episode = create_jre_episode(db_session)
+    elsewhere = Episode(podcast_id=episode.podcast_id, title="JRE #2")
+    first, second, other = (
+        media_with_json(title) for title in ("Dune", "Foundation", "Hyperion")
+    )
+    db_session.add_all([elsewhere, first, second, other])
+    db_session.flush()
+    db_session.add_all(
+        [
+            Mention(episode_id=episode.id, media_id=media.id, context=context)
+            for media, context in (
+                (second, "Foundation comes up first."),
+                (first, "Then Dune."),
+                (second, "Foundation again."),
+                (first, "Dune again."),
+            )
+        ]
+        + [Mention(episode_id=elsewhere.id, media_id=other.id, context="Hyperion.")],
+    )
+    db_session.flush()
+    return episode, first, second, other

@@ -8,7 +8,7 @@ change what is checked or stored.
 """
 
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from operator import attrgetter
@@ -32,11 +32,16 @@ from podex.services.semantic_chunks import (
     SemanticChunkingPolicy,
     sync_semantic_chunks_for_transcript,
 )
+from tests.model_name_support import (
+    MODEL_COLUMN_LENGTH,
+    REJECTED_NAMES,
+    RaisingStripName,
+    UnreadableName,
+)
 from tests.sdk_log_support import logged, synthetic_secret
 from tests.semantic_chunk_support import create_transcript, sync_and_commit
 
 _INVALID_MODEL_NAME = "embedding: PipelineFailure; embedding_invalid_model_name"
-_MODEL_COLUMN_LENGTH = 120
 _COLUMN_VECTOR = [0.25] * EMBEDDING_DIMENSIONS
 _POLICY = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
 
@@ -48,47 +53,6 @@ _embedding_columns = attrgetter(
     "embedding_vector",
     "embedded_at",
 )
-
-
-class DisguisedName(str):
-    """A ``str`` whose length, stripped form and characters look harmless."""
-
-    __slots__ = ()
-
-    def strip(self, chars: str | None = None) -> str:
-        """Return a harmless name instead of the stored characters."""
-        return "disguised"
-
-    def __len__(self) -> int:
-        """Report a length within the column instead of the real one."""
-        return len("disguised")
-
-    def __iter__(self) -> Iterator[str]:
-        """Yield harmless characters instead of the stored ones."""
-        return iter("disguised")
-
-
-class RaisingStripName(str):
-    """A ``str`` whose ``strip`` raises."""
-
-    __slots__ = ()
-
-    def strip(self, chars: str | None = None) -> str:
-        """Fail as a hostile override would."""
-        raise RuntimeError("strip is not for callers")
-
-
-@dataclass(frozen=True, slots=True)
-class UnreadableName:
-    """A model name whose every attribute read raises, ``__class__`` included.
-
-    ``isinstance`` reads ``__class__`` of an object that is not a ``str``, so
-    checking this name's type runs code that raises.
-    """
-
-    def __getattribute__(self, name: str) -> object:
-        """Fail as a broken provider object would."""
-        raise OSError("model name unavailable")
 
 
 @dataclass(slots=True)
@@ -103,24 +67,6 @@ class UnreadableNameProvider:
         """Record the request and return storable vectors."""
         self.requests.append(texts)
         return [_COLUMN_VECTOR for _text in texts]
-
-
-# Model names the column cannot store, each built around a planted secret.
-_REJECTED_NAMES: dict[str, Callable[[str], object]] = {
-    "none": lambda _secret: None,
-    "list": lambda secret: [secret],
-    "bytes": lambda secret: secret.encode(),
-    "empty": lambda _secret: "",
-    "whitespace-only": lambda _secret: "   ",
-    "one-over-length": lambda secret: secret.ljust(_MODEL_COLUMN_LENGTH + 1, "m"),
-    "newline": lambda secret: f"{secret}\nmodel",
-    "escape": lambda secret: f"{secret}\x1b[0m",
-    "delete": lambda secret: f"{secret}\x7f",
-    "c1-control": lambda secret: f"{secret}\x85",
-    "nul": lambda secret: f"{secret}\x00",
-    "lone-surrogate": lambda secret: f"{secret}\ud800",
-    "disguised-subclass": lambda secret: DisguisedName(secret.ljust(200, "\x00")),
-}
 
 
 def _provider(model_name: object) -> Mock:
@@ -151,8 +97,8 @@ def _embedded_transcript(db_session: Session) -> Transcript:
 
 @pytest.mark.parametrize(
     "build",
-    _REJECTED_NAMES.values(),
-    ids=_REJECTED_NAMES.keys(),
+    REJECTED_NAMES.values(),
+    ids=REJECTED_NAMES.keys(),
 )
 def test_unstorable_model_name_is_refused_and_not_recorded(
     db_session: Session,
@@ -209,8 +155,8 @@ def test_unstorable_model_name_is_refused_and_not_recorded(
 @pytest.mark.parametrize(
     "model_name",
     [
-        "m" * _MODEL_COLUMN_LENGTH,
-        "é" * _MODEL_COLUMN_LENGTH,
+        "m" * MODEL_COLUMN_LENGTH,
+        "é" * MODEL_COLUMN_LENGTH,
         " spaced model ",
         # Format (ZWJ, soft hyphen), private-use and unassigned code points are
         # storable, so only control characters and lone surrogates are refused.

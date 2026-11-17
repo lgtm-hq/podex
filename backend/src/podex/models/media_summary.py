@@ -17,6 +17,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
 from podex.models.derivative_summary import DerivativeSummaryStatus
+from podex.models.model_name import MODEL_NAME_LENGTH
 
 if TYPE_CHECKING:
     from podex.models.media import Media
@@ -39,7 +40,10 @@ class MediaSummary(Base):
     pipeline_version: Mapped[str] = mapped_column(String(80), index=True)
     prompt_version: Mapped[str] = mapped_column(String(80), index=True)
     source_text_hash: Mapped[str] = mapped_column(String(64), index=True)
-    source_model: Mapped[str] = mapped_column(String(120), index=True)
+    source_model: Mapped[str] = mapped_column(
+        String(MODEL_NAME_LENGTH),
+        index=True,
+    )
     status: Mapped[str] = mapped_column(
         String(32),
         default=DerivativeSummaryStatus.READY.value,

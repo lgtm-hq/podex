@@ -2,7 +2,7 @@
 
 # 0010. Third-party log records are allowlisted by form
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: security, observability, logging
 
