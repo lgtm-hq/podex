@@ -16,6 +16,7 @@ from podex.models import (
     SemanticChunkEmbeddingStatus,
     Transcript,
 )
+from podex.services.content_suppression import authorize_episode_text
 from podex.services.failure_codes import FailureReason, PipelineFailure
 from podex.services.failure_descriptors import (
     describe_failure,
@@ -162,7 +163,13 @@ def sync_semantic_chunks_for_transcript(
 
     Returns:
         Summary of created, updated, deleted, and embedded chunks.
+
+    Raises:
+        ContentSuppressedError: If an approved takedown suppresses the
+            episode's derivatives; nothing is chunked or embedded. The check
+            holds the takedown lock until this transaction ends.
     """
+    authorize_episode_text(db=db, episode_ids=[transcript.episode_id])
     now = now or datetime.now(UTC)
     policy = policy or SemanticChunkingPolicy()
     candidates = build_semantic_chunk_candidates(

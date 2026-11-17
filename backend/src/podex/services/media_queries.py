@@ -12,6 +12,10 @@ from sqlalchemy.orm import Session
 
 from podex.database import fetch_page
 from podex.models import Media, MediaType, Mention
+from podex.services.content_suppression import (
+    count_published_mentions,
+    published_mentions,
+)
 
 
 def list_media(
@@ -95,8 +99,8 @@ def list_media_mentions(
     """
     if db.get(Media, media_id) is None:
         return None
-    statement = (
-        select(Mention).where(Mention.media_id == media_id).order_by(Mention.episode_id)
+    statement = published_mentions(Mention.media_id == media_id).order_by(
+        Mention.episode_id,
     )
     rows: list[Mention] = fetch_page(
         db=db, statement=statement, limit=limit, offset=offset
@@ -114,7 +118,5 @@ def count_media_mentions(db: Session, media_id: int) -> int:
     Returns:
         The mention count for the media item (0 when the item is unknown).
     """
-    statement = (
-        select(func.count()).select_from(Mention).where(Mention.media_id == media_id)
-    )
-    return int(db.execute(statement).scalar_one())
+    count: int = count_published_mentions(db, Mention.media_id == media_id)
+    return count

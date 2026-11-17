@@ -14,6 +14,10 @@ from podex.models import (
     Episode,
     Mention,
 )
+from podex.services.content_suppression import (
+    count_published_mentions,
+    published_mentions,
+)
 
 AlertTargetType = Literal["media", "podcast"]
 AlertEventType = Literal["new_mention", "new_episode"]
@@ -140,6 +144,11 @@ def evaluate_alert_rules(
                 rule_id=rule.id,
                 previous_count=rule.baseline_count,
                 observed_count=observed_count,
+                mention_ids_json=_reported_mention_ids(
+                    db=db,
+                    rule=rule,
+                    count=observed_count - rule.baseline_count,
+                ),
             )
             rule.baseline_count = observed_count
             db.add(event)
@@ -210,6 +219,28 @@ def _is_eligible_target(
     return False
 
 
+def _reported_mention_ids(
+    *,
+    db: Session,
+    rule: AccountAlertRule,
+    count: int,
+) -> list[int] | None:
+    """Record which published mentions a media event reports: the newest ones.
+
+    Digest delivery counts how many of them are still published, so a later
+    takedown of these mentions, and only of these, reduces what is reported.
+    """
+    if rule.target_type != "media":
+        return None
+    newest = db.scalars(
+        published_mentions(Mention.media_id == rule.target_id)
+        .with_only_columns(Mention.id)
+        .order_by(Mention.id.desc())
+        .limit(count),
+    )
+    return [int(mention_id) for mention_id in newest]
+
+
 def _observed_count(
     *,
     db: Session,
@@ -218,5 +249,6 @@ def _observed_count(
 ) -> int:
     """Measure published events represented by a rule target."""
     if target_type == "media":
-        return int(db.query(Mention).filter(Mention.media_id == target_id).count())
+        published: int = count_published_mentions(db, Mention.media_id == target_id)
+        return published
     return int(db.query(Episode).filter(Episode.podcast_id == target_id).count())
