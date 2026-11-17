@@ -8,7 +8,7 @@ import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Any, TypeGuard
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.compiler import compiles
@@ -76,27 +76,50 @@ def storable_vector(value: object) -> list[float]:
 _UNSTORABLE_NAME_CATEGORIES = frozenset({"Cc", "Cs"})
 
 
-def is_storable_model_name(value: object) -> TypeGuard[str]:
+def exact_str(value: object) -> str | None:
+    """Return ``value`` as an exact built-in ``str``, or ``None`` if it is not one.
+
+    A ``str`` subclass is copied by ``str.__str__``, which reads its characters
+    without calling any method the subclass defines, so later checks and the
+    stored value see what it holds. ``isinstance`` may still run ``value``'s
+    own ``__class__`` lookup, so callers reading a provider's value run this
+    inside their provider guard.
+
+    Args:
+        value: Value that should be a string.
+
+    Returns:
+        The characters of ``value`` as an exact ``str``, or ``None``.
+    """
+    if isinstance(value, str):
+        return str.__str__(value)
+    return None
+
+
+def is_storable_model_name(value: str) -> bool:
     """Return whether ``embedding_model`` can store ``value`` on every dialect.
 
     SQLite would store an over-long name that PostgreSQL refuses, so the
-    check is the same everywhere.
+    check is the same everywhere. Only control characters and lone surrogates
+    are refused: format, private-use and unassigned code points are stored as
+    given. The check reads an exact copy of ``value``, so a ``str`` subclass's
+    own methods cannot misreport it; store ``exact_str(value)``, not ``value``.
 
     Args:
         value: Model name to store.
 
     Returns:
-        ``True`` for a string that is not empty or only whitespace, has at most
+        ``True`` for a name that is not empty or only whitespace, has at most
         ``EMBEDDING_MODEL_LENGTH`` characters, and has no control character or
         lone surrogate.
     """
+    name = str.__str__(value)
     return (
-        isinstance(value, str)
-        and bool(value.strip())
-        and len(value) <= EMBEDDING_MODEL_LENGTH
+        bool(name.strip())
+        and len(name) <= EMBEDDING_MODEL_LENGTH
         and not any(
             unicodedata.category(character) in _UNSTORABLE_NAME_CATEGORIES
-            for character in value
+            for character in name
         )
     )
 

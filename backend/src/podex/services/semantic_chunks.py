@@ -18,8 +18,10 @@ from podex.models import (
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
+    exact_str,
+    is_storable_model_name,
 )
-from podex.models.semantic_chunk import is_storable_model_name, storable_vector
+from podex.models.semantic_chunk import storable_vector
 from podex.services.content_suppression import authorize_episode_text
 from podex.services.failure_codes import FailureReason, PipelineFailure
 from podex.services.failure_descriptors import (
@@ -104,9 +106,8 @@ class TranscriptSegmentData:
 class EmbeddingProvider(Protocol):
     """Protocol for model-backed embedding providers.
 
-    ``model_name`` must be one ``embedding_model`` can store (see
-    ``is_storable_model_name``); a provider with any other name is never
-    called, and its chunks fail with ``embedding_invalid_model_name``.
+    ``model_name`` must pass ``is_storable_model_name`` as an exact ``str``, or
+    the provider is never called (``embedding_invalid_model_name``).
 
     ``dimensions`` must equal the embedding column's dimension
     (``EMBEDDING_DIMENSIONS``): a provider declaring any other value is never
@@ -361,7 +362,8 @@ def _embed_chunks(
     model_name: str | None = None
     dimensions: object = None
     try:
-        model_name = _storable_model_name(_from_provider(lambda: embedder.model_name))
+        declared: str | None = _from_provider(lambda: exact_str(embedder.model_name))
+        model_name = _storable_model_name(declared)
         dimensions = _from_provider(lambda: embedder.dimensions)
         _check_provider_dimensions(dimensions)
         vectors: list[Any] = _from_provider(
@@ -619,9 +621,9 @@ def _semantic_chunk_needs_update(
     )
 
 
-def _storable_model_name(model_name: object) -> str:
+def _storable_model_name(model_name: str | None) -> str:
     """Return a name ``embedding_model`` can store; never put it in the error."""
-    if isinstance(model_name, str) and is_storable_model_name(model_name):
+    if model_name is not None and is_storable_model_name(model_name):
         return model_name
     raise PipelineFailure(
         "embedding provider model name cannot be stored",
