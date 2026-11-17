@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.43] - 2026-11-17
+
+### Changed
+
+- **deps**: update lintro to 0.181.3 (patch) (#892) (038fc71)
+
+### Fixed
+
+- **ops**: record podcast slugs longer than 120 characters in the audit log (#890)
+  (563bf06)
+
 ## [0.41.42] - 2026-11-17
 
 ### Fixed
