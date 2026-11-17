@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from bisect import bisect_right
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import anthropic
@@ -38,17 +38,41 @@ _MAX_YEAR = 2100
 # Most characters sent to the model in one request. Text up to this length is
 # read in one request, as before windowing existed.
 EXTRACTION_WINDOW_CHARS = 150_000
-# Least text consecutive windows share. A spoken sentence naming a work, with
-# the words that identify it, is a few hundred characters; 2,000 characters
-# (about two minutes of speech) keeps several such sentences on both sides of
-# a cut while adding at most 4,000 characters (under 3%) per extra window.
+# Least text consecutive windows share; they share at most 3,999. A spoken
+# sentence naming a work, with the words that identify it, is a few hundred
+# characters; 2,000 characters is about two minutes of speech. Every passage
+# of up to 2,000 characters that ends before the last window sent ends lies
+# whole inside one window.
 EXTRACTION_WINDOW_OVERLAP_CHARS = 2_000
-# Most requests per transcript. Eight windows read at least 1.17 million
-# characters (roughly 20 hours of speech) and cap one transcript at eight
-# requests of at most 150,000 input characters and 4,000 output tokens each.
+# Inside one segment, a window is cut at whitespace only within this many
+# characters of the cut limit; past that it is cut at the limit itself.
+_WHITESPACE_LOOKBACK_CHARS = 1_000
+# Most windows per transcript. Any two consecutive windows that are not the
+# last advance the read end by at least 146,002 characters, so eight windows
+# read at least 588,007 characters; with segments of ordinary length (a few
+# hundred characters) they read about 1.18 million. The SDK client retries a
+# failed request twice by default, so one transcript makes at most 24 HTTP
+# requests carrying at most 3.6 million characters, each asking for at most
+# 4,000 output tokens.
 MAX_EXTRACTION_WINDOWS = 8
 # Stop reasons meaning the reply was cut off before the model finished.
 _TRUNCATED_STOP_REASONS = frozenset({"max_tokens", "model_context_window_exceeded"})
+_REFUSAL_STOP_REASON = "refusal"
+# Failures every later window would meet too: the key, permissions, model and
+# request parameters are the same for every window, and windows are of the
+# same size. After one of these no further window is sent.
+_RUN_ENDING_ERRORS = (
+    anthropic.BadRequestError,
+    anthropic.AuthenticationError,
+    anthropic.PermissionDeniedError,
+    anthropic.NotFoundError,
+)
+# Exceptions that decoding and validating one untrusted reply can raise (an
+# overflowing number, deep nesting, a value of the wrong type), or that a
+# client raises for a reply it cannot build. They fail that window only.
+# Other exceptions propagate unchanged, as for a single request before
+# windowing.
+_REPLY_ERRORS = (ArithmeticError, RecursionError, TypeError, ValueError)
 
 
 def _validated_creator(value: object) -> str | None:
@@ -132,44 +156,62 @@ class ExtractedMedia:
 class ExtractionResult:
     """Outcome of one extraction run: items plus coverage and failures.
 
-    The transcript is read in consecutive, overlapping windows. Items are
-    merged across windows with one item per case-insensitive title, the same
-    rule a single reply follows. A window whose request fails, whose reply
-    stops at the output token cap, or whose reply cannot be parsed adds one
-    descriptor to ``errors`` and contributes no items; the items of the other
-    windows are kept.
+    The transcript is read in consecutive, overlapping windows. A window
+    fails when its request fails, its reply is refused, empty, cut off at the
+    output token cap, has a stop reason that is not a string, or cannot be
+    decoded into a JSON array. A failed window adds exactly one descriptor to
+    ``errors`` and contributes no items; the items of the other windows are
+    kept. After a failure every window would repeat (bad request,
+    authentication, permission, unknown model) no further window is sent.
+
+    Items are merged across windows by case-insensitive title. The item with
+    the highest confidence is kept (the first found on a tie) and any field it
+    lacks is filled from the others, most confident first. Each item keeps the
+    position where its title first appeared.
 
     Attributes:
-        items: Validated items, one per case-insensitive title, in the order
-            first found.
+        items: Merged, validated items.
         errors: Allowlisted failure descriptors, one per failed window.
         transcript_chars: Length of the joined transcript text.
-        windows: Requests sent for this transcript.
-        failed_windows: Windows whose reply was not used.
-        unread_chars: Characters at the end of the transcript that were never
-            sent because the window bound was reached.
-        unextracted_chars: Characters not inside any window whose reply was
-            used: the unread tail, text only failed windows held, and text
-            below the minimum length, which is never sent.
+        windows: Requests sent for this transcript, not counting SDK retries.
+        unread_chars: Characters never sent in any request: the text past
+            the last window sent (because of the window bound or a failure
+            that ends the run) and text below the minimum length.
+        window_limit_reached: Whether the transcript needed more windows than
+            the bound allows.
+        unextracted_ranges: Ascending, disjoint ``(start, end)`` offsets into
+            the joined segment text (segments stripped and joined by one
+            space) of text inside no window whose reply was used. There are at
+            most ``max_windows + 1`` ranges.
     """
 
     items: list[ExtractedMedia] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     transcript_chars: int = 0
     windows: int = 0
-    failed_windows: int = 0
     unread_chars: int = 0
-    unextracted_chars: int = 0
+    window_limit_reached: bool = False
+    unextracted_ranges: list[tuple[int, int]] = field(default_factory=list)
 
     @property
     def success(self) -> bool:
-        """Return True if extraction completed without errors."""
+        """Return True when no window failed.
+
+        This does not say that the whole transcript was read: it stays true
+        when the window bound left text unread or the text was too short to
+        send, since no request failed. Use :attr:`fully_covered` for that.
+        """
         return len(self.errors) == 0
 
     @property
-    def window_limit_reached(self) -> bool:
-        """Return True when the window bound left the end of the text unread."""
-        return self.unread_chars > 0
+    def failed_windows(self) -> int:
+        """Return the number of windows whose reply was not used."""
+        return len(self.errors)
+
+    @property
+    def unextracted_chars(self) -> int:
+        """Return the number of characters in :attr:`unextracted_ranges`."""
+        return sum(end - start for start, end in self.unextracted_ranges)
 
     @property
     def fully_covered(self) -> bool:
@@ -177,30 +219,73 @@ class ExtractionResult:
 
         An empty transcript is covered; text below the minimum length is not.
         """
-        return self.unextracted_chars == 0
+        return not self.unextracted_ranges
 
 
-def _request_failure(error: BaseException, *, malformed: bool = False) -> str:
-    """Describe and log an SDK failure for one window.
+@dataclass(frozen=True)
+class _WindowOutcome:
+    """Items or the failure of one window, and whether the run must end."""
+
+    items: list[ExtractedMedia] = field(default_factory=list)
+    error: str | None = None
+    ends_run: bool = False
+
+
+def _request_failure(
+    error: BaseException,
+    *,
+    reason: FailureReason = FailureReason.REQUEST_FAILED,
+) -> str:
+    """Describe and log an exception that failed one window.
 
     Args:
-        error: SDK or decoding failure.
-        malformed: Whether decoding the response failed.
+        error: SDK, decoding or reply failure.
+        reason: Fixed reason recorded with the exception class.
 
     Returns:
         The allowlisted diagnostic for the failed window.
     """
-    message: str = describe_failure(
-        "extraction",
-        error,
-        reason=(
-            FailureReason.MALFORMED_RESPONSE
-            if malformed
-            else FailureReason.REQUEST_FAILED
-        ),
-    )
+    message: str = describe_failure("extraction", error, reason=reason)
     log_failure(logger, message, error, level=logging.ERROR)
     return message
+
+
+def _reply_failure(reason: FailureReason) -> _WindowOutcome:
+    """Describe and log a reply that cannot be used, without its content.
+
+    Args:
+        reason: Fixed reason for the unusable reply.
+
+    Returns:
+        The failed outcome for the window.
+    """
+    message: str = describe_failure("extraction", reason=reason)
+    logger.warning(message)
+    return _WindowOutcome(error=message)
+
+
+def _unusable_reply_reason(
+    stop_reason: object,
+    response_text: str,
+) -> FailureReason | None:
+    """Classify a reply that must not be parsed.
+
+    Args:
+        stop_reason: The reply's stop reason as received.
+        response_text: The reply's first text block, stripped.
+
+    Returns:
+        The failure reason, or None when the reply may be parsed.
+    """
+    if stop_reason is not None and not isinstance(stop_reason, str):
+        return FailureReason.MALFORMED_RESPONSE
+    if stop_reason in _TRUNCATED_STOP_REASONS:
+        return FailureReason.TRUNCATED_RESPONSE
+    if stop_reason == _REFUSAL_STOP_REASON:
+        return FailureReason.REFUSED_RESPONSE
+    if not response_text:
+        return FailureReason.EMPTY_RESPONSE
+    return None
 
 
 def _joined_segments(segments: list[dict[str, str]]) -> tuple[str, list[int]]:
@@ -234,12 +319,14 @@ def _cut(text: str, boundaries: list[int], *, low: int, high: int) -> int:
 
     Returns:
         The last segment separator in range; otherwise the last whitespace
-        character in range; otherwise ``high``.
+        character in range and at most 1,000 characters before ``high``;
+        otherwise ``high``.
     """
     index = bisect_right(boundaries, high) - 1
     if index >= 0 and boundaries[index] >= low:
         return boundaries[index]
-    for position in range(high, low - 1, -1):
+    floor = max(low, high - _WHITESPACE_LOOKBACK_CHARS)
+    for position in range(high, floor - 1, -1):
         if text[position].isspace():
             return position
     return high
@@ -254,14 +341,16 @@ def _plan_windows(
 ) -> list[tuple[int, int]]:
     """Split text into consecutive windows that overlap at each cut.
 
-    A window ends at the last segment separator that leaves it longer than
-    three overlaps; only when no separator qualifies (one segment fills the
-    window) does it end at whitespace, or at the window length when there is
-    none. The next window starts at the last separator (else whitespace, else
-    hard position) between two overlaps and one overlap before that end. So
-    consecutive windows share at least one overlap and at most two, and each
-    window reaches at least one overlap beyond the previous end. Any span of
-    up to one overlap therefore lies whole inside some window.
+    A window that does not reach the end of the text ends at the last segment
+    separator between 6,001 and ``window_chars`` characters after its start.
+    When no separator lies there, it ends at the last whitespace within the
+    final 1,000 characters of that range, or else at ``window_chars``
+    exactly. The next window starts after the last separator between 4,000
+    and 2,001 characters before that end; failing that, after the last
+    whitespace between 3,001 and 2,001 characters before it; failing that,
+    2,001 characters before it. Consecutive windows therefore share 2,000 to
+    3,999 characters, and every passage of up to 2,000 characters before the
+    last end lies whole inside one window.
 
     Args:
         text: Joined transcript text.
@@ -292,23 +381,25 @@ def _plan_windows(
     return windows
 
 
-def _covered_chars(windows: list[tuple[int, int]]) -> int:
-    """Count characters inside at least one of the ascending windows.
+def _unextracted(used: list[tuple[int, int]], length: int) -> list[tuple[int, int]]:
+    """Return the ranges of ``[0, length)`` outside every used window.
 
     Args:
-        windows: Half-open ranges with ascending starts and ends.
+        used: Windows whose reply was used, with ascending starts and ends.
+        length: Length of the joined text.
 
     Returns:
-        Size of the union of the ranges.
+        Ascending, disjoint ``(start, end)`` ranges.
     """
-    covered = 0
+    gaps: list[tuple[int, int]] = []
     reach = 0
-    for start, end in windows:
-        start = max(start, reach)
-        if end > start:
-            covered += end - start
-            reach = end
-    return covered
+    for start, end in used:
+        if start > reach:
+            gaps.append((reach, start))
+        reach = max(reach, end)
+    if reach < length:
+        gaps.append((reach, length))
+    return gaps
 
 
 def _validated_items(items: list[Any]) -> list[ExtractedMedia]:
@@ -339,24 +430,56 @@ def _validated_items(items: list[Any]) -> list[ExtractedMedia]:
     return validated_items
 
 
-def _merge_items(
-    merged: list[ExtractedMedia],
-    seen_titles: set[str],
-    items: list[ExtractedMedia],
-) -> None:
-    """Append items whose case-insensitive title has not been seen yet.
+def _merged_item(found: list[ExtractedMedia]) -> ExtractedMedia:
+    """Merge items of one title found in several windows.
 
     Args:
-        merged: Items kept so far, extended in place.
-        seen_titles: Lower-cased titles kept so far, extended in place.
-        items: Validated items from the next window.
+        found: Items with the same case-insensitive title, in transcript order.
+
+    Returns:
+        The most confident item (the first found on a tie), with creator and
+        year, when it lacks them, taken from the most confident other item
+        that has them. Creator and year are the only fields an item may lack.
     """
-    for item in items:
-        title_lower = item.title.lower()
-        if title_lower in seen_titles:
-            continue
-        seen_titles.add(title_lower)
-        merged.append(item)
+    ranked = sorted(found, key=lambda item: -item.confidence)
+    best = ranked[0]
+    creator = next((item.creator for item in ranked if item.creator is not None), None)
+    year = next((item.year for item in ranked if item.year is not None), None)
+    return replace(best, creator=creator, year=year)
+
+
+def _merged_items(per_window: list[list[ExtractedMedia]]) -> list[ExtractedMedia]:
+    """Merge the items of all used windows by case-insensitive title.
+
+    Args:
+        per_window: Validated items of each used window, in transcript order.
+
+    Returns:
+        One item per title, in order of first appearance.
+    """
+    by_title: dict[str, list[ExtractedMedia]] = {}
+    for items in per_window:
+        for item in items:
+            by_title.setdefault(item.title.lower(), []).append(item)
+    return [_merged_item(found) for found in by_title.values()]
+
+
+def _check_bounds(text_chars: int, *, max_chars: int, max_windows: int) -> None:
+    """Reject bounds that cannot read a transcript of ``text_chars``.
+
+    Args:
+        text_chars: Length of a transcript long enough to send.
+        max_chars: Most characters sent in one request.
+        max_windows: Most requests for this transcript.
+
+    Raises:
+        ValueError: When ``max_windows`` is below one, or the text needs more
+            than one window and ``max_chars`` is 8,000 or less.
+    """
+    if max_windows < 1:
+        raise ValueError("max_windows must be at least one")
+    if text_chars > max_chars and max_chars <= 4 * EXTRACTION_WINDOW_OVERLAP_CHARS:
+        raise ValueError("max_chars must exceed 8,000 to read in windows")
 
 
 # This adapter implements one protocol operation; extra methods have no purpose.
@@ -392,7 +515,9 @@ class LLMExtractor:
 
         Text up to ``max_chars`` is sent in one request, exactly as before.
         Longer text is read in up to ``max_windows`` overlapping windows of at
-        most ``max_chars`` characters each; see :func:`_plan_windows`.
+        most ``max_chars`` characters each; see :func:`_plan_windows`. Empty
+        text, and text below the 100-character minimum, returns without a
+        request whatever the bounds.
 
         Args:
             segments: Transcript segments with ``text`` keys.
@@ -403,48 +528,38 @@ class LLMExtractor:
             ExtractionResult with items, coverage and any errors encountered.
 
         Raises:
-            ValueError: When ``max_chars`` is not more than four overlaps or
-                ``max_windows`` is below one.
+            ValueError: When the text is long enough to send and
+                ``max_windows`` is below one, or the text needs windows and
+                ``max_chars`` is 8,000 or less.
         """
-        if max_chars <= 4 * EXTRACTION_WINDOW_OVERLAP_CHARS:
-            raise ValueError("max_chars must exceed four window overlaps")
-        if max_windows < 1:
-            raise ValueError("max_windows must be at least one")
-
         full_text, boundaries = _joined_segments(segments)
         result = ExtractionResult(transcript_chars=len(full_text))
         if len(full_text) < _MIN_TRANSCRIPT_CHARS:
-            result.unextracted_chars = len(full_text)
+            if full_text:
+                result.unread_chars = len(full_text)
+                result.unextracted_ranges = [(0, len(full_text))]
             return result
 
+        _check_bounds(len(full_text), max_chars=max_chars, max_windows=max_windows)
         windows = _plan_windows(
             full_text,
             boundaries,
             window_chars=max_chars,
             max_windows=max_windows,
         )
-        read: list[tuple[int, int]] = []
-        seen_titles: set[str] = set()
-        for start, end in windows:
-            items, errors = self._extract_window(full_text[start:end])
-            result.windows += 1
-            if errors:
-                result.failed_windows += 1
-                result.errors.extend(errors)
-                continue
-            read.append((start, end))
-            _merge_items(result.items, seen_titles, items)
-
-        result.unread_chars = len(full_text) - windows[-1][1]
-        result.unextracted_chars = len(full_text) - _covered_chars(read)
+        result.window_limit_reached = windows[-1][1] < len(full_text)
+        used = self._read_windows(full_text, windows, result)
+        result.unread_chars = len(full_text) - windows[result.windows - 1][1]
+        result.unextracted_ranges = _unextracted(used, len(full_text))
         if result.window_limit_reached:
             logger.warning(
-                "Extraction stopped after %d windows; %d of %d chars not read",
+                "Extraction window limit reached after %d windows; "
+                "%d of %d characters not read",
                 result.windows,
                 result.unread_chars,
                 result.transcript_chars,
             )
-        if not result.failed_windows:
+        if result.success:
             # Failed windows were already logged with their own diagnostics.
             logger.info(
                 "Extracted %d media items from %d windows",
@@ -453,15 +568,52 @@ class LLMExtractor:
             )
         return result
 
-    def _extract_window(self, text: str) -> tuple[list[ExtractedMedia], list[str]]:
+    def _read_windows(
+        self,
+        text: str,
+        windows: list[tuple[int, int]],
+        result: ExtractionResult,
+    ) -> list[tuple[int, int]]:
+        """Send windows in order, recording failures and merging items.
+
+        Args:
+            text: Joined transcript text.
+            windows: Planned windows, in order.
+            result: Result to fill with items, errors and the window count.
+
+        Returns:
+            The windows whose reply was used.
+        """
+        used: list[tuple[int, int]] = []
+        per_window: list[list[ExtractedMedia]] = []
+        for start, end in windows:
+            result.windows += 1
+            try:
+                outcome = self._extract_window(text[start:end])
+            except _REPLY_ERRORS as exc:
+                outcome = _WindowOutcome(
+                    error=_request_failure(
+                        exc, reason=FailureReason.UNCLASSIFIED_FAILURE
+                    )
+                )
+            if outcome.error is None:
+                used.append((start, end))
+                per_window.append(outcome.items)
+            else:
+                result.errors.append(outcome.error)
+            if outcome.ends_run:
+                break
+        result.items = _merged_items(per_window)
+        return used
+
+    def _extract_window(self, text: str) -> _WindowOutcome:
         """Send one window and validate its reply.
 
         Args:
             text: Window text, sent inside ``<transcript>`` tags.
 
         Returns:
-            Tuple of (validated items, error descriptors). Items are empty
-            whenever errors are not.
+            The window's validated items, or its failure.
         """
         try:
             response = self.client.messages.create(
@@ -476,25 +628,25 @@ class LLMExtractor:
                 ],
             )
             response_text = first_response_text(response)
+        except _RUN_ENDING_ERRORS as exc:
+            return _WindowOutcome(error=_request_failure(exc), ends_run=True)
         except (anthropic.APIStatusError, anthropic.APIConnectionError) as exc:
-            return [], [_request_failure(exc)]
+            return _WindowOutcome(error=_request_failure(exc))
         except MALFORMED_RESPONSE_ERRORS as exc:
-            return [], [_request_failure(exc, malformed=True)]
-
-        if getattr(response, "stop_reason", None) in _TRUNCATED_STOP_REASONS:
-            message = describe_failure(
-                "extraction", reason=FailureReason.TRUNCATED_RESPONSE
+            return _WindowOutcome(
+                error=_request_failure(exc, reason=FailureReason.MALFORMED_RESPONSE)
             )
-            logger.warning(message)
-            return [], [message]
 
-        if not response_text:
-            return [], []
+        unusable = _unusable_reply_reason(
+            getattr(response, "stop_reason", None), response_text
+        )
+        if unusable is not None:
+            return _reply_failure(unusable)
 
         items, parse_errors = self._parse_json_response(response_text)
         if parse_errors:
-            return [], parse_errors
-        return _validated_items(items), []
+            return _WindowOutcome(error=parse_errors[0])
+        return _WindowOutcome(items=_validated_items(items))
 
     def _parse_json_response(
         self,

@@ -15,6 +15,8 @@ class FailureReason(StrEnum):
     INCOMPLETE_JSON_ARRAY = auto()
     INVALID_JSON = auto()
     TRUNCATED_RESPONSE = auto()
+    REFUSED_RESPONSE = auto()
+    EMPTY_RESPONSE = auto()
     UNCLASSIFIED_FAILURE = auto()
     CONFIGURATION = auto()
     EMBEDDING_COUNT_MISMATCH = auto()
