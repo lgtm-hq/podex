@@ -59,6 +59,13 @@ class Podcast(Base):
         index=True,
         default=None,
     )
+    # When discovery last read this podcast's podscripts listing to its end
+    # with no failed page. Discovery stops paging at known episodes only while
+    # this is set and recent; changing the podscripts slug clears it.
+    podscripts_listing_walked_at: "Mapped[datetime | None]" = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+    )
     discovery_source: "Mapped[DiscoverySource | None]" = mapped_column(
         SAEnum(DiscoverySource, native_enum=False, length=50),
         default=None,
