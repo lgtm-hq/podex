@@ -5,11 +5,16 @@ challenges, saves, follows, alert rules and their events, digests,
 preferences, subscription, and quota usage — and finally the user row
 itself. Nothing is anonymized in place: the audit log records the deletion
 under an opaque numeric account id, which is the only reference retained.
+
+Deletion follows the media-reference lock order (ADR 0020): the media records
+the account saved or watches, then its alert rules, then their events and
+the other rows.
 """
 
 from dataclasses import dataclass
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -25,6 +30,8 @@ from podex.models import (
     MagicLinkToken,
     UserSession,
 )
+from podex.services.account_alerts import lock_alert_rules
+from podex.services.media_locks import lock_media
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,12 +188,23 @@ def delete_account(*, db: Session, user: AccountUser) -> AccountDeletionResultDa
         Counts of the rows removed, for the audit record.
     """
     user_id = user.id
-    rule_ids = [
-        row[0]
-        for row in db.query(AccountAlertRule.id)
-        .filter(AccountAlertRule.user_id == user_id)
-        .all()
-    ]
+    lock_media(
+        db=db,
+        media_ids=[
+            *db.scalars(
+                select(AccountSavedMedia.media_id).where(
+                    AccountSavedMedia.user_id == user_id,
+                ),
+            ),
+            *db.scalars(
+                select(AccountAlertRule.target_id).where(
+                    AccountAlertRule.user_id == user_id,
+                    AccountAlertRule.target_type == "media",
+                ),
+            ),
+        ],
+    )
+    rule_ids = [rule.id for rule in lock_alert_rules(db=db, user_id=user_id)]
     alert_events = (
         db.query(AccountAlertEvent)
         .filter(AccountAlertEvent.rule_id.in_(rule_ids))

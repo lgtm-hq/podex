@@ -27,6 +27,7 @@ the changelog record _what_ changed.
 | [0017](./0017-suppression-identity-changes.md)          | Moves and deletes that would lift a suppression are refused     | proposed | 2026-11-17 |
 | [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | proposed | 2026-11-17 |
 | [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | proposed | 2026-11-17 |
+| [0020](./0020-media-reference-lock-order.md)            | One lock order for every writer of media references             | proposed | 2026-11-17 |
 
 ## Format
 

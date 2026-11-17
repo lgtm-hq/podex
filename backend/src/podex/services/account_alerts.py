@@ -1,4 +1,10 @@
-"""Authenticated account alert rules and deterministic evaluation."""
+"""Authenticated account alert rules and deterministic evaluation.
+
+Writers of media alert rules follow the media-reference lock order (ADR
+0020): the media record first (``lock_media``), then rules in ``(user_id,
+id)`` order, then their events. Evaluation takes only one user's rules, in id
+order, and no media lock.
+"""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -18,6 +24,7 @@ from podex.services.content_suppression import (
     count_published_mentions,
     published_mentions,
 )
+from podex.services.media_locks import lock_media
 
 AlertTargetType = Literal["media", "podcast"]
 AlertEventType = Literal["new_mention", "new_episode"]
@@ -49,7 +56,17 @@ def create_alert_rule(
     target_id: int,
     event_type: AlertEventType,
 ) -> AccountAlertRule | None:
-    """Create an alert only for an account-linked public resource."""
+    """Create an alert only for an account-linked public resource.
+
+    A media rule locks its record first, so it is created either before a
+    merge reads the record's rules or after the merge committed, on the
+    surviving record only.
+    """
+    if target_type == "media" and target_id not in lock_media(
+        db=db,
+        media_ids=[target_id],
+    ):
+        return None
     if not _is_eligible_target(
         db=db,
         user_id=user_id,
@@ -103,8 +120,26 @@ def set_alert_rule_enabled(
 
 
 def delete_alert_rule(*, db: Session, user_id: int, rule_id: int) -> bool:
-    """Delete an account-owned alert rule."""
+    """Delete an account-owned alert rule.
+
+    The rule's media record is locked first, then the rule, then its events
+    are deleted. A rule a merge collapsed meanwhile no longer exists.
+    """
     rule = _get_rule(db=db, user_id=user_id, rule_id=rule_id)
+    if rule is None:
+        return False
+    if rule.target_type == "media":
+        lock_media(db=db, media_ids=[rule.target_id])
+    rule = (
+        db.query(AccountAlertRule)
+        .filter(
+            AccountAlertRule.id == rule_id,
+            AccountAlertRule.user_id == user_id,
+        )
+        .with_for_update()
+        .populate_existing()
+        .one_or_none()
+    )
     if rule is None:
         return False
     db.query(AccountAlertEvent).filter(
@@ -129,7 +164,7 @@ def evaluate_alert_rules(
     """
     evaluated_at = now or datetime.now(UTC)
     generated: list[AlertEventData] = []
-    _lock_alert_rules(db=db, user_id=user_id)
+    lock_alert_rules(db=db, user_id=user_id)
     for rule in list_alert_rules(db=db, user_id=user_id):
         if not rule.enabled:
             continue
@@ -158,20 +193,23 @@ def evaluate_alert_rules(
     return generated
 
 
-def _lock_alert_rules(*, db: Session, user_id: int) -> None:
+def lock_alert_rules(*, db: Session, user_id: int) -> list[AccountAlertRule]:
     """Lock and reload one user's alert rules in ascending id order.
 
     Media merges lock the rules they reconcile in ``(user_id, id)`` order, which
     matches this order for one user and the scheduler's ascending user order, so
     the two never deadlock. SQLite has a single writer and ignores ``FOR UPDATE``.
+
+    Returns:
+        The user's rules, in id order.
     """
-    (
+    return list(
         db.query(AccountAlertRule)
         .filter(AccountAlertRule.user_id == user_id)
         .order_by(AccountAlertRule.id.asc())
         .with_for_update()
         .populate_existing()
-        .all()
+        .all(),
     )
 
 

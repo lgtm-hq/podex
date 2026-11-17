@@ -21,16 +21,23 @@ the rule was last evaluated never cancel unseen activity on the other side; a
 side without a rule counts as fully seen. Merging identities therefore never
 reports historical mentions as new and never hides unseen ones.
 
-Overlapping merges and alert evaluation are serialized with row locks: the merge
-locks both media rows in ascending id order, then the alert rules it reconciles
-in ``(user_id, id)`` order, the same order alert evaluation locks a user's rules.
-State is read only after the locks are held. SQLite has a single writer and
-ignores ``FOR UPDATE``.
+The merge takes its locks in the order every writer of media references
+follows (ADR 0020), before it reads any state:
+
+1. both media rows ``FOR UPDATE``, ascending id, in one statement;
+2. the podcast rows of every episode that mentions either record ``FOR
+   SHARE`` (the lock the mention-moving flush would take later);
+3. the alert rules it reconciles, in ``(user_id, id)`` order, the same order
+   alert evaluation locks a user's rules;
+4. then it changes alert events, saves and the other references.
+
+The suppression change counter is bumped last, by the caller. SQLite has a
+single writer and ignores the lock clauses.
 """
 
 from dataclasses import dataclass
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -47,11 +54,13 @@ from podex.models import (
     ReviewItem,
 )
 from podex.models.content_suppression import suppressed_clause, suppression_key
+from podex.models.suppression_guard import lock_podcasts_of_episodes
 from podex.services.content_suppression import (
     count_published_mentions,
     delete_mentions,
     pair_suppressions_of,
 )
+from podex.services.media_locks import lock_media
 
 MEDIA_ALERT_TARGET_TYPE = "media"
 
@@ -78,10 +87,15 @@ def lock_merge_pair(
     source_media_id: int,
     target_media_id: int,
 ) -> tuple[Media | None, Media | None]:
-    """Lock and reload the merge source and target in ascending id order.
+    """Lock and reload the merge source and target, then their podcasts.
 
-    Concurrent merges that share a record wait here, then read the state the
-    earlier merge committed, including a source it already deleted.
+    Both records are locked ``FOR UPDATE`` in ascending id order. Concurrent
+    merges, and every writer of rows referencing either record, wait here,
+    then read the state the earlier transaction committed, including a source
+    it already deleted. The podcasts of the episodes mentioning either record
+    are then locked ``FOR SHARE``, before any alert rule, as ADR 0020 orders
+    them; no mention of either record can be added while the records are
+    held, so that set is complete.
 
     Args:
         db: Database session.
@@ -91,15 +105,22 @@ def lock_merge_pair(
     Returns:
         The locked source and target, each ``None`` when it no longer exists.
     """
-    locked = {
-        media_id: db.query(Media)
-        .filter(Media.id == media_id)
-        .with_for_update()
-        .populate_existing()
-        .one_or_none()
-        for media_id in sorted({source_media_id, target_media_id})
-    }
-    return locked[source_media_id], locked[target_media_id]
+    locked = lock_media(
+        db=db,
+        media_ids=(source_media_id, target_media_id),
+        exclusive=True,
+    )
+    source, target = locked.get(source_media_id), locked.get(target_media_id)
+    if source is not None and target is not None:
+        lock_podcasts_of_episodes(
+            session=db,
+            episode_ids=db.scalars(
+                select(Mention.episode_id)
+                .where(Mention.media_id.in_((source_media_id, target_media_id)))
+                .distinct(),
+            ),
+        )
+    return source, target
 
 
 def delete_mentions_covered_after_merge(
@@ -146,8 +167,12 @@ def move_media_references(
 ) -> None:
     """Move account and extraction references from a merged source to the target.
 
-    Call before mentions move so alert baselines see pre-merge mention counts.
-    Validation runs before any row changes, so a refused merge mutates nothing.
+    Call after ``lock_merge_pair`` and before mentions move, so alert
+    baselines see pre-merge mention counts. The alert rules are locked and
+    validated first, before any row changes, so a refused merge mutates
+    nothing. Mentions a carried suppression covers are deleted next, after
+    the rule locks (their deletion edits alert events, which follow rules in
+    the lock order) and before baselines are read.
 
     Args:
         db: Database session.
@@ -159,6 +184,11 @@ def move_media_references(
             on enabled state.
     """
     rule_plan = _plan_media_alert_rules(
+        db=db,
+        source_media_id=source_media.id,
+        target_media_id=target_media.id,
+    )
+    delete_mentions_covered_after_merge(
         db=db,
         source_media_id=source_media.id,
         target_media_id=target_media.id,

@@ -26,7 +26,8 @@ Suppressions are keyed by row ids, so a move of an episode next to a
 suppressed podcast, a stale move, and a delete of a covered row are refused
 (``podex.models.suppression_identity``, ADR 0017).
 
-Lock order, the same as the media merge (media rows before podcast rows):
+Lock order, the one every writer of media references follows (ADR 0020;
+media rows before podcast rows):
 
 1. media rows of guarded mentions, ``FOR KEY SHARE``, ascending id;
 2. podcast rows of every episode touched or deleted, ``FOR SHARE``,
@@ -104,6 +105,7 @@ from podex.models.transcript import Transcript
 
 _LOCKED_EPISODES = "podex_suppression_locked_episodes"
 _LOCKED_MEDIA = "podex_suppression_locked_media"
+_LOCKED_MEDIA_EXCLUSIVE = "podex_suppression_locked_media_exclusive"
 _CHECKED = "podex_suppression_checked"
 _ORIGINS = "podex_suppression_origins"
 
@@ -408,26 +410,41 @@ def _transaction_cache(session: Session, key: str) -> set[Any]:
     return cache
 
 
-def lock_media_rows(*, session: Session, media_ids: Iterable[int]) -> None:
-    """Lock media rows ``FOR KEY SHARE`` in ascending id order.
+def lock_media_rows(
+    *,
+    session: Session,
+    media_ids: Iterable[int],
+    exclusive: bool = False,
+) -> None:
+    """Lock media rows in ascending id order, the first lock of the shared order.
 
-    This is the first lock of the shared order: it orders a writer after a
-    media merge, which holds both records ``FOR UPDATE``. Rows already locked
-    in this transaction are skipped; SQLite ignores the clause.
+    ``FOR KEY SHARE`` by default: it orders a writer of rows that reference a
+    record after a media merge or split, which hold the record ``FOR
+    UPDATE``, without blocking other key-share holders. ``exclusive`` takes
+    ``FOR UPDATE``, for the merge and split themselves (ADR 0020).
+
+    Each statement covers up to ``SUPPRESSION_BATCH_SIZE`` ids, and batches
+    run in ascending order, so one call locks its whole set in ascending id.
+    A writer passes its whole set in one call, before any other lock. Rows
+    already locked as strongly in this transaction are skipped; SQLite
+    ignores the clause.
 
     Args:
         session: Session whose transaction takes the locks.
-        media_ids: Media records about to gain or lose guarded rows.
+        media_ids: Media records about to gain or lose referencing rows.
+        exclusive: Lock ``FOR UPDATE`` instead of ``FOR KEY SHARE``.
     """
-    locked = _transaction_cache(session, _LOCKED_MEDIA)
+    locked = _transaction_cache(
+        session,
+        _LOCKED_MEDIA_EXCLUSIVE if exclusive else _LOCKED_MEDIA,
+    )
     for batch in batches(set(media_ids) - locked):
-        session.execute(
-            select(Media.id)
-            .where(Media.id.in_(batch))
-            .order_by(Media.id)
-            .with_for_update(read=True, key_share=True),
-        ).all()
+        session.query(Media.id).filter(Media.id.in_(batch)).order_by(
+            Media.id,
+        ).with_for_update(read=not exclusive, key_share=not exclusive).all()
         locked.update(batch)
+        if exclusive:
+            _transaction_cache(session, _LOCKED_MEDIA).update(batch)
 
 
 def lock_podcasts_of_episodes(
@@ -621,7 +638,13 @@ def _forget_transaction_checks(
     neither, and keeps them.
     """
     if transaction.parent is None or transaction.nested:
-        for key in (_LOCKED_EPISODES, _LOCKED_MEDIA, _CHECKED, _ORIGINS):
+        for key in (
+            _LOCKED_EPISODES,
+            _LOCKED_MEDIA,
+            _LOCKED_MEDIA_EXCLUSIVE,
+            _CHECKED,
+            _ORIGINS,
+        ):
             session.info.pop(key, None)
 
 

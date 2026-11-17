@@ -1,4 +1,9 @@
-"""Authenticated account saved-media operations."""
+"""Authenticated account saved-media operations.
+
+Saving and unsaving lock the media record first (``lock_media``, ADR 0020),
+so a save never interleaves with a merge or split that moves or drops saves
+of the same record.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -7,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from podex.database import delete_if_present
 from podex.models import AccountSavedMedia, Media
+from podex.services.media_locks import lock_media
 from podex.services.media_queries import get_media
 
 
@@ -36,7 +42,7 @@ def list_saved_media(*, db: Session, user_id: int) -> list[SavedMediaData]:
 
 def save_media(*, db: Session, user_id: int, media_id: int) -> SavedMediaData | None:
     """Idempotently save an existing public media record for an account."""
-    media = get_media(db, media_id)
+    media = lock_media(db=db, media_ids=[media_id]).get(media_id)
     if media is None:
         return None
     existing = (
@@ -57,6 +63,7 @@ def save_media(*, db: Session, user_id: int, media_id: int) -> SavedMediaData | 
 
 def remove_saved_media(*, db: Session, user_id: int, media_id: int) -> bool:
     """Remove a public media record from a user's saves."""
+    lock_media(db=db, media_ids=[media_id])
     row = (
         db.query(AccountSavedMedia)
         .filter(
