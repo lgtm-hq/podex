@@ -1,4 +1,7 @@
-"""Revision 0022 backfills suppressions from takedowns that already ran."""
+"""Revision 0022 backfills suppressions from takedowns that already ran.
+
+Revision 0026 keeps those rows and makes deleting their subject fail.
+"""
 
 import json
 from pathlib import Path
@@ -8,6 +11,9 @@ from alembic.command import downgrade, upgrade
 from alembic.config import Config
 from assertpy import assert_that
 from sqlalchemy import Engine, create_engine, inspect, text
+from sqlalchemy.exc import IntegrityError
+
+from podex.database import enable_sqlite_foreign_keys
 
 _ALEMBIC_INI = Path(__file__).resolve().parent.parent / "alembic.ini"
 _EXECUTED = {"executed_at": "2026-07-01T00:00:00+00:00"}
@@ -209,4 +215,99 @@ def test_migration_that_failed_part_way_can_be_retried(tmp_path: Path) -> None:
         ).scalar_one()
     assert_that(count).is_equal_to(6)
     assert_that(stamped).is_equal_to("0022")
+    engine.dispose()
+
+
+def _suppression_rows(engine: Engine) -> list[tuple[object, ...]]:
+    with engine.connect() as connection:
+        rows = connection.execute(
+            text(
+                "SELECT id, suppression_key, takedown_request_id, podcast_id,"
+                " episode_id, media_id FROM content_suppressions ORDER BY id",
+            ),
+        )
+        return [tuple(row) for row in rows]
+
+
+def _subject_delete_rules(engine: Engine) -> dict[str, str | None]:
+    """Return the ``ON DELETE`` rule of each subject foreign key."""
+    return {
+        key["constrained_columns"][0]: key["options"].get("ondelete")
+        for key in inspect(engine).get_foreign_keys("content_suppressions")
+        if key["constrained_columns"][0] in {"podcast_id", "episode_id"}
+    }
+
+
+_DELETES = {
+    "episodes": text("DELETE FROM episodes WHERE id = :id"),
+    "podcasts": text("DELETE FROM podcasts WHERE id = :id"),
+}
+
+
+def _delete_row(engine: Engine, table: str, row_id: int) -> None:
+    with engine.begin() as connection:
+        connection.execute(_DELETES[table], {"id": row_id})
+
+
+def _backfilled_at_0025(db_url: str) -> Engine:
+    """Seed the takedown cases, migrate to 0025 and return a foreign-key engine."""
+    _migrate(db_url, "0021")
+    engine = create_engine(db_url)
+    enable_sqlite_foreign_keys(engine)
+    _seed_cases(engine)
+    _migrate(db_url, "0025")
+    with engine.begin() as connection:
+        connection.execute(
+            text("INSERT INTO episodes (id, podcast_id, title) VALUES (12, 1, 'X')"),
+        )
+    return engine
+
+
+_RESTRICT = {"podcast_id": "RESTRICT", "episode_id": "RESTRICT"}
+
+
+def test_revision_0026_keeps_rows_and_restricts_subject_deletes(
+    tmp_path: Path,
+) -> None:
+    """Existing suppressions survive and the rows they name can't be deleted."""
+    engine = _backfilled_at_0025(f"sqlite:///{tmp_path / 'restrict.db'}")
+    before = _suppression_rows(engine)
+    assert_that(before).is_length(6)
+
+    _migrate(str(engine.url), "0026")
+
+    assert_that(_suppression_rows(engine)).is_equal_to(before)
+    assert_that(_subject_delete_rules(engine)).is_equal_to(_RESTRICT)
+    checks = inspect(engine).get_check_constraints("content_suppressions")
+    assert_that([check["name"] for check in checks]).contains(
+        "ck_content_suppressions_subject_ids",
+    )
+    for table, row_id in (("episodes", 10), ("episodes", 11), ("podcasts", 1)):
+        with pytest.raises(IntegrityError):
+            _delete_row(engine, table, row_id)
+    _delete_row(engine, "episodes", 12)
+    assert_that(_suppression_rows(engine)).is_equal_to(before)
+    engine.dispose()
+
+
+def test_revision_0026_downgrade_restores_cascade_and_keeps_rows(
+    tmp_path: Path,
+) -> None:
+    """Downgrade keeps every row; deletes cascade again until re-upgraded."""
+    engine = _backfilled_at_0025(f"sqlite:///{tmp_path / 'cascade.db'}")
+    _migrate(str(engine.url), "0026")
+    before = _suppression_rows(engine)
+
+    _migrate(str(engine.url), "0025", down=True)
+
+    assert_that(_suppression_rows(engine)).is_equal_to(before)
+    assert_that(_subject_delete_rules(engine)).is_equal_to(
+        {"podcast_id": "CASCADE", "episode_id": "CASCADE"},
+    )
+    _delete_row(engine, "episodes", 10)
+    assert_that(_suppression_rows(engine)).is_equal_to(
+        [row for row in before if row[4] != 10],
+    )
+    _migrate(str(engine.url), "0026")
+    assert_that(_subject_delete_rules(engine)).is_equal_to(_RESTRICT)
     engine.dispose()

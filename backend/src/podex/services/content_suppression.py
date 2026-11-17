@@ -9,7 +9,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, func, select, text
+from sqlalchemy import ColumnElement, Select, func, select
 from sqlalchemy.orm import Session
 
 from podex.models import (
@@ -26,11 +26,13 @@ from podex.models import (
 )
 from podex.models.content_suppression import (
     SUPPRESSION_BATCH_SIZE,
+    RetryableLockError,
     suppressed_clause,
     suppressed_episodes_statement,
     suppression_key,
 )
 from podex.models.suppression_guard import lock_media_rows, lock_podcasts_of_episodes
+from podex.models.suppression_identity import hold_sqlite_write_lock
 
 __all__ = [
     "ContentSuppressedError",
@@ -200,18 +202,6 @@ def summary_source_mentions(*criteria: ColumnElement[bool]) -> Select[tuple[Ment
     )
 
 
-def _hold_sqlite_write_lock(db: Session) -> None:
-    """Take SQLite's database write lock for the rest of the transaction.
-
-    SQLite ignores row locks. A write statement takes its single write lock,
-    which a takedown also needs, so holding it from authorisation until the
-    transaction ends gives SQLite the same order PostgreSQL gets from rows.
-    The statement changes no row.
-    """
-    if db.get_bind().dialect.name == "sqlite":
-        db.execute(text("UPDATE content_suppressions SET id = id WHERE 0 = 1"))
-
-
 def lock_episode_text(*, db: Session, episode_ids: Iterable[int]) -> None:
     """Take the lock that keeps a takedown out while episode text is in use.
 
@@ -223,16 +213,8 @@ def lock_episode_text(*, db: Session, episode_ids: Iterable[int]) -> None:
         db: Session of the transaction that will read the text.
         episode_ids: Episodes whose text is about to be read.
     """
-    _hold_sqlite_write_lock(db)
+    hold_sqlite_write_lock(db)
     lock_podcasts_of_episodes(session=db, episode_ids=episode_ids)
-
-
-class RetryableLockError(ValueError):
-    """Content changed, or a lock was busy, while locks were being taken.
-
-    Nothing was written; the operation can be retried as it is. Routes map
-    ``ValueError`` to 409.
-    """
 
 
 _STABLE_READ_ATTEMPTS = 3

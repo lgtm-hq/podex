@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 from podex.models import (
     AccountUser,
     ContentSuppressedError,
+    ContentSuppression,
     ContentSuppressionVersion,
     Episode,
     Media,
@@ -314,7 +315,11 @@ def test_stats_version_never_repeats_after_suppressions_are_deleted(
     client: TestClient,
     db_session: Session,
 ) -> None:
-    """A cascade delete and a new takedown cannot bring back an old version."""
+    """Deleted suppression rows and a new takedown cannot bring back an old version.
+
+    The database no longer cascades a podcast delete to its suppressions
+    (ADR 0017), so the row is deleted directly before its podcast is.
+    """
     catalog = _catalog(db_session)
     elsewhere = Podcast(name="Elsewhere", slug="elsewhere")
     db_session.add(elsewhere)
@@ -326,6 +331,7 @@ def test_stats_version_never_repeats_after_suppressions_are_deleted(
     _mention(db_session, outside.id, catalog.dune)
     take_down_mention(db_session, first)
     assert_that(client.get("/api/v2/stats").json()["mentions"]).is_equal_to(1)
+    db_session.execute(delete(ContentSuppression))
     db_session.execute(delete(Podcast).where(Podcast.id == catalog.podcast))
     db_session.commit()
     _mention(db_session, outside.id, catalog.dupe)
