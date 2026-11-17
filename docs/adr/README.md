@@ -12,8 +12,8 @@ the changelog record _what_ changed.
 | [0002](./0002-enrichment-provider-registry.md)          | Enrichment provider registry                                    | accepted | 2026-07-21 |
 | [0003](./0003-bounded-public-feed-http.md)              | Bounded public feed HTTP boundary                               | proposed | 2026-11-14 |
 | [0004](./0004-keyset-sweep-checkpoints.md)              | Keyset checkpoints for recurring batched sweeps                 | proposed | 2026-11-14 |
-| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source             | proposed | 2026-11-14 |
-| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction | proposed | 2026-11-14 |
+| [0005](./0005-verified-transcript-purge-proof.md)       | Transcript purge proof identifies a verified source             | accepted | 2026-11-14 |
+| [0006](./0006-transcript-bound-retention-confidence.md) | Retention confidence comes from the transcript's own extraction | accepted | 2026-11-14 |
 | [0007](./0007-postgres-test-lane.md)                    | PostgreSQL test lane with a migrated database per test          | proposed | 2026-11-14 |
 | [0008](./0008-masked-secret-settings.md)                | Secret settings are masked types; reports redact free text      | proposed | 2026-11-14 |
 | [0009](./0009-ingestion-failure-descriptors.md)         | Persist allowlisted ingestion failure descriptors               | proposed | 2026-11-14 |

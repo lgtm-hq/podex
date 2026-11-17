@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.51] - 2026-11-17
+
+### Fixed
+
+- **derivatives**: refuse a summary provider whose model name cannot be stored (#918)
+  (e614099)
+
 ## [0.41.50] - 2026-11-17
 
 ### Changed
