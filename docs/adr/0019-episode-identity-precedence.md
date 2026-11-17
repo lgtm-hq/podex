@@ -2,7 +2,7 @@
 
 # 0019. Precedence of episode identity evidence in discovery
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-17
 - Tags: discovery, catalog
 

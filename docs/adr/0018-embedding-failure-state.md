@@ -2,7 +2,7 @@
 
 # 0018. Failed embeddings keep no vector; provider errors are failures
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-17
 - Tags: derivatives, embeddings, data
 

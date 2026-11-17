@@ -2,7 +2,7 @@
 
 # 0011. Start-up errors carry no credential
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: config, security, observability
 
