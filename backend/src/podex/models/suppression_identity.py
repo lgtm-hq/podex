@@ -47,7 +47,15 @@ class Move:
     @property
     def podcasts(self) -> set[int]:
         """The existing podcasts the move names."""
-        return {self.origin} | ({self.destination} if self.destination else set())
+        joined = {self.destination} if self.destination is not None else set()
+        return {self.origin} | joined
+
+    @property
+    def destination_label(self) -> str:
+        """Name the podcast the move joins, for an error message."""
+        if self.destination is None:
+            return "a new podcast"
+        return f"podcast {self.destination}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,14 +79,15 @@ def _persisted_id(row: object) -> int:
 def _move_of(episode: Episode) -> Move | None:
     """Return the move an episode's pending podcast change makes, if any.
 
-    The column keeps active history (``suppression_guard``), so its replaced
-    value is known even when a commit expired the row; a relationship
-    assignment reaches the column only during the flush, which then still
-    holds the remembered podcast.
+    Whether there is a move is read from attribute history alone, so a change
+    of other columns loads nothing, even when ``podcast_id`` is deferred or
+    expired. The column keeps active history (``suppression_guard``), so its
+    replaced value is known even when a commit expired the row; a
+    relationship assignment reaches the column only during the flush, which
+    then still holds the remembered podcast.
     """
     state = inspect(episode)
     column = state.attrs["podcast_id"].history
-    origin = column.deleted[0] if column.deleted else episode.podcast_id
     added = state.attrs["podcast"].history.added
     if added and added[0] is not None:
         destination = added[0].id
@@ -87,6 +96,7 @@ def _move_of(episode: Episode) -> Move | None:
     else:
         # Re-assigning the podcast an episode already has leaves no history.
         return None
+    origin = column.deleted[0] if column.deleted else episode.podcast_id
     return Move(origin=int(origin), destination=destination)
 
 
@@ -127,15 +137,17 @@ def hold_sqlite_write_lock(session: Session) -> None:
         session.execute(text("UPDATE content_suppressions SET id = id WHERE 0 = 1"))
 
 
-def lock_move_podcasts(*, session: Session, podcast_ids: Iterable[int]) -> None:
-    """Lock the podcasts moves leave and join ``FOR SHARE``, ascending id.
+def lock_podcast_rows(*, session: Session, podcast_ids: Iterable[int]) -> None:
+    """Lock podcast rows by id ``FOR SHARE``, ascending id.
 
-    A takedown of either takes the row ``FOR UPDATE``, so it waits for the
-    move, or the move waits for it and is then refused.
+    The rows a flush deletes, and those its moves leave and join. A takedown
+    takes the row ``FOR UPDATE``, so it waits for the flush, or the flush
+    waits for it and then reads its suppression and refuses.
 
     Args:
-        session: Session whose transaction moves the episodes.
-        podcast_ids: Remembered origins and destinations of the moves.
+        session: Session whose transaction deletes or moves.
+        podcast_ids: Deleted podcasts, and the moves' remembered origins and
+            destinations.
     """
     for batch in batches(podcast_ids):
         session.execute(
@@ -218,10 +230,10 @@ def _suppressed_podcasts(
 def refuse_moves(session: Session, moves: dict[int, Move]) -> None:
     """Refuse a stale move, and a move that leaves or joins a suppressed podcast.
 
-    Lock order: the podcasts the moves name ``FOR SHARE``, then the episode
-    rows, reading where each episode really is. If that is not the podcast
-    the session remembers, the move is refused as stale, before any podcast
-    found that way would have to be locked.
+    The caller has locked the podcasts the moves name ``FOR SHARE``
+    (``lock_podcast_rows``). This locks the episode rows, reading where each
+    episode really is; if that is not the podcast the session remembers, the
+    move is refused as stale instead of locking the podcast found that way.
 
     Raises:
         RetryableLockError: If an episode was moved since it was loaded.
@@ -230,14 +242,13 @@ def refuse_moves(session: Session, moves: dict[int, Move]) -> None:
     if not moves:
         return
     podcasts = set().union(*(move.podcasts for move in moves.values()))
-    lock_move_podcasts(session=session, podcast_ids=podcasts)
     persisted = lock_moved_episodes(session=session, episode_ids=moves)
     for episode_id, move in sorted(moves.items()):
         if persisted.get(episode_id) != move.origin:
             message = (
-                f"Episode {episode_id} is no longer in podcast {move.origin}"
-                " (another change moved it since it was loaded); reload it and"
-                " retry the move"
+                f"Episode {episode_id} is no longer in podcast {move.origin}:"
+                " another change moved it since this session loaded it. Roll"
+                " back, reload the episode and retry the move"
             )
             raise RetryableLockError(message)
     suppressed = _suppressed_podcasts(session, podcasts)
@@ -246,10 +257,10 @@ def refuse_moves(session: Session, moves: dict[int, Move]) -> None:
             raise ContentSuppressedError(
                 scope=suppressed[podcast_id],
                 episode_id=episode_id,
+                podcast_id=podcast_id,
                 row=(
                     f"Episode {episode_id} (moved from podcast {move.origin} to"
-                    f" podcast {move.destination}; a takedown suppresses podcast"
-                    f" {podcast_id})"
+                    f" {move.destination_label})"
                 ),
             )
 

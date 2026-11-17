@@ -16,13 +16,14 @@ import pytest
 from assertpy import assert_that
 from sqlalchemy import Engine, create_engine, event
 from sqlalchemy.exc import OperationalError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session, defer, sessionmaker
 
 from podex.database import enable_sqlite_foreign_keys
 from podex.models import (
     ContentSuppressedError,
     Episode,
-    EpisodeSummary,
+    Media,
+    MediaType,
     Mention,
     Podcast,
     TakedownSubjectType,
@@ -33,7 +34,6 @@ from tests.conftest import seed_catalog_graph
 from tests.takedown_support import (
     approve_takedown,
     recorded_statements,
-    summary_values,
 )
 
 _BOTH = ["unpublish_mentions", "suppress_derivatives"]
@@ -208,18 +208,68 @@ def test_move_holds_the_sqlite_write_lock_before_reading_coverage(
     assert_that(refused[1]).contains("database is locked")
 
 
-def test_lock_cache_is_dropped_when_the_flush_ends(db_session: Session) -> None:
-    """A later flush locks the episode's podcast again: it may have moved since."""
+def _selects(statements: list[str]) -> int:
+    return sum(item.lstrip().upper().startswith("SELECT") for item in statements)
+
+
+def test_repeated_flushes_reuse_the_podcast_lock_and_checks(
+    db_session: Session,
+) -> None:
+    """Flushes that move nothing keep the transaction's podcast lock and checks.
+
+    Five flushes of one mention each, for one episode and five media records:
+    the first locks the media row and the podcast and checks the pair; the
+    others lock only their new media row and check only their new pair.
+    """
     graph = seed_catalog_graph(db_session)
-    db_session.add(Mention(episode_id=graph.episode_id, media_id=graph.media_id))
-    db_session.flush()
-    db_session.add(
-        EpisodeSummary(**summary_values(graph.episode_id, "later", "summary")),
+    media = [Media(type=MediaType.BOOK, title=f"Work {index}") for index in range(5)]
+    db_session.add_all(media)
+    db_session.commit()
+    counts: list[int] = []
+
+    for item in media:
+        db_session.add(Mention(episode_id=graph.episode_id, media_id=item.id))
+        with recorded_statements(_engine(db_session)) as statements:
+            db_session.flush()
+        counts.append(_selects(statements))
+
+    assert_that(counts).is_equal_to([3, 2, 2, 2, 2])
+
+
+def test_title_change_with_a_deferred_podcast_column_loads_nothing(
+    db_session: Session,
+) -> None:
+    """Deciding that a change is not a move reads only attribute history."""
+    graph = seed_catalog_graph(db_session)
+    db_session.expunge_all()
+    episode = (
+        db_session.query(Episode)
+        .options(defer(Episode.podcast_id))
+        .filter(Episode.id == graph.episode_id)
+        .one()
     )
+    episode.title = "Renamed"
 
     with recorded_statements(_engine(db_session)) as statements:
         db_session.flush()
 
-    assert_that(
-        [item for item in statements if "FROM podcasts JOIN episodes" in item],
-    ).is_length(1)
+    assert_that(_selects(statements)).is_zero()
+
+
+def test_stale_move_message_asks_for_a_rollback_and_reload(
+    sessions: Callable[[], Session],
+) -> None:
+    """The stale refusal says what the caller must do before retrying."""
+    catalog = _catalog(sessions)
+    stale = sessions()
+    episode = stale.get_one(Episode, catalog.episode)
+    _move(sessions, catalog.episode, catalog.second)
+    episode.podcast_id = catalog.third
+
+    with pytest.raises(RetryableLockError) as refused:
+        stale.flush()
+    stale.close()
+
+    message = str(refused.value).lower()
+    assert_that(message).contains("roll back", "reload")
+    assert_that(message).does_not_contain("as it is")

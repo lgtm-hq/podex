@@ -320,6 +320,39 @@ def test_stale_copy_after_a_takedown_of_the_new_podcast_is_refused(
     assert_that(_suppressed(postgres, shows.episode)).is_true()
 
 
+def _delete_podcast(db: Session, *, podcast_id: int) -> int:
+    """Delete a podcast through the ORM and flush without committing.
+
+    Returns:
+        The deleted podcast id.
+    """
+    db.delete(db.get_one(Podcast, podcast_id))
+    db.flush()
+    return podcast_id
+
+
+def test_podcast_delete_waiting_on_its_takedown_is_refused(
+    postgres: PostgresDatabase,
+) -> None:
+    """The delete locks the podcast before reading its coverage, then refuses.
+
+    Without that lock it would read no suppression, wait at its ``DELETE``,
+    and fail on the foreign key instead.
+    """
+    shows = _seed(postgres)
+
+    with pytest.raises(ContentSuppressedError, match=f"Podcast {shows.third} "):
+        run_overlapping(
+            postgres,
+            first=partial(_take_down_podcast, podcast_id=shows.third),
+            second=partial(_delete_podcast, podcast_id=shows.third),
+            expected=_MOVE_WAITS,
+        )
+
+    with postgres.sessions() as db:
+        assert_that(db.get(Podcast, shows.third)).is_not_none()
+
+
 def _take_down_episode(postgres: PostgresDatabase, shows: _Shows) -> None:
     with postgres.sessions() as db:
         approve_takedown(

@@ -66,7 +66,8 @@ class ContentSuppressedError(ValueError):
         episode_id: Episode the refused content belongs to, or ``None`` when
             only a podcast is named.
         media_id: Media of the refused mention, for mention writes.
-        podcast_id: Podcast the refusal names when it names no episode.
+        podcast_id: Suppressed podcast the refusal names, for a podcast
+            delete or a move next to it; the message then names the podcast.
         row: The refused row and why, such as ``Mention 5 (moved out of
             its pair)``, when a flush refused it.
     """
@@ -81,9 +82,9 @@ class ContentSuppressedError(ValueError):
         row: str = "",
     ) -> None:
         subject = (
-            f"episode {episode_id}"
-            if episode_id is not None
-            else f"podcast {podcast_id}"
+            f"podcast {podcast_id}"
+            if podcast_id is not None
+            else f"episode {episode_id}"
         )
         if media_id is not None:
             subject = f"{subject} and media {media_id}"
@@ -101,8 +102,9 @@ class ContentSuppressedError(ValueError):
 class RetryableLockError(ValueError):
     """Content changed, or a lock was busy, while locks were being taken.
 
-    Nothing was written; the operation can be retried as it is. Routes map
-    ``ValueError`` to 409.
+    Nothing was written. The caller rolls back and retries; when the message
+    names a stale copy of a row (an episode moved since it was loaded), it
+    reloads that row first. Routes map ``ValueError`` to 409.
     """
 
 

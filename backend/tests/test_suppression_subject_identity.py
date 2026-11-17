@@ -13,7 +13,7 @@ from dataclasses import dataclass
 
 import pytest
 from assertpy import assert_that
-from sqlalchemy import Engine, delete
+from sqlalchemy import Engine, delete, inspect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -541,3 +541,86 @@ def test_assigning_the_same_podcast_again_is_not_a_move(db_session: Session) -> 
     db_session.commit()
 
     assert_that(episode.podcast_id).is_equal_to(shows.suppressed)
+
+
+def test_model_schema_restricts_deleting_a_suppressed_subject(
+    db_session: Session,
+) -> None:
+    """The schema ``create_all`` builds refuses, as revision 0026 does."""
+    engine = db_session.get_bind()
+    if not isinstance(engine, Engine):
+        raise TypeError(type(engine))
+
+    rules = {
+        key["constrained_columns"][0]: key["options"].get("ondelete")
+        for key in inspect(engine).get_foreign_keys("content_suppressions")
+        if key["constrained_columns"][0] in {"podcast_id", "episode_id"}
+    }
+
+    assert_that(rules).is_equal_to(
+        {"podcast_id": "RESTRICT", "episode_id": "RESTRICT"},
+    )
+
+
+def test_refused_move_into_a_suppressed_podcast_names_that_podcast(
+    db_session: Session,
+) -> None:
+    """The message says the destination has a takedown, not that the episode has."""
+    shows = _shows(db_session)
+    newcomer = Episode(podcast_id=shows.open, title="Newcomer")
+    db_session.add(newcomer)
+    db_session.commit()
+    newcomer.podcast_id = shows.suppressed
+
+    with pytest.raises(ContentSuppressedError) as refused:
+        db_session.flush()
+
+    message = str(refused.value)
+    assert_that(message).contains(
+        f"for podcast {shows.suppressed} are suppressed by an approved takedown",
+        f"Episode {newcomer.id} (moved from podcast {shows.open} to podcast"
+        f" {shows.suppressed})",
+    )
+    assert_that(message).does_not_contain(f"for episode {newcomer.id} are")
+
+
+def test_refused_move_to_a_new_podcast_does_not_name_a_missing_id(
+    db_session: Session,
+) -> None:
+    """A podcast the same flush creates is named as new, not as podcast None."""
+    shows = _shows(db_session)
+    _move_to_new_podcast(shows)
+
+    with pytest.raises(ContentSuppressedError) as refused:
+        db_session.flush()
+
+    assert_that(str(refused.value)).contains("to a new podcast")
+    assert_that(str(refused.value)).does_not_contain("None")
+
+
+def test_deleting_a_podcast_locks_it_before_reading_its_coverage(
+    db_session: Session,
+) -> None:
+    """The podcast row is locked first, so a racing takedown is seen, not hit."""
+    graph = seed_catalog_graph(db_session)
+    spare = Podcast(name="Spare", slug="spare")
+    db_session.add(spare)
+    db_session.commit()
+    engine = db_session.get_bind()
+    if not isinstance(engine, Engine):
+        raise TypeError(type(engine))
+    db_session.delete(db_session.get_one(Podcast, spare.id))
+
+    with recorded_statements(engine) as statements:
+        db_session.flush()
+
+    guard = [
+        item
+        for item in statements
+        if "FROM podcasts \nWHERE podcasts.id IN" in item
+        or "JOIN content_suppressions" in item
+    ]
+    assert_that(guard).is_length(2)
+    assert_that(guard[0]).contains("FROM podcasts \nWHERE podcasts.id IN")
+    assert_that(guard[1]).contains("JOIN content_suppressions")
+    assert_that(db_session.get(Podcast, graph.podcast_id)).is_not_none()

@@ -1,41 +1,58 @@
 """Guarded tables are written through the ORM unit of work only.
 
 The suppression guard sees ORM flushes. Core ``insert``/``update``/``delete``
-(including the dialect variants and their upserts), ``Query.update``/
-``Query.delete``, raw SQL and the ``bulk_*`` session methods skip it, so no
-module may write a guarded table that way. The scan parses each module with
-``ast`` and resolves its imports, so aliases (``insert as sqlite_insert``,
-``Mention as M``, ``import sqlalchemy as sa``, ``from ..models import
-Mention``) are followed. A statement's target counts as the model whether it
-is given positionally or as ``table=``, through ``aliased(...)`` or
-``__table__``, or as a table named by string (``table("mentions")``,
-``metadata.tables["mentions"]``). Raw SQL is read from string literals and
-from the literal parts of f-strings and of ``%``, ``.format`` and ``+``
-expressions, passed positionally or as ``text=``. Comments are removed first;
-targets may be quoted, schema-qualified or follow ``ONLY``. ``INSERT``,
-``INSERT OR ...``, ``REPLACE``, ``MERGE``, ``UPDATE``, ``DELETE``,
-``TRUNCATE`` and ``COPY ... FROM`` all count, and every write in a string is
-reported before exemptions apply.
+(including the dialect variants, their upserts and the ``Insert``,
+``Update`` and ``Delete`` classes), ``Query.update``/``Query.delete``, raw
+SQL and the ``bulk_*`` session methods skip it, so no module may write a
+guarded table that way. The scan parses each module with ``ast`` and
+resolves its imports, so aliases (``insert as sqlite_insert``, ``Mention as
+M``, ``import sqlalchemy as sa``, ``from ..models import Mention``) are
+followed. A statement's target counts as the model whether it is given
+positionally or as ``table=``, through ``aliased(...)`` or ``__table__``, or
+as a table named by string (``table("mentions")``,
+``metadata.tables["mentions"]``).
+
+Raw SQL passed to ``execute``, ``exec_driver_sql``, ``executemany``,
+``executescript`` or ``text`` (positionally or as ``text=``) is read from
+string and bytes literals and from the literal parts of f-strings, of ``%``,
+``.format``, ``+`` and ``sep.join([...])`` expressions, and of literals
+passed through a text-returning string method (``.strip()``,
+``.replace(...)``, ...) or ``dedent``. String literals and comments are
+tokenised, so a comment marker inside a literal hides nothing. Targets may
+be quoted, parenthesised, qualified by up to two names or follow ``ONLY``.
+``INSERT``, ``INSERT OR ...``, ``REPLACE``, ``MERGE``, ``UPDATE``,
+``DELETE``, ``TRUNCATE`` (every table it lists) and ``COPY ... FROM`` all
+count, and every write in a string is reported before exemptions apply.
 
 ``Episode`` and ``Podcast`` are scanned the same way (ADR 0017): an update or
 an upsert can move an episode to another podcast past the guard's refusal,
 an insert can bring back a deleted row's id, and a delete would skip the
 guard's refusal.
 
-What it cannot see: a write built dynamically (a model or table chosen at
-run time, SQL or a table object held in a variable), a write through a helper
-defined in another package, and code outside ``backend/src``,
-``backend/scripts`` and ``backend/alembic``. ``podex.suppression_backfill``
-writes through a table object held in a module variable, so the scan does not
-see its writes; they go to ``content_suppressions`` and the change counter,
-which the scan does not cover. An ORM bulk statement run through the session
+An exemption grants exact writes: verb, table, the columns an update sets,
+and how many times. Any other write in the exempt module is reported.
+
+What it cannot see:
+
+- a write built dynamically: a model or table chosen at run time, SQL or a
+  table object held in a variable, SQL assembled in a loop or from values a
+  replacement inserts (``"UPDATE x".replace("x", name)``);
+- a write through a helper defined in another package, or through a call it
+  does not know to return text;
+- code outside ``backend/src``, ``backend/scripts`` and ``backend/alembic``.
+
+``podex.suppression_backfill`` writes through a table object held in a module
+variable, so the scan does not see its writes; they go to
+``content_suppressions`` and the change counter, which the scan does not
+cover. An ORM bulk statement run through the session
 (``session.execute(update(Episode)...)``) skips the flush guard at run time;
-only this scan refuses it. A new bypass fails here until it is removed or allowed
-in ``_EXEMPT`` with a reason that covers exactly its verb and table.
+only this scan refuses it. A new bypass fails here until it is removed or
+granted in ``_EXEMPT`` with a reason that covers exactly that write.
 """
 
 import ast
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -53,65 +70,93 @@ _TABLE_OF_MODEL: dict[str, str] = {
 }
 _TABLES = frozenset(_TABLE_OF_MODEL.values())
 _CORE_WRITES = frozenset({"insert", "update", "delete"})
+_DML_CLASSES = {"Insert": "insert", "Update": "update", "Delete": "delete"}
+_RAW_SQL_METHODS = frozenset(
+    {"execute", "exec_driver_sql", "executemany", "executescript"},
+)
+_TEXT_METHODS = frozenset(
+    {
+        "casefold",
+        "expandtabs",
+        "format",
+        "lower",
+        "lstrip",
+        "removeprefix",
+        "removesuffix",
+        "replace",
+        "rstrip",
+        "strip",
+        "upper",
+    },
+)
 _BULK_METHODS = frozenset(
     {"bulk_save_objects", "bulk_insert_mappings", "bulk_update_mappings"},
 )
 _TABLE_FACTORIES = frozenset({"table", "Table"})
-_SQL_COMMENTS = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
-_IDENTIFIER = r"[`\"\[]?\w+[`\"\]]?"
-_TARGET = rf"(?:{_IDENTIFIER}\s*\.\s*)?{_IDENTIFIER}"
+_IDENTIFIER = r"(?:\"[^\"]+\"|`[^`]+`|\[[^\]]+\]|\w+)"
+_NAME = rf"{_IDENTIFIER}(?:\s*\.\s*{_IDENTIFIER}){{0,2}}"
+_TARGET = rf"\(?\s*{_NAME}\s*\)?"
 _SQL_WRITE = re.compile(
     r"(?<![\w.])(?P<verb>insert(?:\s+or\s+\w+)?\s+into|replace\s+into"
     r"|merge\s+into|update(?:\s+or\s+\w+)?(?:\s+only)?"
-    r"|delete\s+from(?:\s+only)?)\s+"
+    r"|delete\s+from(?:\s+only)?)\s*"
     rf"(?P<target>{_TARGET})",
 )
 _SQL_TRUNCATE = re.compile(
-    r"(?<![\w.])truncate(?:\s+table)?(?:\s+only)?\s+"
-    rf"(?P<targets>{_TARGET}(?:\s*,\s*{_TARGET})*)",
+    r"(?<![\w.])truncate(?:\s+table)?\s+"
+    rf"(?P<targets>(?:only\s+)?{_TARGET}(?:\s*,\s*(?:only\s+)?{_TARGET})*)",
 )
 _SQL_COPY_FROM = re.compile(
-    rf"(?<![\w.])copy\s+(?P<target>{_TARGET})(?:\s*\([^)]*\))?\s+from\b",
+    rf"(?<![\w.])copy\s+(?P<target>{_NAME})(?:\s*\([^)]*\))?\s+from\b",
 )
+_SQL_SET = re.compile(r"\s*set\s+(?P<sets>.*?)(?:\s+(?:where|from|returning)\b|;|$)")
 _PLACEHOLDER = " x "
 """Stands in for an interpolated value when literal SQL parts are joined."""
+
+_Write = tuple[str, str, tuple[str, ...]]
+"""A write's verb, table, and the columns an update sets (empty otherwise)."""
 
 
 @dataclass(frozen=True, slots=True)
 class _Exemption:
-    """Writes one module may make around the flush, and why."""
+    """Writes one module may make around the flush, how often, and why."""
 
     reason: str
-    writes: frozenset[tuple[str, str]]
+    writes: dict[_Write, int]
 
 
+_TRANSCRIPT_TEXT = ("cleaned_at", "cleaned_text", "digest_created_at", "digest_text")
 _EXEMPT = {
     "src/podex/services/takedown_requests.py": _Exemption(
         reason=(
             "takedown execution deletes an episode's derived rows and clears its"
             " derived transcript text in bulk; it only removes content"
         ),
-        writes=frozenset(
-            {
-                ("delete", "derivative_generation_runs"),
-                ("delete", "semantic_chunks"),
-                ("delete", "episode_summaries"),
-                ("update", "transcripts"),
-            },
-        ),
+        writes={
+            ("delete", "derivative_generation_runs", ()): 1,
+            ("delete", "semantic_chunks", ()): 1,
+            ("delete", "episode_summaries", ()): 1,
+            ("update", "transcripts", _TRANSCRIPT_TEXT): 1,
+        },
     ),
 }
 
 
 @dataclass(frozen=True, slots=True)
 class _Finding:
-    """One bypass write found in a module: its verb, table and form."""
+    """One bypass write found in a module: its verb, table, columns and form."""
 
     path: str
     line: int
     verb: str
     table: str
     reason: str
+    columns: tuple[str, ...] = ()
+
+    @property
+    def write(self) -> _Write:
+        """The write as an exemption names it."""
+        return (self.verb, self.table, self.columns)
 
 
 @dataclass(slots=True)
@@ -152,13 +197,15 @@ def _imports(tree: ast.Module) -> _Module:
 
 
 def _is_core_write(module: _Module, func: ast.expr) -> str | None:
-    """Return ``insert``/``update``/``delete`` for a SQLAlchemy write constructor."""
+    """Return the verb of a SQLAlchemy write constructor or DML class, if any."""
     origin = module.qualified(func)
     if origin is None:
         return None
-    verb = origin.rsplit(".", 1)[-1]
-    if verb in _CORE_WRITES and (origin == verb or origin.startswith("sqlalchemy")):
-        return verb
+    name = origin.rsplit(".", 1)[-1]
+    if name in _CORE_WRITES and (origin == name or origin.startswith("sqlalchemy")):
+        return name
+    if name in _DML_CLASSES and origin.startswith("sqlalchemy"):
+        return _DML_CLASSES[name]
     return None
 
 
@@ -221,57 +268,107 @@ def _queried(module: _Module, node: ast.expr) -> str | None:
 
 
 def _table_name(target: str) -> str:
-    """Return a target's table name without quotes, spaces or schema."""
-    return re.sub(r"[`\"\[\]\s]", "", target).rsplit(".", 1)[-1]
+    """Return a target's table name without quotes, brackets, schema or ``ONLY``."""
+    bare = re.sub(r"^\s*only\s+", "", target)
+    return re.sub(r"[`\"\[\]()\s]", "", bare).rsplit(".", 1)[-1]
+
+
+def _normalise_sql(sql: str) -> str:
+    """Lower-case SQL with string literals emptied and comments removed.
+
+    Literals are read before comments, so a comment marker inside a literal
+    (``'--'``, ``'/*'``) neither hides nor starts anything. Double-quoted
+    identifiers are kept.
+    """
+    parts: list[str] = []
+    index = 0
+    while index < len(sql):
+        if sql[index] in "'\"":
+            quote = sql[index]
+            end = index + 1
+            while end < len(sql) and not (
+                sql[end] == quote and sql[end + 1 : end + 2] != quote
+            ):
+                end += 2 if sql[end] == quote else 1
+            parts.append(" '' " if quote == "'" else sql[index : end + 1])
+            index = end + 1
+        elif sql.startswith(("--", "/*"), index):
+            closer = "\n" if sql.startswith("--", index) else "*/"
+            end = sql.find(closer, index + 2)
+            parts.append(" ")
+            index = len(sql) if end < 0 else end + len(closer)
+        else:
+            parts.append(sql[index])
+            index += 1
+    return " ".join("".join(parts).lower().split())
+
+
+def _set_columns(rest: str) -> tuple[str, ...]:
+    """Return the sorted columns an ``UPDATE``'s ``SET`` clause assigns."""
+    match = _SQL_SET.match(rest)
+    if match is None:
+        return ()
+    names = (
+        _table_name(assignment.split("=", 1)[0])
+        for assignment in match["sets"].split(",")
+        if "=" in assignment
+    )
+    return tuple(sorted(name for name in names if name))
+
+
+def _sql_writes(sql: str) -> list[_Write]:
+    """Return each write a SQL string makes to a scanned table, with columns."""
+    cleaned = _normalise_sql(sql)
+    writes: list[_Write] = []
+    for match in _SQL_WRITE.finditer(cleaned):
+        verb = match["verb"].split()[0]
+        verb = {"replace": "insert", "merge": "update"}.get(verb, verb)
+        columns = _set_columns(cleaned[match.end() :]) if verb == "update" else ()
+        writes.append((verb, _table_name(match["target"]), columns))
+    for match in _SQL_TRUNCATE.finditer(cleaned):
+        writes.extend(
+            ("delete", _table_name(target), ())
+            for target in match["targets"].split(",")
+        )
+    for match in _SQL_COPY_FROM.finditer(cleaned):
+        writes.append(("insert", _table_name(match["target"]), ()))
+    return [write for write in writes if write[1] in _TABLES]
 
 
 def sql_writes(sql: str) -> list[tuple[str, str]]:
     """Return each ``(verb, table)`` a SQL string writes to a scanned table.
 
-    Comments are removed first; a target may be quoted (``"t"``, `` `t` ``,
-    ``[t]``), schema-qualified or follow ``ONLY``. ``INSERT OR ...``,
-    ``REPLACE`` and ``COPY ... FROM`` are inserts, ``MERGE`` an update and
-    ``TRUNCATE`` a delete of every table it lists.
+    String literals and comments are tokenised first; a target may be quoted
+    (``"t"``, `` `t` ``, ``[t]``), parenthesised, qualified by up to two
+    names, or follow ``ONLY``. ``INSERT OR ...``, ``REPLACE`` and
+    ``COPY ... FROM`` are inserts, ``MERGE`` an update and ``TRUNCATE`` a
+    delete of every table it lists.
     """
-    cleaned = " ".join(_SQL_COMMENTS.sub(" ", sql).lower().split())
-    writes: list[tuple[str, str]] = []
-    for match in _SQL_WRITE.finditer(cleaned):
-        verb = match["verb"].split()[0]
-        verb = {"replace": "insert", "merge": "update"}.get(verb, verb)
-        writes.append((verb, _table_name(match["target"])))
-    for match in _SQL_TRUNCATE.finditer(cleaned):
-        writes.extend(
-            ("delete", _table_name(target)) for target in match["targets"].split(",")
-        )
-    for match in _SQL_COPY_FROM.finditer(cleaned):
-        writes.append(("insert", _table_name(match["target"])))
-    return [(verb, table) for verb, table in writes if table in _TABLES]
+    return [(verb, table) for verb, table, _columns in _sql_writes(sql)]
 
 
-def _template(node: ast.expr) -> ast.expr | None:
-    """Return the template of a ``%`` or ``.format`` expression, if it is one."""
+def _wrapped(node: ast.expr) -> ast.expr | None:
+    """Return the literal inside a text-returning wrapper, if ``node`` is one.
+
+    The template of ``%`` and ``.format``, the receiver of a string method
+    that returns text (``.strip()``, ``.replace(...)``, ...), and the
+    argument of ``dedent(...)``.
+    """
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod):
         return node.left
-    if (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "format"
-    ):
+    if not isinstance(node, ast.Call):
+        return None
+    if isinstance(node.func, ast.Attribute) and node.func.attr in _TEXT_METHODS:
         return node.func.value
+    name = node.func.attr if isinstance(node.func, ast.Attribute) else ""
+    name = node.func.id if isinstance(node.func, ast.Name) else name
+    if name == "dedent" and node.args:
+        return node.args[0]
     return None
 
 
-def literal_sql(node: ast.expr) -> str | None:
-    """Return the SQL text a statically written expression spells, if any.
-
-    String literals count, and so do the literal parts of an f-string and of
-    ``%``, ``.format`` and ``+`` expressions; interpolated values become a
-    placeholder. A string or table held in a variable is not followed.
-    """
-    if (template := _template(node)) is not None:
-        return literal_sql(template)
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
+def _composed(node: ast.expr) -> str | None:
+    """Return the literal text of an f-string, ``+`` or ``sep.join([...])``."""
     if isinstance(node, ast.JoinedStr):
         return "".join(
             (
@@ -282,53 +379,95 @@ def literal_sql(node: ast.expr) -> str | None:
             for part in node.values
         )
     if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
-        parts = [literal_sql(node.left), literal_sql(node.right)]
-        if all(part is None for part in parts):
-            return None
-        return "".join(part if part is not None else _PLACEHOLDER for part in parts)
-    return None
+        pieces: list[ast.expr] = [node.left, node.right]
+        separator = ""
+    elif (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "join"
+        and len(node.args) == 1
+        and isinstance(node.args[0], (ast.List, ast.Tuple))
+    ):
+        pieces = list(node.args[0].elts)
+        separator = literal_sql(node.func.value) or " "
+    else:
+        return None
+    parts = [literal_sql(piece) for piece in pieces]
+    if all(part is None for part in parts):
+        return None
+    return separator.join(part if part is not None else _PLACEHOLDER for part in parts)
 
 
-def _raw_sql_writes(call: ast.Call) -> list[tuple[str, str]]:
-    """Return every scanned ``(verb, table)`` the call's SQL literals write."""
+def literal_sql(node: ast.expr) -> str | None:
+    """Return the SQL text a statically written expression spells, if any.
+
+    String and bytes literals count, and so do the literal parts of an
+    f-string and of ``%``, ``.format``, ``+`` and ``sep.join([...])``
+    expressions, and literals passed through a text-returning string method
+    or ``dedent``; interpolated values become a placeholder. A string or
+    table held in a variable is not followed.
+    """
+    if (inner := _wrapped(node)) is not None:
+        return literal_sql(inner)
+    if isinstance(node, ast.Constant) and isinstance(node.value, (str, bytes)):
+        value = node.value
+        return value if isinstance(value, str) else value.decode("utf-8", "replace")
+    return _composed(node)
+
+
+def _raw_sql_writes(call: ast.Call) -> list[_Write]:
+    """Return every scanned write the call's SQL literals make."""
     arguments = [*call.args, *(keyword.value for keyword in call.keywords)]
-    writes: list[tuple[str, str]] = []
+    writes: list[_Write] = []
     for argument in arguments:
         sql = literal_sql(argument)
         if sql is not None:
-            writes.extend(sql_writes(sql))
+            writes.extend(_sql_writes(sql))
     return writes
 
 
-def _writes(module: _Module, node: ast.Call) -> list[tuple[str, str, str]]:
-    """Return ``(verb, table, form)`` for each write a call makes around the flush."""
+def _dict_columns(call: ast.Call) -> tuple[str, ...]:
+    """Return the sorted columns a ``Query.update({...})`` sets."""
+    if not call.args or not isinstance(call.args[0], ast.Dict):
+        return ()
+    names: list[str] = []
+    for key in call.args[0].keys:
+        if isinstance(key, ast.Attribute):
+            names.append(key.attr)
+        elif isinstance(key, ast.Constant) and isinstance(key.value, str):
+            names.append(key.value)
+    return tuple(sorted(names))
+
+
+def _writes(module: _Module, node: ast.Call) -> list[tuple[_Write, str]]:
+    """Return each write a call makes around the flush, with its form."""
     method = node.func.attr if isinstance(node.func, ast.Attribute) else None
     verb = _is_core_write(module, node.func)
     if method in _BULK_METHODS:
         bulk = (_target(module, node.args[0]) if node.args else None) or "?"
-        return [("bulk", bulk, f"session.{method}")]
+        return [(("bulk", bulk, ()), f"session.{method}")]
     if verb and (constructed := _statement_target(module, node)):
-        return [(verb, constructed, f"Core {verb}({constructed})")]
+        return [((verb, constructed, ()), f"Core {verb}({constructed})")]
     if (
         method in _CORE_WRITES
         and isinstance(node.func, ast.Attribute)
         and (own := _target(module, node.func.value))
     ):
-        return [(method, own, f"{own}.{method}()")]
+        return [((method, own, ()), f"{own}.{method}()")]
     if (
         method in {"update", "delete"}
         and isinstance(node.func, ast.Attribute)
         and (queried := _queried(module, node.func.value))
     ):
-        return [(method, queried, f"Query({queried}).{method}()")]
+        columns = _dict_columns(node) if method == "update" else ()
+        return [((method, queried, columns), f"Query({queried}).{method}()")]
     if (
-        method in {"execute", "exec_driver_sql"}
+        method in _RAW_SQL_METHODS
         or verb is None
         and (module.qualified(node.func) or "").endswith("text")
     ):
         return [
-            (written, table, f"raw SQL {written} {table}")
-            for written, table in _raw_sql_writes(node)
+            (write, f"raw SQL {write[0]} {write[1]}") for write in _raw_sql_writes(node)
         ]
     return []
 
@@ -341,13 +480,18 @@ def find_bypass_writes(source: str, path: str) -> list[_Finding]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
-        for verb, table, reason in _writes(module, node):
+        for (verb, table, columns), reason in _writes(module, node):
             findings.append(
                 _Finding(
-                    path=path, line=node.lineno, verb=verb, table=table, reason=reason
+                    path=path,
+                    line=node.lineno,
+                    verb=verb,
+                    table=table,
+                    reason=reason,
+                    columns=columns,
                 ),
             )
-    return findings
+    return sorted(findings, key=lambda finding: finding.line)
 
 
 def _exemption(relative: str) -> _Exemption | None:
@@ -358,12 +502,21 @@ def _exemption(relative: str) -> _Exemption | None:
 
 
 def unexempted(findings: list[_Finding]) -> list[_Finding]:
-    """Drop the findings an exemption covers by both verb and table."""
+    """Drop the findings an exemption grants, by write and number of times.
+
+    A write matches by verb, table and the columns an update sets; each grant
+    covers as many occurrences as it names, in source order.
+    """
+    remaining: dict[str, dict[_Write, int]] = {}
     kept: list[_Finding] = []
     for finding in findings:
         exemption = _exemption(finding.path)
-        if exemption is None or (finding.verb, finding.table) not in exemption.writes:
-            kept.append(finding)
+        if exemption is not None:
+            left = remaining.setdefault(finding.path, dict(exemption.writes))
+            if left.get(finding.write, 0) > 0:
+                left[finding.write] -= 1
+                continue
+        kept.append(finding)
     return kept
 
 
@@ -388,8 +541,8 @@ def test_every_exemption_is_still_used_exactly() -> None:
     """Each exempt module exists and still makes every write it is allowed."""
     for path, exemption in _EXEMPT.items():
         assert_that((_BACKEND / path).exists()).described_as(path).is_true()
-        made = {(finding.verb, finding.table) for finding in _scan(path)}
-        assert_that(made).described_as(path).is_equal_to(set(exemption.writes))
+        made = Counter(finding.write for finding in _scan(path))
+        assert_that(dict(made)).described_as(path).is_equal_to(exemption.writes)
 
 
 @pytest.mark.parametrize(
@@ -415,7 +568,8 @@ def test_every_write_in_a_string_is_reported_before_exemptions() -> None:
     """An exempt write cannot hide a second write in the same SQL string."""
     path = "src/podex/services/takedown_requests.py"
     snippet = (
-        "db.execute(text('UPDATE transcripts SET cleaned_text = NULL;"
+        "db.execute(text('UPDATE transcripts SET cleaned_text = NULL,"
+        " cleaned_at = NULL, digest_text = NULL, digest_created_at = NULL;"
         " UPDATE episodes SET podcast_id = 2'))"
     )
 
@@ -427,6 +581,23 @@ def test_every_write_in_a_string_is_reported_before_exemptions() -> None:
     assert_that(
         [(item.verb, item.table) for item in unexempted(findings)],
     ).is_equal_to([("update", "episodes")])
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "db.execute(text('UPDATE transcripts SET raw_text = NULL'))",
+        "db.query(Transcript).filter(x).update({Transcript.raw_text: None})",
+        "db.query(SemanticChunk).filter(x).delete()\n"
+        "db.query(SemanticChunk).filter(y).delete()",
+    ],
+    ids=["other-columns-raw", "other-columns-query", "second-delete"],
+)
+def test_an_exemption_matches_only_the_exact_write_it_grants(snippet: str) -> None:
+    """Other columns, or one more occurrence, of an exempt table are reported."""
+    path = "src/podex/services/takedown_requests.py"
+
+    assert_that(unexempted(find_bypass_writes(_HEADER + snippet, path))).is_length(1)
 
 
 def test_an_exempt_write_is_not_reported() -> None:
@@ -553,6 +724,43 @@ _BYPASSES = {
         "conn.exec_driver_sql('COPY episodes (id, podcast_id) FROM STDIN')"
     ),
     "mention-f-string": 'db.execute(text(f"DELETE FROM mentions WHERE id = {x}"))',
+    "literal-quote-hides-no-comment": (
+        "db.execute(text(\"SELECT '--'; UPDATE episodes SET podcast_id = 2\"))"
+    ),
+    "update-only-parenthesised": (
+        "db.execute(text('UPDATE ONLY (episodes) SET podcast_id = 2'))"
+    ),
+    "delete-only-parenthesised": "db.execute(text('DELETE FROM ONLY (episodes)'))",
+    "three-part-name": (
+        "db.execute(text('UPDATE podex.public.episodes SET podcast_id = 2'))"
+    ),
+    "strip-call": (
+        "db.execute(text('  UPDATE episodes SET podcast_id = 2  '.strip()))"
+    ),
+    "replace-call": (
+        "db.execute(text('UPDATE episodes SET podcast_id = X'.replace('X', '2')))"
+    ),
+    "dedent-call": (
+        "import textwrap\n"
+        "db.execute(text(textwrap.dedent('UPDATE episodes SET podcast_id = 2')))"
+    ),
+    "join-call": (
+        "db.execute(text(' '.join(['UPDATE episodes', 'SET podcast_id = 2'])))"
+    ),
+    "executemany": "cursor.executemany('UPDATE episodes SET podcast_id = ?', rows)",
+    "executescript": "conn.executescript('DELETE FROM podcasts WHERE id = 1')",
+    "dml-update-class": (
+        "from sqlalchemy.sql.dml import Update\n"
+        "db.execute(Update(Episode).values(podcast_id=2))"
+    ),
+    "dml-delete-class": (
+        "from sqlalchemy.sql.dml import Delete\ndb.execute(Delete(Podcast))"
+    ),
+    "dml-insert-class": (
+        "from sqlalchemy.sql.dml import Insert\n"
+        "db.execute(Insert(Episode).values(id=1))"
+    ),
+    "bytes-literal": "conn.exec_driver_sql(b'UPDATE episodes SET podcast_id = 2')",
 }
 
 
@@ -615,6 +823,20 @@ def test_scan_ignores_orm_writes_reads_and_unguarded_tables() -> None:
         ),
         ("COPY public.episodes FROM '/tmp/x'", [("insert", "episodes")]),
         ("MERGE INTO mentions USING s ON true", [("update", "mentions")]),
+        (
+            "UPDATE transcripts SET cleaned_text = NULL WHERE '--' = '--';"
+            " UPDATE episodes SET podcast_id = 2",
+            [("update", "transcripts"), ("update", "episodes")],
+        ),
+        (
+            "SELECT '/*'; DELETE FROM podcasts; SELECT '*/'",
+            [("delete", "podcasts")],
+        ),
+        (
+            "TRUNCATE TABLE transcripts, ONLY episodes",
+            [("delete", "transcripts"), ("delete", "episodes")],
+        ),
+        ("UPDATE x SET note = 'UPDATE episodes SET a = 1'", []),
     ],
 )
 def test_sql_targets_are_read_through_quotes_schemas_and_variants(

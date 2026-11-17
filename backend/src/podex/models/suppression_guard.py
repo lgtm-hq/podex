@@ -31,13 +31,14 @@ Lock order, the same as the media merge (media rows before podcast rows):
 1. media rows of guarded mentions, ``FOR KEY SHARE``, ascending id;
 2. podcast rows of every episode touched or deleted, ``FOR SHARE``,
    ascending id within each statement of up to ``SUPPRESSION_BATCH_SIZE``
-   episodes; then the podcasts moves leave (as the session remembers them)
-   and join, ``FOR SHARE``, ascending id;
+   episodes; then, by id and ascending, the podcasts the flush deletes and
+   those moves leave (as the session remembers them) and join;
 3. rows of episodes the flush moves, ``FOR NO KEY UPDATE``, ascending id,
    reading the podcast each is really in (on SQLite, the database write lock
    is taken first instead). A move whose episode is no longer in the
-   remembered podcast is refused there, so no podcast is locked after an
-   episode row.
+   remembered podcast is refused there instead of locking that podcast.
+   The check after the write can still lock the podcast of a guarded row
+   written in the same flush, after these episode rows (ADR 0017).
 
 The podcast order across statements cannot form a deadlock. Share locks do
 not conflict with each other. The locks that do conflict with them (a
@@ -56,14 +57,12 @@ while it waited for that lock is seen.
 
 Checks are batched: each flush runs a bounded number of statements
 (``SUPPRESSION_BATCH_SIZE`` ids or pairs each), independent of how many rows
-it writes. Passed checks are remembered until the flush ends, and
-forgotten as soon as this session writes a suppression row, so a takedown
-executed in the same transaction applies to later writes. Episode podcast
-locks are remembered until the flush ends, and those taken by authorisation
-(``lock_episode_text``) until the end of the next flush; another transaction
-may move an episode in between. A move never relies on them: it locks the
-podcasts it names itself. Media locks are remembered until the transaction or
-savepoint ends.
+it writes. A check that passed, and a lock taken, are remembered until the
+transaction or savepoint ends; a check is forgotten as soon as this session
+writes a suppression row, so a takedown executed in the same transaction
+applies to later writes. Another transaction may move an episode after its
+podcast lock is remembered (ADR 0017). A move never relies on these caches:
+it locks the podcasts it names and the episode row itself.
 """
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -97,6 +96,7 @@ from podex.models.podcast import Podcast
 from podex.models.semantic_chunk import SemanticChunk
 from podex.models.suppression_identity import (
     identity_changes,
+    lock_podcast_rows,
     refuse_covered_deletions,
     refuse_moves,
 )
@@ -577,6 +577,11 @@ def lock_before_guarded_writes(
         episode_ids={item.episode_id for item in requirements}
         | set(changes.deleted_episodes),
     )
+    lock_podcast_rows(
+        session=session,
+        podcast_ids=set(changes.deleted_podcasts)
+        | {podcast for move in changes.moves.values() for podcast in move.podcasts},
+    )
     refuse_moves(session, changes.moves)
     refuse_covered_deletions(session, changes)
 
@@ -605,17 +610,6 @@ def _forget_bulk_suppression_changes(state: ORMExecuteState) -> None:
         forget_checks(state.session)
 
 
-def _forget_flush_locks_and_checks(session: Session, _flush_context: object) -> None:
-    """Drop the podcast locks and checks remembered for this flush.
-
-    Another transaction can move an episode between two flushes of this one,
-    so the next flush locks and checks the podcast the episode is in then.
-    Media rows cannot change identity and stay remembered.
-    """
-    for key in (_LOCKED_EPISODES, _CHECKED):
-        session.info.pop(key, None)
-
-
 def _forget_transaction_checks(
     session: Session,
     transaction: SessionTransaction,
@@ -635,7 +629,6 @@ def _forget_transaction_checks(
 # dep-less CI mypy image and would mark these functions untyped.
 event.listen(Session, "before_flush", lock_before_guarded_writes)
 event.listen(Session, "after_flush", refuse_suppressed_writes)
-event.listen(Session, "after_flush_postexec", _forget_flush_locks_and_checks)
 event.listen(Session, "do_orm_execute", _forget_bulk_suppression_changes)
 event.listen(Session, "after_transaction_end", _forget_transaction_checks)
 for _model, _columns in _ORIGIN_COLUMNS.items():
