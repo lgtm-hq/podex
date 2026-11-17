@@ -49,6 +49,9 @@ _ASCII_LOWER = str.maketrans(
     "abcdefghijklmnopqrstuvwxyz",
 )
 
+GUID_WHITESPACE = " \t\n\r\f\v"
+"""Characters a GUID may be surrounded by: ASCII whitespace, as SQL can trim."""
+
 DATE_TOLERANCE = timedelta(days=7)
 """Largest gap between two known publication dates of one episode."""
 
@@ -234,9 +237,10 @@ def known_number(number: int | None) -> int | None:
 def guid_key(guid: str | None) -> str | None:
     """Return the form in which a feed GUID is compared, or None for no GUID.
 
-    Surrounding whitespace is ignored and the ASCII letters A-Z compare
-    without case; every other character compares exactly. An empty or blank
-    GUID identifies nothing. Stored GUIDs are never rewritten to this form.
+    Surrounding ASCII whitespace (``GUID_WHITESPACE``) is ignored and the
+    ASCII letters A-Z compare without case; every other character compares
+    exactly. An empty or blank GUID identifies nothing. Stored GUIDs are never
+    rewritten to this form.
 
     Args:
         guid: A feed GUID as reported or stored.
@@ -246,7 +250,7 @@ def guid_key(guid: str | None) -> str | None:
     """
     if guid is None:
         return None
-    return guid.strip().translate(_ASCII_LOWER) or None
+    return guid.strip(GUID_WHITESPACE).translate(_ASCII_LOWER) or None
 
 
 def _shared_value(first: str | None, second: str | None) -> bool:

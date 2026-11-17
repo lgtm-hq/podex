@@ -151,15 +151,17 @@ def test_identity_wins_over_conflicting_title_numbers() -> None:
 
 
 def test_number_zero_means_no_number() -> None:
-    """Records numbered 0 are not joined by that number."""
+    """Records numbered 0 are not joined by that number.
+
+    The items come from one feed and carry no GUIDs, so only the numbers and
+    the titles can decide: an equal number 0 would join them, and a differing
+    number from one source would keep "Holiday Special" 0 and 12 apart.
+    """
     items = [
-        replace(_episode(title, number=0), rss_guid=f"urn:example:{index}")
-        for index, title in enumerate(
-            ["Trailer", "Bonus: Live Q&A", "Announcement", "Holiday Special"],
-        )
+        _episode(title, number=0)
+        for title in ["Trailer", "Bonus: Live Q&A", "Announcement", "Holiday Special"]
     ]
-    # Another source: two items of one feed with distinct GUIDs never match.
-    numbered = _episode("Holiday Special", number=12, source="spotify")
+    numbered = _episode("Holiday Special", number=12)
 
     assert_that(episodes_match(items[0], items[1])).is_false()
     assert_that(group_same_episodes(items)).is_length(4)
@@ -609,6 +611,19 @@ def test_equal_numbers_in_two_seasons_from_two_sources_leave_it_to_the_titles() 
 
     assert_that(episodes_match(*same_title)).is_true()
     assert_that(episodes_match(*other_title)).is_false()
+
+
+def test_grouping_tiers_respect_seasons() -> None:
+    """Equal numbers in two seasons give no number tier, even across sources.
+
+    The titles differ, so only an equal-number tier could join the records.
+    """
+    first = _seasoned("The Arrival", 1, 5, source="spotify")
+    second = _seasoned("The Departure", 2, 5)
+
+    assert_that(group_same_episodes([first, second])).is_equal_to(
+        [[first], [second]],
+    )
 
 
 def test_a_listing_number_pairs_with_a_seasoned_feed_number_as_before() -> None:
