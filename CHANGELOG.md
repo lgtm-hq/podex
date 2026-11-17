@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.44] - 2026-11-17
+
+### Fixed
+
+- **derivatives**: mark chunks failed when the database would reject their embedding
+  vector (#893) (87daaf3)
+
 ## [0.41.43] - 2026-11-17
 
 ### Changed
