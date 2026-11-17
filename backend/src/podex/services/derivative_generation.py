@@ -50,6 +50,14 @@ class DerivativeGenerationConfig:
     summary_prompt_version: str = "summary-prompt-v1"
 
 
+@dataclass(frozen=True, slots=True)
+class _CheckedSummaryProvider:
+    """A summary provider and the model name read from it once and checked."""
+
+    provider: SummaryProvider
+    model_name: str
+
+
 # Keep the existing named command inputs compatible with callers.
 # pylint: disable-next=too-many-arguments
 def generate_episode_derivatives(
@@ -101,8 +109,13 @@ def generate_episode_derivatives(
             media_ids=[media.id for media in _episode_media(db=db, episode=episode)],
         )
     authorize_episode_text(db=db, episode_ids=[episode.id])
-    summary_model = (
-        summary_model_name(summary_provider) if summary_provider is not None else None
+    summary = (
+        _CheckedSummaryProvider(
+            provider=summary_provider,
+            model_name=summary_model_name(summary_provider),
+        )
+        if summary_provider is not None
+        else None
     )
     config = config or DerivativeGenerationConfig()
     now = now or datetime.now(UTC)
@@ -118,7 +131,7 @@ def generate_episode_derivatives(
             pipeline_version=config.pipeline_version,
             chunk_pipeline_version=config.chunk_pipeline_version,
             summary_prompt_version=config.summary_prompt_version,
-            summary_model=summary_model,
+            summary_model=summary.model_name if summary is not None else None,
             source_text_hash=_run_source_hash(
                 db=db,
                 episode=episode,
@@ -140,12 +153,11 @@ def generate_episode_derivatives(
 
     episode_summary: EpisodeSummary | None = None
     media_summary_count = 0
-    if summary_provider is not None and summary_model is not None:
+    if summary is not None:
         episode_summary, media_summary_count = _generate_summaries(
             db=db,
             episode=episode,
-            provider=summary_provider,
-            model_name=summary_model,
+            summary=summary,
             config=config,
             now=now,
         )
@@ -234,14 +246,11 @@ def stable_derivative_generation_run_key(
     return f"derivative-run:{digest[:64]}"
 
 
-# One named input per summary field the run shares with its summaries.
-# pylint: disable-next=too-many-arguments
 def _generate_summaries(
     *,
     db: Session,
     episode: Episode,
-    provider: SummaryProvider,
-    model_name: str,
+    summary: _CheckedSummaryProvider,
     config: DerivativeGenerationConfig,
     now: datetime,
 ) -> tuple[EpisodeSummary, int]:
@@ -250,9 +259,8 @@ def _generate_summaries(
     Args:
         db: Database session.
         episode: Episode being processed.
-        provider: Summary provider.
-        model_name: The provider's model name, read once by the caller; the
-            provider's ``model_name`` is not read again.
+        summary: Summary provider and its model name, read once by the
+            caller; the provider's ``model_name`` is not read again.
         config: Versioned derivative generation configuration.
         now: Generation timestamp.
 
@@ -262,8 +270,8 @@ def _generate_summaries(
     episode_summary = generate_episode_summary(
         db=db,
         episode=episode,
-        provider=provider,
-        model_name=model_name,
+        provider=summary.provider,
+        model_name=summary.model_name,
         pipeline_version=config.pipeline_version,
         prompt_version=config.summary_prompt_version,
         generated_at=now,
@@ -273,8 +281,8 @@ def _generate_summaries(
         generate_media_summary(
             db=db,
             media=media,
-            provider=provider,
-            model_name=model_name,
+            provider=summary.provider,
+            model_name=summary.model_name,
             pipeline_version=config.pipeline_version,
             prompt_version=config.summary_prompt_version,
             generated_at=now,
