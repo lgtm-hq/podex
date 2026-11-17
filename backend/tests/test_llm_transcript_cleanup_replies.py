@@ -10,6 +10,7 @@ import httpx2
 import pytest
 from assertpy import assert_that
 
+from podex.services import llm_transcript_cleanup
 from tests.transcript_cleanup_support import (
     NO_FIXES,
     TRANSCRIPT,
@@ -412,10 +413,9 @@ def test_old_shape_in_a_later_piece_keeps_earlier_corrections() -> None:
     "reply",
     [
         '{"corrections": [], "n": ' + "9" * 5000 + "}",
-        '{"corrections": ' + "[" * 100_000 + "]" * 100_000 + "}",
         "[" * 100_000,
     ],
-    ids=["long-integer", "deep-nesting", "deep-open-brackets"],
+    ids=["long-integer", "deep-open-brackets"],
 )
 def test_decoder_limits_are_an_invalid_reply(reply: str) -> None:
     """A reply the decoder cannot read is recorded and never raises."""
@@ -423,6 +423,38 @@ def test_decoder_limits_are_an_invalid_reply(reply: str) -> None:
 
     assert_that(result.errors).is_equal_to([_INVALID_JSON])
     assert_that(result.cleaned_text).is_equal_to(TRANSCRIPT)
+
+
+def test_deeply_nested_reply_never_raises() -> None:
+    """Deep nesting is either decoded (one malformed item) or refused; never raised.
+
+    Whether the decoder refuses 100,000 levels depends on the interpreter and
+    platform, so both outcomes are accepted here.
+    """
+    reply = '{"corrections": ' + "[" * 100_000 + "]" * 100_000 + "}"
+
+    result, _model = clean(reply)
+
+    assert_that(result.cleaned_text).is_equal_to(TRANSCRIPT)
+    assert_that(result.correction_count).is_equal_to(0)
+    assert_that([[], [_INVALID_JSON]]).contains(result.errors)
+
+
+def test_decoder_recursion_error_is_an_invalid_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``RecursionError`` from the decoder is recorded as invalid JSON."""
+
+    def refuse(_text: str) -> object:
+        raise RecursionError("maximum recursion depth exceeded")
+
+    monkeypatch.setattr(llm_transcript_cleanup, "_json_loads", refuse)
+    text = padded("alot")
+
+    result, _model = clean(fixes(("alot", "a lot")), text)
+
+    assert_that(result.errors).is_equal_to([_INVALID_JSON])
+    assert_that(result.cleaned_text).is_equal_to(text)
 
 
 def test_decoder_limit_in_a_later_piece_keeps_other_pieces() -> None:

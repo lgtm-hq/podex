@@ -68,6 +68,9 @@ _COMPLETE_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
 # controls, zero-width characters, byte order mark, soft hyphen), surrogates.
 _UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
 _OLD_SHAPE_KEY = re.compile(r'(?<!\\)"cleaned_text"\s*:')
+# The decoder used for replies; whether deep nesting raises depends on the
+# interpreter and platform, so tests replace it to reach that path.
+_json_loads = json.loads
 
 
 class CorrectionRejection(StrEnum):
@@ -635,8 +638,9 @@ def _loads_object(candidate: str) -> dict[str, Any] | None:
     """Decode a JSON object, treating any decoder refusal as no object.
 
     The decoder raises ``ValueError`` for invalid JSON and for integers longer
-    than the interpreter's digit limit, and ``RecursionError`` for very deep
-    nesting.
+    than the interpreter's digit limit, and may raise ``RecursionError`` for
+    very deep nesting (whether it does depends on the interpreter and
+    platform).
 
     Args:
         candidate: Text to decode.
@@ -645,7 +649,7 @@ def _loads_object(candidate: str) -> dict[str, Any] | None:
         The object, or None.
     """
     try:
-        parsed = json.loads(candidate)
+        parsed = _json_loads(candidate)
     except (ValueError, RecursionError):
         return None
     return parsed if isinstance(parsed, dict) else None
