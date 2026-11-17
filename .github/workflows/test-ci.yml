@@ -37,6 +37,10 @@ jobs:
       publish-test-summary: false
       draft-pr-skip: true
       job-name: "🧪 Python Compatibility"
+      # Per-version test job limit (#846): the reusable's own input, default
+      # 60. Slowest observed leg 268 s; a hang fails the leg after 20 minutes,
+      # after pytest's faulthandler_timeout (300 s) has dumped its stack.
+      timeout-minutes: 20
       # Distinct artifact prefixes (lgtm-ci v0.76 #1108): both calls run 3.13,
       # so the shared default `python-results-3.13` would let one call's
       # results overwrite the other's.
@@ -59,6 +63,11 @@ jobs:
   test-postgres-migrations:
     name: 🐘 Postgres Migration Replay
     runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
+    # Job limit (#846): a stalled set-up step or a hung test fails the job
+    # instead of holding it until the runner's 6-hour default. Slowest
+    # observed run 503 s, of which `Install uv` took 455 s (a stall that still
+    # succeeded); usual runs take about 1-2 minutes.
+    timeout-minutes: 30
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.draft ==
       false
@@ -129,6 +138,10 @@ jobs:
   test-postgres-application:
     name: 🐘 Postgres Application Tests
     runs-on: ${{ vars.LGTM_CI_RUNNER || 'ubuntu-26.04' }}
+    # Job limit (#846), as for test-postgres-migrations. Slowest observed run
+    # 625 s, of which `Install uv` took 455 s; the test step takes up to about
+    # 140 s.
+    timeout-minutes: 30
     if: >-
       github.event_name != 'pull_request' || github.event.pull_request.draft ==
       false
@@ -208,6 +221,9 @@ jobs:
       publish-test-summary: true
       draft-pr-skip: true
       job-name: "🧪 Python Coverage"
+      # Coverage test job limit (#846), same input and reasoning as `test`.
+      # Slowest observed run 283 s.
+      timeout-minutes: 20
       artifact-prefix: coverage
       egress-policy: block
       egress-preset: quality

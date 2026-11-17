@@ -23,6 +23,11 @@ current patch releases; the Docker image uses Python 3.15.
 (cd backend && uv run pytest)
 ```
 
+A test still running after 300 seconds prints the stack of every thread
+(`faulthandler_timeout` in `backend/pyproject.toml`) and keeps running. In CI
+the test jobs also have a time limit; see "Test job time limits" in
+`.github/scripts/README.md`.
+
 `uv run alembic upgrade head` migrates the database named by
 `PODEX_DATABASE__URL`, by default `podex.db` in the working directory, here
 `backend/`. Run the API and the scheduler as two processes, each in its own
