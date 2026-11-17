@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0018. Precedence of episode identity evidence in discovery
+# 0019. Precedence of episode identity evidence in discovery
 
 - Status: proposed
 - Date: 2026-11-17

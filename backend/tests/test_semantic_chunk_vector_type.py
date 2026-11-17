@@ -5,11 +5,13 @@ pgvector values. The stored SQLite text below is pinned to what the column
 wrote before PostgreSQL binding was fixed, so that fix cannot change it.
 """
 
+import math
 from typing import cast
 
 import pytest
 from assertpy import assert_that
 from sqlalchemy import Text, create_engine, insert, select, text, update
+from sqlalchemy.exc import StatementError
 from sqlalchemy.orm import Session
 from sqlalchemy.schema import CreateTable
 from sqlalchemy.sql import ClauseElement
@@ -247,3 +249,87 @@ def test_result_conversion_rejects_unexpected_types(raw: object) -> None:
 
     with pytest.raises(TypeError, match="unexpected embedding value type"):
         PgVectorType(4).process_result_value(raw, dialect)
+
+
+_FLOAT32_MAX = 3.4028234663852886e38
+
+# Values PostgreSQL's vector type refuses, each with the error the bind raises.
+_REFUSED_BINDS: dict[str, tuple[object, type[Exception], str]] = {
+    "boolean": ([0.5, True], TypeError, "element 1 must be an int or float"),
+    "numeric-string": (["0.5", 1.0], TypeError, "element 0 must be an int or float"),
+    "null-element": ([0.5, None], TypeError, "element 1 must be an int or float"),
+    "nan": ([math.nan, 1.0], ValueError, "element 0 must be finite in float32"),
+    "infinity": ([1.0, math.inf], ValueError, "element 1 must be finite in float32"),
+    "negative-infinity": (
+        [-math.inf, 1.0],
+        ValueError,
+        "element 0 must be finite in float32",
+    ),
+    "float32-overflow": ([1e39, 1.0], ValueError, "element 0 must be finite"),
+    "integer-beyond-float": ([10**400, 1.0], ValueError, "element 0 must be finite"),
+    "text": ("0.5", TypeError, "must be a list or tuple"),
+    "set": ({0.5}, TypeError, "must be a list or tuple"),
+}
+
+
+@pytest.mark.parametrize("dialect_name", ["sqlite", "postgresql+psycopg"])
+@pytest.mark.parametrize(
+    ("value", "error", "message"),
+    _REFUSED_BINDS.values(),
+    ids=_REFUSED_BINDS.keys(),
+)
+def test_bind_refuses_values_the_vector_column_refuses(
+    dialect_name: str,
+    value: object,
+    error: type[Exception],
+    message: str,
+) -> None:
+    """Every dialect refuses what pgvector refuses, before the statement runs."""
+    dialect = create_engine(f"{dialect_name}://").dialect
+
+    with pytest.raises(error, match=message):
+        PgVectorType(2).process_bind_param(cast(list[float], value), dialect)
+
+
+@pytest.mark.parametrize(
+    ("value", "stored"),
+    [
+        ((1, -2.5), "[1.0,-2.5]"),
+        (
+            [_FLOAT32_MAX, -_FLOAT32_MAX],
+            "[3.4028234663852886e+38,-3.4028234663852886e+38]",
+        ),
+        ([5e-324, -0.0], "[5e-324,-0.0]"),
+    ],
+    ids=["tuple-of-int-and-float", "float32-limits", "subnormal-and-negative-zero"],
+)
+def test_bind_accepts_finite_float32_numbers(
+    value: list[float],
+    stored: str,
+) -> None:
+    """Lists and tuples of ints and floats finite in float32 serialize."""
+    dialect = create_engine("postgresql+psycopg://").dialect
+
+    assert_that(PgVectorType(2).process_bind_param(value, dialect)).is_equal_to(stored)
+
+
+def test_flush_of_a_refused_vector_fails_at_bind(db_session: Session) -> None:
+    """A writer outside the chunk sync gets the bind error, not a database one."""
+    transcript = _add_transcript(db_session)
+    db_session.add(
+        SemanticChunk(
+            episode_id=transcript.episode_id,
+            transcript_id=transcript.id,
+            chunk_key="vector:refused",
+            chunk_index=0,
+            pipeline_version="v1",
+            source_text_hash="d" * 64,
+            text="alpha",
+            context_snippet="alpha",
+            token_count=1,
+            embedding_vector=[0.5, math.nan],
+        ),
+    )
+
+    with pytest.raises(StatementError, match="element 1 must be finite in float32"):
+        db_session.flush()

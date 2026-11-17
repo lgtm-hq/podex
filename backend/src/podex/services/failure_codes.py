@@ -19,6 +19,7 @@ class FailureReason(StrEnum):
     EMBEDDING_COUNT_MISMATCH = auto()
     EMBEDDING_DIMENSIONS_MISMATCH = auto()
     EMBEDDING_INVALID_VALUE = auto()
+    EMBEDDING_INVALID_TYPE = auto()
     INVALID_ADDRESS = auto()
     BLOCKED_ADDRESS = auto()
     INVALID_URL = auto()
