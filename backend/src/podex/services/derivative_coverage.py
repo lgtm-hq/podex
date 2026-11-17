@@ -16,6 +16,7 @@ from podex.models import (
     Mention,
     SemanticChunk,
 )
+from podex.services.content_suppression import published_mention_clause
 
 
 class PublicDerivativeQueryClass(StrEnum):
@@ -116,7 +117,7 @@ def _coverage_state(
     mentioned_media_ids = [
         media_id
         for (media_id,) in db.query(Mention.media_id)
-        .filter(Mention.episode_id == episode.id)
+        .filter(Mention.episode_id == episode.id, published_mention_clause())
         .distinct()
         .all()
     ]

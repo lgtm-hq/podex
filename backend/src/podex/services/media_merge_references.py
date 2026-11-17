@@ -5,6 +5,9 @@ source is deleted:
 
 - Mention candidates, their provenance snapshots and review items move to the
   surviving record, so extraction history keeps resolving to the canonical work.
+- Mention-pair takedown suppressions move to the survivor and collapse to one
+  per ``(episode, media)`` pair, so a takedown of a mention of the merged-away
+  record keeps covering mentions of the same work in that episode.
 - Saved media move to the survivor and collapse to one save per account.
 - Media alert rules move to the survivor and collapse to one rule per account
   and event type. Alert events from a collapsed rule move to the surviving rule,
@@ -27,17 +30,27 @@ ignores ``FOR UPDATE``.
 
 from dataclasses import dataclass
 
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from podex.models import (
     AccountAlertEvent,
     AccountAlertRule,
     AccountSavedMedia,
+    ContentSuppression,
+    ContentSuppressionScope,
+    ContentSuppressionSubjectType,
     Media,
     Mention,
     MentionCandidate,
     MentionCandidateProvenance,
     ReviewItem,
+)
+from podex.models.content_suppression import suppressed_clause, suppression_key
+from podex.services.content_suppression import (
+    count_published_mentions,
+    delete_mentions,
+    pair_suppressions_of,
 )
 
 MEDIA_ALERT_TARGET_TYPE = "media"
@@ -89,6 +102,42 @@ def lock_merge_pair(
     return locked[source_media_id], locked[target_media_id]
 
 
+def delete_mentions_covered_after_merge(
+    *,
+    db: Session,
+    source_media_id: int,
+    target_media_id: int,
+) -> int:
+    """Delete mentions of either record that a suppression of either covers.
+
+    After the merge both records are one work, so a suppression of
+    ``(episode, source)`` or ``(episode, target)`` covers every mention of
+    either record in that episode. Those mentions are deleted, as a mention
+    takedown deletes its whole pair, instead of refusing the merge. Call it
+    before alert baselines are read, so baselines count what stays published.
+
+    Returns:
+        The number of mentions deleted.
+    """
+    covered = or_(
+        *(
+            suppressed_clause(
+                scope=ContentSuppressionScope.MENTIONS,
+                episode_id=Mention.episode_id,
+                media_id=media_id,
+            )
+            for media_id in (source_media_id, target_media_id)
+        ),
+    )
+    mentions = (
+        db.query(Mention)
+        .filter(Mention.media_id.in_((source_media_id, target_media_id)), covered)
+        .order_by(Mention.id)
+        .all()
+    )
+    return len(delete_mentions(db, mentions))
+
+
 def move_media_references(
     *,
     db: Session,
@@ -120,6 +169,11 @@ def move_media_references(
         target_media=target_media,
     )
     _move_saved_media(
+        db=db,
+        source_media_id=source_media.id,
+        target_media_id=target_media.id,
+    )
+    _move_mention_pair_suppressions(
         db=db,
         source_media_id=source_media.id,
         target_media_id=target_media.id,
@@ -156,6 +210,37 @@ def _move_extraction_references(
         db.query(ReviewItem).filter(ReviewItem.target_media_id == source_media.id).all()
     ):
         review_item.target_media = target_media
+
+
+def _move_mention_pair_suppressions(
+    *,
+    db: Session,
+    source_media_id: int,
+    target_media_id: int,
+) -> None:
+    """Repoint pair suppressions at the target, keeping one per pair and scope.
+
+    The key encodes the media id, so a moved row gets the target's key; when
+    the target pair is already suppressed the source row is dropped instead.
+    """
+    existing_keys = {
+        key
+        for (key,) in db.query(ContentSuppression.suppression_key)
+        .filter(ContentSuppression.media_id == target_media_id)
+        .all()
+    }
+    for suppression, episode_id in pair_suppressions_of(db, source_media_id):
+        moved_key = suppression_key(
+            subject_type=ContentSuppressionSubjectType.MENTION_PAIR,
+            scope=ContentSuppressionScope(suppression.scope),
+            subject_ids=(episode_id, target_media_id),
+        )
+        if moved_key in existing_keys:
+            db.delete(suppression)
+            continue
+        suppression.media_id = target_media_id
+        suppression.suppression_key = moved_key
+        existing_keys.add(moved_key)
 
 
 def _move_saved_media(
@@ -227,8 +312,9 @@ def _plan_media_alert_rules(
 
 
 def _mention_count(*, db: Session, media_id: int) -> int:
-    """Count published mentions of one media record."""
-    return int(db.query(Mention).filter(Mention.media_id == media_id).count())
+    """Count published mentions of one media record, as alert evaluation does."""
+    published: int = count_published_mentions(db, Mention.media_id == media_id)
+    return published
 
 
 def _seen_count(*, rule: AccountAlertRule | None, mention_count: int) -> int:
@@ -293,3 +379,27 @@ def _move_media_alert_rules(
 
     for source_rule in collapsed_rules:
         db.delete(source_rule)
+
+
+def merge_verification_sources(
+    *,
+    source_values: list[str] | None,
+    target_values: list[str] | None,
+) -> list[str] | None:
+    """Merge verification source lists while preserving target precedence.
+
+    Args:
+        source_values: Verification sources from the source media record.
+        target_values: Verification sources from the target media record.
+
+    Returns:
+        Combined verification source list when any values exist.
+    """
+    if not source_values and not target_values:
+        return target_values
+
+    combined = list(target_values or [])
+    for value in source_values or []:
+        if value not in combined:
+            combined.append(value)
+    return combined

@@ -151,6 +151,20 @@ Inputs for the CI scripts and the container smoke tests, such as `IMAGE` and
 `PLATFORM`, are documented in
 [`.github/scripts/README.md`](../.github/scripts/README.md).
 
+## Operational commands
+
+Run from `backend/`, against the database `PODEX_DATABASE__URL` names:
+
+- `uv run python -m podex.suppression_backfill --dry-run` lists the takedown
+  suppressions that are missing; without `--dry-run` it writes them. It is safe
+  to re-run: when nothing is missing it writes nothing. It exits 1 when a
+  takedown case cannot be resolved from stored evidence; those case ids are
+  printed and need their suppression recorded by hand.
+
+Rollout of the takedown suppression change (ADR 0015): migrate first, hold
+takedown approvals until every instance runs the new code, then run the backfill
+once more.
+
 ## Pipeline status
 
 The scheduler (`python -m podex.scheduler_runner`) runs episode discovery from

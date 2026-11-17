@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from podex.models import PodcastStatus
 from podex.services.ops_podcast_queries import PodcastSourceType
@@ -54,9 +54,41 @@ class OpsPodcastListRead(BaseModel):
     per_page: int
 
 
-class OpsPodcastSourcesInput(BaseModel):
+NUL_TEXT_MESSAGE = "text must not contain NUL characters"
+"""Fixed message for podcast text that PostgreSQL text columns reject."""
+
+
+class _StorableTextInput(BaseModel):
+    """Request body whose text must be storable in its ``podcasts`` column.
+
+    Every text field carries a ``max_length``; Pydantic validates such a field
+    as UTF-8 text, so an unpaired surrogate is rejected with its fixed
+    ``string_unicode`` error before it can reach the database.
+    """
+
+    @field_validator("*")
+    @classmethod
+    def reject_nul_text(cls, value: object) -> object:
+        """Reject text containing NUL, which PostgreSQL cannot store.
+
+        Args:
+            value: Validated value of one field.
+
+        Returns:
+            The value unchanged.
+
+        Raises:
+            ValueError: If a text value contains a NUL character.
+        """
+        if isinstance(value, str) and "\x00" in value:
+            raise ValueError(NUL_TEXT_MESSAGE)
+        return value
+
+
+class OpsPodcastSourcesInput(_StorableTextInput):
     """Source identifiers accepted on podcast mutations."""
 
+    # Each limit matches its ``podcasts`` column length.
     rss_url: str | None = Field(default=None, max_length=500)
     spotify_id: str | None = Field(default=None, max_length=50)
     apple_id: str | None = Field(default=None, max_length=50)
@@ -64,27 +96,29 @@ class OpsPodcastSourcesInput(BaseModel):
     podscripts_slug: str | None = Field(default=None, max_length=100)
 
 
-class OpsPodcastCreateRequest(BaseModel):
+class OpsPodcastCreateRequest(_StorableTextInput):
     """Create a managed podcast."""
 
+    # Each text limit matches its ``podcasts`` column length.
     name: str = Field(min_length=1, max_length=255)
     slug: str = Field(min_length=1, max_length=255)
     status: PodcastStatus = PodcastStatus.WATCHLIST
     description: str | None = Field(default=None, max_length=2000)
     cover_url: str | None = Field(default=None, max_length=500)
-    discovery_source: str | None = None
+    discovery_source: str | None = Field(default=None, max_length=50)
     sources: OpsPodcastSourcesInput = OpsPodcastSourcesInput()
 
 
-class OpsPodcastUpdateRequest(BaseModel):
+class OpsPodcastUpdateRequest(_StorableTextInput):
     """Partially update a managed podcast; only provided fields change."""
 
+    # Each text limit matches its ``podcasts`` column length, as on create.
     name: str | None = Field(default=None, min_length=1, max_length=255)
     slug: str | None = Field(default=None, min_length=1, max_length=255)
     status: PodcastStatus | None = None
-    description: str | None = None
-    cover_url: str | None = None
-    discovery_source: str | None = None
+    description: str | None = Field(default=None, max_length=2000)
+    cover_url: str | None = Field(default=None, max_length=500)
+    discovery_source: str | None = Field(default=None, max_length=50)
     sources: OpsPodcastSourcesInput | None = None
 
 

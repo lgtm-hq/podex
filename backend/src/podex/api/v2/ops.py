@@ -8,7 +8,7 @@ recorded in the immutable audit log.
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from podex.api.deps import AppSettings, DbSession, require_ops_access
 from podex.config import RetentionSettings
@@ -48,9 +48,11 @@ from podex.services.ops_metrics import get_operational_metrics
 from podex.services.ops_podcast_commands import (
     CreateOpsPodcastInputData,
     OpsPodcastSourceInputData,
+    OpsPodcastValidationError,
     UpdateOpsPodcastInputData,
     archive_ops_podcast,
     create_ops_podcast,
+    is_slug_conflict,
     update_ops_podcast,
 )
 from podex.services.ops_podcast_queries import get_ops_podcast_by_id, list_ops_podcasts
@@ -63,9 +65,11 @@ from podex.services.ops_retention_commands import (
 )
 from podex.services.pipeline_queries import list_recent_ingestion_runs
 from podex.services.takedown_requests import (
+    TAKEDOWN_BUSY_MESSAGE,
     TakedownDecisionInputData,
     decide_takedown_request,
     execute_approved_takedown_request,
+    is_lock_conflict,
     list_takedown_requests,
 )
 from podex.services.transcript_artifacts import build_transcript_artifact_store
@@ -76,6 +80,8 @@ from podex.services.transcript_retention import (
 from podex.unusable_settings import UnusableSettingError
 
 router = APIRouter(prefix="/ops", tags=["ops"])
+
+_SLUG_CONFLICT_DETAIL = "Podcast slug already exists"
 
 
 def _require_ops_access(*, request: Request, settings: AppSettings) -> None:
@@ -204,14 +210,14 @@ def create_ops_podcast_endpoint(
                 ),
             ),
         )
-    except ValueError as error:
+    except OpsPodcastValidationError as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(error)) from error
     except IntegrityError as error:
         db.rollback()
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Podcast slug already exists",
+            detail=_SLUG_CONFLICT_DETAIL,
         ) from error
     record_audit_log(
         db=db,
@@ -260,9 +266,19 @@ def update_ops_podcast_endpoint(
                 ),
             ),
         )
-    except ValueError as error:
+    except OpsPodcastValidationError as error:
         db.rollback()
         raise HTTPException(status_code=422, detail=str(error)) from error
+    except IntegrityError as error:
+        db.rollback()
+        # Only the slug's unique violation is a conflict the operator can
+        # resolve; any other constraint failure stays an internal error.
+        if not is_slug_conflict(error):
+            raise
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=_SLUG_CONFLICT_DETAIL,
+        ) from error
     if updated is None:
         raise HTTPException(status_code=404, detail="Podcast not found")
     record_audit_log(
@@ -465,6 +481,33 @@ def decide_ops_takedown_request(
 ) -> OpsTakedownDecisionRead:
     """Decide a pending takedown; approvals execute suppression immediately."""
     _require_ops_access(request=request, settings=settings)
+    # A lock that cannot be taken in time (a writer or another takedown holds
+    # it) answers a retryable 409 with nothing changed.
+    try:
+        return _decide_takedown(
+            request_id=request_id,
+            payload=payload,
+            db=db,
+            settings=settings,
+        )
+    except OperationalError as error:
+        if not is_lock_conflict(error):
+            raise
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=TAKEDOWN_BUSY_MESSAGE,
+        ) from error
+
+
+def _decide_takedown(
+    *,
+    request_id: int,
+    payload: OpsTakedownDecisionRequest,
+    db: DbSession,
+    settings: AppSettings,
+) -> OpsTakedownDecisionRead:
+    """Record the decision and, for an approval, execute it in one transaction."""
     try:
         decided = decide_takedown_request(
             db=db,
