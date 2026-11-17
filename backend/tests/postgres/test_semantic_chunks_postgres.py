@@ -375,6 +375,43 @@ def _stored_chunks(postgres: PostgresDatabase) -> list[Row[Any]]:
         )
 
 
+def _assert_only_middle_failed(
+    postgres: PostgresDatabase,
+    results: list[SemanticChunkSyncResultData],
+    sent: list[str],
+    error: str,
+) -> None:
+    """Assert one sync stored the outer vectors and failed only the middle chunk.
+
+    Args:
+        postgres: Database the sync wrote to.
+        results: The single sync result.
+        sent: Vector texts bound to statements during the sync.
+        error: Descriptor expected on the middle chunk.
+    """
+    rows = _stored_chunks(postgres)
+    assert_that(results).is_length(1)
+    assert_that(results[0].embedded_count).is_equal_to(2)
+    assert_that(results[0].failed_count).is_equal_to(1)
+    assert_that(sorted(json.loads(value) for value in sent)).is_equal_to(
+        sorted([_quarter_vector(0), _quarter_vector(2)]),
+    )
+    assert_that([row.embedding_status for row in rows]).is_equal_to(
+        [
+            SemanticChunkEmbeddingStatus.EMBEDDED.value,
+            SemanticChunkEmbeddingStatus.FAILED.value,
+            SemanticChunkEmbeddingStatus.EMBEDDED.value,
+        ],
+    )
+    assert_that([row.embedding_error for row in rows]).is_equal_to(
+        [None, error, None],
+    )
+    assert_that([row.is_null for row in rows]).is_equal_to([False, True, False])
+    assert_that([row.embedding_vector for row in rows]).is_equal_to(
+        [_quarter_vector(0), None, _quarter_vector(2)],
+    )
+
+
 @pytest.mark.parametrize(
     ("vector", "error"),
     _REJECTED_VECTORS.values(),
@@ -406,26 +443,7 @@ def test_sync_never_sends_a_rejected_vector(
 
         sent = _sent_vectors(postgres, write)
 
-    rows = _stored_chunks(postgres)
-    assert_that(results[0].embedded_count).is_equal_to(2)
-    assert_that(results[0].failed_count).is_equal_to(1)
-    assert_that(sorted(json.loads(value) for value in sent)).is_equal_to(
-        sorted([_quarter_vector(0), _quarter_vector(2)]),
-    )
-    assert_that([row.embedding_status for row in rows]).is_equal_to(
-        [
-            SemanticChunkEmbeddingStatus.EMBEDDED.value,
-            SemanticChunkEmbeddingStatus.FAILED.value,
-            SemanticChunkEmbeddingStatus.EMBEDDED.value,
-        ],
-    )
-    assert_that([row.embedding_error for row in rows]).is_equal_to(
-        [None, error, None],
-    )
-    assert_that([row.is_null for row in rows]).is_equal_to([False, True, False])
-    assert_that([row.embedding_vector for row in rows]).is_equal_to(
-        [_quarter_vector(0), None, _quarter_vector(2)],
-    )
+    _assert_only_middle_failed(postgres, results, sent, error)
 
 
 @pytest.mark.parametrize(
@@ -441,9 +459,10 @@ def test_sync_update_never_sends_a_rejected_vector(
     """Embedding stored pending chunks updates only those with storable vectors."""
     words = " ".join(f"word{index}" for index in range(9))
     policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
+    results: list[SemanticChunkSyncResultData] = []
     with postgres.sessions() as db:
         transcript = _add_transcript(db, slug="rejected-update", text_value=words)
-        sync_semantic_chunks_for_transcript(
+        pending = sync_semantic_chunks_for_transcript(
             db=db,
             transcript=transcript,
             policy=policy,
@@ -451,21 +470,18 @@ def test_sync_update_never_sends_a_rejected_vector(
         db.commit()
 
         def write() -> None:
-            sync_semantic_chunks_for_transcript(
-                db=db,
-                transcript=transcript,
-                embedding_provider=MiddleVectorEmbeddingProvider(middle=vector),
-                policy=policy,
+            results.append(
+                sync_semantic_chunks_for_transcript(
+                    db=db,
+                    transcript=transcript,
+                    embedding_provider=MiddleVectorEmbeddingProvider(middle=vector),
+                    policy=policy,
+                ),
             )
             db.commit()
 
         sent = _sent_vectors(postgres, write)
 
-    rows = _stored_chunks(postgres)
-    assert_that(sorted(json.loads(value) for value in sent)).is_equal_to(
-        sorted([_quarter_vector(0), _quarter_vector(2)]),
-    )
-    assert_that([row.embedding_error for row in rows]).is_equal_to(
-        [None, error, None],
-    )
-    assert_that([row.is_null for row in rows]).is_equal_to([False, True, False])
+    assert_that(pending.created_count).is_equal_to(3)
+    assert_that(results[0].created_count).is_zero()
+    _assert_only_middle_failed(postgres, results, sent, error)
