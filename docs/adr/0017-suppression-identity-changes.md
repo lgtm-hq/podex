@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0016. Suppressions survive episode moves and subject deletes
+# 0017. Suppressions survive episode moves and subject deletes
 
 - Status: proposed
 - Date: 2026-11-17
@@ -56,7 +56,7 @@ already recorded is not added again.
   naming the row, such as `Podcast 3 (deleted while a takedown suppression
   covers it)`. The error now takes an optional episode and a podcast id, for
   a podcast with no covered episode.
-- Revision `0025` makes both foreign keys `ON DELETE RESTRICT`. A delete that
+- Revision `0026` makes both foreign keys `ON DELETE RESTRICT`. A delete that
   skips the flush therefore fails in the database, including the
   `episodes.podcast_id` cascade of a podcast delete.
 
@@ -120,7 +120,7 @@ are `Podcast` updates.
   must handle `ContentSuppressedError` for suppressed rows. A merge can move
   the episodes first, which carries their suppressions, and then delete the
   emptied podcast unless it has its own suppression.
-- **Rollout.** Apply revision `0025` before or with the code. Nothing in
+- **Rollout.** Apply revision `0026` before or with the code. Nothing in
   production moves or deletes these rows, so the order is not critical.
   - Existing suppressions are kept unchanged. Only the delete rule of the two
     foreign keys changes.
@@ -128,6 +128,6 @@ are `Podcast` updates.
     default names. Adding them briefly locks `content_suppressions`,
     `podcasts` and `episodes` and checks the existing suppression rows.
   - On SQLite the table is copied with its rows, check constraint and indexes.
-- **Rollback.** Revert the change and downgrade to `0024`, which restores
+- **Rollback.** Revert the change and downgrade to `0025`, which restores
   `ON DELETE CASCADE` and keeps every row. Episode suppressions carried in the
   meantime stay: they are valid suppressions of the same takedown cases.

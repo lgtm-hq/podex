@@ -3,7 +3,7 @@
 ``content_suppressions.podcast_id`` and ``episode_id`` were ``ON DELETE
 CASCADE``, so deleting a suppressed podcast or episode also deleted its
 suppression, and re-ingested content was then writable again. Both foreign
-keys become ``ON DELETE RESTRICT`` (ADR 0016). Existing suppression rows are
+keys become ``ON DELETE RESTRICT`` (ADR 0017). Existing suppression rows are
 kept as they are.
 
 On PostgreSQL the constraints keep their default names and are dropped and
@@ -12,8 +12,8 @@ constraint, so the table is copied with its rows; the naming convention names
 the reflected, unnamed constraints the way PostgreSQL does. Downgrade restores
 ``ON DELETE CASCADE`` and keeps every row.
 
-Revision ID: 0025
-Revises: 0024
+Revision ID: 0026
+Revises: 0025
 Create Date: 2026-11-17 12:00:00.000000
 """
 
@@ -21,8 +21,8 @@ from collections.abc import Sequence
 
 from alembic import op  # type: ignore[attr-defined]
 
-revision: str = "0025"
-down_revision: str | None = "0024"
+revision: str = "0026"
+down_revision: str | None = "0025"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

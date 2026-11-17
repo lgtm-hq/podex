@@ -5,7 +5,7 @@ to carry, in the shared order (media rows, then podcast rows), so a takedown
 of that podcast, which locks it ``FOR UPDATE``, runs either wholly before the
 move (and the move carries its suppressions) or wholly after it (and no
 longer covers the episode). The ``RESTRICT`` foreign keys refuse deletes that
-skip the flush guard, and revision ``0025`` round-trips with rows present.
+skip the flush guard, and revision ``0026`` round-trips with rows present.
 """
 
 from dataclasses import dataclass
@@ -222,7 +222,7 @@ def _delete_rules(postgres: PostgresDatabase) -> list[tuple[object, ...]]:
         return [tuple(row) for row in connection.execute(_DELETE_RULES)]
 
 
-def test_revision_0025_round_trips_with_suppressions_on_postgres(
+def test_revision_0026_round_trips_with_suppressions_on_postgres(
     postgres: PostgresDatabase,
 ) -> None:
     """Downgrade restores cascade, upgrade restricts again, rows are kept."""
@@ -236,7 +236,7 @@ def test_revision_0025_round_trips_with_suppressions_on_postgres(
     )
     config = alembic_config(postgres.url)
 
-    downgrade(config, "0024")
+    downgrade(config, "0025")
 
     assert_that(_delete_rules(postgres)).is_equal_to(
         [

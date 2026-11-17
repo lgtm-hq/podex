@@ -1,6 +1,6 @@
 """Revision 0022 backfills suppressions from takedowns that already ran.
 
-Revision 0025 keeps those rows and makes deleting their subject fail.
+Revision 0026 keeps those rows and makes deleting their subject fail.
 """
 
 import json
@@ -249,13 +249,13 @@ def _delete_row(engine: Engine, table: str, row_id: int) -> None:
         connection.execute(_DELETES[table], {"id": row_id})
 
 
-def _backfilled_at_0024(db_url: str) -> Engine:
-    """Seed the takedown cases, migrate to 0024 and return a foreign-key engine."""
+def _backfilled_at_0025(db_url: str) -> Engine:
+    """Seed the takedown cases, migrate to 0025 and return a foreign-key engine."""
     _migrate(db_url, "0021")
     engine = create_engine(db_url)
     enable_sqlite_foreign_keys(engine)
     _seed_cases(engine)
-    _migrate(db_url, "0024")
+    _migrate(db_url, "0025")
     with engine.begin() as connection:
         connection.execute(
             text("INSERT INTO episodes (id, podcast_id, title) VALUES (12, 1, 'X')"),
@@ -266,15 +266,15 @@ def _backfilled_at_0024(db_url: str) -> Engine:
 _RESTRICT = {"podcast_id": "RESTRICT", "episode_id": "RESTRICT"}
 
 
-def test_revision_0025_keeps_rows_and_restricts_subject_deletes(
+def test_revision_0026_keeps_rows_and_restricts_subject_deletes(
     tmp_path: Path,
 ) -> None:
     """Existing suppressions survive and the rows they name can't be deleted."""
-    engine = _backfilled_at_0024(f"sqlite:///{tmp_path / 'restrict.db'}")
+    engine = _backfilled_at_0025(f"sqlite:///{tmp_path / 'restrict.db'}")
     before = _suppression_rows(engine)
     assert_that(before).is_length(6)
 
-    _migrate(str(engine.url), "0025")
+    _migrate(str(engine.url), "0026")
 
     assert_that(_suppression_rows(engine)).is_equal_to(before)
     assert_that(_subject_delete_rules(engine)).is_equal_to(_RESTRICT)
@@ -290,15 +290,15 @@ def test_revision_0025_keeps_rows_and_restricts_subject_deletes(
     engine.dispose()
 
 
-def test_revision_0025_downgrade_restores_cascade_and_keeps_rows(
+def test_revision_0026_downgrade_restores_cascade_and_keeps_rows(
     tmp_path: Path,
 ) -> None:
     """Downgrade keeps every row; deletes cascade again until re-upgraded."""
-    engine = _backfilled_at_0024(f"sqlite:///{tmp_path / 'cascade.db'}")
-    _migrate(str(engine.url), "0025")
+    engine = _backfilled_at_0025(f"sqlite:///{tmp_path / 'cascade.db'}")
+    _migrate(str(engine.url), "0026")
     before = _suppression_rows(engine)
 
-    _migrate(str(engine.url), "0024", down=True)
+    _migrate(str(engine.url), "0025", down=True)
 
     assert_that(_suppression_rows(engine)).is_equal_to(before)
     assert_that(_subject_delete_rules(engine)).is_equal_to(
@@ -308,6 +308,6 @@ def test_revision_0025_downgrade_restores_cascade_and_keeps_rows(
     assert_that(_suppression_rows(engine)).is_equal_to(
         [row for row in before if row[4] != 10],
     )
-    _migrate(str(engine.url), "0025")
+    _migrate(str(engine.url), "0026")
     assert_that(_subject_delete_rules(engine)).is_equal_to(_RESTRICT)
     engine.dispose()

@@ -23,7 +23,7 @@ Guarded writes (``GUARDED_MODELS``, one rule per model in ``_RULES``):
   cleaned or digest text.
 
 Suppressions are keyed by row ids, so two identity changes are handled too
-(ADR 0016):
+(ADR 0017):
 
 - an ``Episode`` that leaves a podcast gets an episode suppression for each
   podcast suppression of the podcast it leaves, in the same flush and with the

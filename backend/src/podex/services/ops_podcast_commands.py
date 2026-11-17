@@ -201,6 +201,9 @@ def _apply_source_fields(
     if "youtube_channel_id" in payload.source_fields:
         podcast.youtube_channel_id = payload.sources.youtube_channel_id
     if "podscripts_slug" in payload.source_fields:
+        if payload.sources.podscripts_slug != podcast.podscripts_slug:
+            # A complete walk of the old listing says nothing about the new one.
+            podcast.podscripts_listing_walked_at = None
         podcast.podscripts_slug = payload.sources.podscripts_slug
 
 

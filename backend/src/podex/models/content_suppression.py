@@ -128,7 +128,7 @@ class ContentSuppression(Base):
     subject_type: "Mapped[str]" = mapped_column(String(32))
     scope: "Mapped[str]" = mapped_column(String(32))
     # A suppression is keyed by these ids, so the database refuses to delete
-    # the row it covers instead of cascading the suppression away (ADR 0016).
+    # the row it covers instead of cascading the suppression away (ADR 0017).
     podcast_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("podcasts.id", ondelete="RESTRICT"),
     )

@@ -318,7 +318,7 @@ def test_stats_version_never_repeats_after_suppressions_are_deleted(
     """Deleted suppression rows and a new takedown cannot bring back an old version.
 
     The database no longer cascades a podcast delete to its suppressions
-    (ADR 0016), so the row is deleted directly before its podcast is.
+    (ADR 0017), so the row is deleted directly before its podcast is.
     """
     catalog = _catalog(db_session)
     elsewhere = Podcast(name="Elsewhere", slug="elsewhere")
