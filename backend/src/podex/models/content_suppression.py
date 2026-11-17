@@ -10,9 +10,10 @@ uses it to refuse writes, so a reader and a writer cannot disagree about what
 a suppression covers.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum, auto
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -260,6 +261,20 @@ PostgreSQL's parameter limits.
 
 _UNION_GROUP_SIZE = 400
 """Literal rows per ``UNION ALL`` group, under SQLite's 500-term limit."""
+
+
+def batches(values: Iterable[Any]) -> Iterator[list[Any]]:
+    """Split sorted values into statements of ``SUPPRESSION_BATCH_SIZE``.
+
+    Args:
+        values: Ids, pairs or keys; duplicates are dropped.
+
+    Yields:
+        Ascending batches of at most ``SUPPRESSION_BATCH_SIZE`` values.
+    """
+    ordered = sorted(set(values))
+    for start in range(0, len(ordered), SUPPRESSION_BATCH_SIZE):
+        yield ordered[start : start + SUPPRESSION_BATCH_SIZE]
 
 
 def suppressed_episodes_statement(

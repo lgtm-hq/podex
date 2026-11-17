@@ -454,8 +454,9 @@ def test_moves_and_deletes_add_a_fixed_number_of_statements(
     with recorded_statements(engine) as moving:
         db_session.flush()
 
-    # Podcast locks, the origin podcasts' suppressions, existing episode keys.
-    assert_that(_selects(moving)).is_length(3)
+    # Episode-row locks with their persisted podcasts, podcast locks, the
+    # origin and destination podcasts' suppressions, existing episode keys.
+    assert_that(_selects(moving)).is_length(4)
     db_session.commit()
 
     for episode in episodes:

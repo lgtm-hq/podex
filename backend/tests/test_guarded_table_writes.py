@@ -1,28 +1,32 @@
 """Guarded tables are written through the ORM unit of work only.
 
 The suppression guard sees ORM flushes. Core ``insert``/``update``/``delete``
-(including the dialect variants), ``Query.update``/``Query.delete``, raw SQL
-and the ``bulk_*`` session methods skip it, so no module may write a guarded
-table that way. The scan parses each module with ``ast`` and resolves its
-imports, so aliases (``insert as sqlite_insert``, ``Mention as M``, ``import
-sqlalchemy as sa``, ``from ..models import Mention``) are followed, and a
-table named by string
-(``table("mentions")``, ``metadata.tables["mentions"]``) counts as the model.
+(including the dialect variants and their upserts), ``Query.update``/
+``Query.delete``, raw SQL and the ``bulk_*`` session methods skip it, so no
+module may write a guarded table that way. The scan parses each module with
+``ast`` and resolves its imports, so aliases (``insert as sqlite_insert``,
+``Mention as M``, ``import sqlalchemy as sa``, ``from ..models import
+Mention``) are followed. A statement's target counts as the model whether it
+is given positionally or as ``table=``, through ``aliased(...)`` or
+``__table__``, or as a table named by string (``table("mentions")``,
+``metadata.tables["mentions"]``). Raw SQL targets are read after comments are
+removed, and may be quoted or schema-qualified; ``INSERT``, ``INSERT OR ...``,
+``REPLACE``, ``UPDATE`` and ``DELETE`` all count.
 
-Identity rows are scanned the same way for the writes the guard handles
-(ADR 0016): an ``Episode`` update (it could move the episode to another
-podcast without carrying its podcast's suppressions) and an ``Episode`` or
-``Podcast`` delete (it would skip the refusal). Inserts of either, and
-``Podcast`` updates, cannot lift a suppression and are not reported.
+``Episode`` and ``Podcast`` are scanned the same way (ADR 0017): an update or
+an upsert can move an episode to another podcast without carrying its
+podcast's suppressions, an insert can bring back a deleted row's id, and a
+delete would skip the guard's refusal.
 
 What it cannot see: a write built dynamically (a model or table chosen at
 run time, SQL assembled from variables), a write through a helper defined in
 another package, and code outside ``backend/src``, ``backend/scripts`` and
-``backend/alembic``. A new bypass fails here until it is removed or added to
-``_EXEMPT`` with a reason.
+``backend/alembic``. A new bypass fails here until it is removed or allowed
+in ``_EXEMPT`` with a reason that covers exactly its verb and table.
 """
 
 import ast
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,42 +38,59 @@ from podex.models import GUARDED_MODELS, Episode, Podcast
 
 _BACKEND = Path(__file__).resolve().parent.parent
 _SCANNED = ("src", "scripts", "alembic")
-_EXEMPT = {
-    "src/podex/services/takedown_requests.py": (
-        "takedown execution clears and deletes suppressed rows in bulk; it only"
-        " removes content"
-    ),
-    "alembic/versions": "migrations change schema and backfill suppression rows",
+_SCANNED_MODELS: tuple[type[Any], ...] = (*GUARDED_MODELS, Episode, Podcast)
+_TABLE_OF_MODEL: dict[str, str] = {
+    model.__name__: str(model.__table__.name) for model in _SCANNED_MODELS
 }
+_TABLES = frozenset(_TABLE_OF_MODEL.values())
 _CORE_WRITES = frozenset({"insert", "update", "delete"})
-# The models each write verb must reach through the flush: every guarded
-# model, plus the identity rows whose update or delete the guard handles.
-_MODELS_BY_VERB: dict[str, tuple[type[Any], ...]] = {
-    "insert": GUARDED_MODELS,
-    "update": (*GUARDED_MODELS, Episode),
-    "delete": (*GUARDED_MODELS, Episode, Podcast),
-}
-_NAMES_BY_VERB = {
-    verb: frozenset(model.__name__ for model in models)
-    for verb, models in _MODELS_BY_VERB.items()
-}
-_TABLES_BY_VERB = {
-    verb: frozenset(model.__table__.name for model in models)
-    for verb, models in _MODELS_BY_VERB.items()
-}
 _BULK_METHODS = frozenset(
     {"bulk_save_objects", "bulk_insert_mappings", "bulk_update_mappings"},
 )
 _TABLE_FACTORIES = frozenset({"table", "Table"})
-_SQL_VERBS = {"insert into ": "insert", "update ": "update", "delete from ": "delete"}
+_SQL_COMMENTS = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
+_IDENTIFIER = r"[`\"\[]?\w+[`\"\]]?"
+_SQL_WRITE = re.compile(
+    r"(?<![\w.])(?P<verb>insert(?:\s+or\s+\w+)?\s+into|replace\s+into"
+    r"|update(?:\s+or\s+\w+)?|delete\s+from)\s+"
+    rf"(?P<target>(?:{_IDENTIFIER}\s*\.\s*)?{_IDENTIFIER})",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _Exemption:
+    """Writes one module may make around the flush, and why."""
+
+    reason: str
+    writes: frozenset[tuple[str, str]]
+
+
+_EXEMPT = {
+    "src/podex/services/takedown_requests.py": _Exemption(
+        reason=(
+            "takedown execution deletes an episode's derived rows and clears its"
+            " derived transcript text in bulk; it only removes content"
+        ),
+        writes=frozenset(
+            {
+                ("delete", "derivative_generation_runs"),
+                ("delete", "semantic_chunks"),
+                ("delete", "episode_summaries"),
+                ("update", "transcripts"),
+            },
+        ),
+    ),
+}
 
 
 @dataclass(frozen=True, slots=True)
 class _Finding:
-    """One bypass write found in a module."""
+    """One bypass write found in a module: its verb, table and form."""
 
     path: str
     line: int
+    verb: str
+    table: str
     reason: str
 
 
@@ -121,38 +142,49 @@ def _is_core_write(module: _Module, func: ast.expr) -> str | None:
     return None
 
 
-def _guarded(module: _Module, node: ast.expr, verb: str) -> str | None:
-    """Return the model or table a ``verb`` must not bypass the flush for."""
-    names = _NAMES_BY_VERB[verb]
-    tables = _TABLES_BY_VERB[verb]
+def _target(module: _Module, node: ast.expr) -> str | None:
+    """Return the scanned table a statement target names, if any."""
     if isinstance(node, ast.Attribute) and node.attr == "__table__":
-        return _guarded(module, node.value, verb)
+        return _target(module, node.value)
     origin = module.qualified(node)
     if origin is not None:
         name = origin.rsplit(".", 1)[-1]
-        if name in names and (origin == name or origin.startswith("podex")):
-            return name
-    if isinstance(node, ast.Call):
-        factory = module.qualified(node.func)
+        if name in _TABLE_OF_MODEL and (origin == name or origin.startswith("podex")):
+            return _TABLE_OF_MODEL[name]
+    if isinstance(node, ast.Call) and node.args:
+        factory = (module.qualified(node.func) or "").rsplit(".", 1)[-1]
+        first = node.args[0]
+        if factory == "aliased":
+            return _target(module, first)
         if (
-            factory is not None
-            and factory.rsplit(".", 1)[-1] in _TABLE_FACTORIES
-            and node.args
-            and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value in tables
+            factory in _TABLE_FACTORIES
+            and isinstance(first, ast.Constant)
+            and first.value in _TABLES
         ):
-            return str(node.args[0].value)
+            return str(first.value)
     if (
         isinstance(node, ast.Subscript)
         and isinstance(node.slice, ast.Constant)
-        and node.slice.value in tables
+        and node.slice.value in _TABLES
     ):
         return str(node.slice.value)
     return None
 
 
-def _queried(module: _Module, node: ast.expr, verb: str) -> str | None:
-    """Return the guarded model of a ``query(Model)...`` chain, if any."""
+def _statement_target(module: _Module, call: ast.Call) -> str | None:
+    """Return the table of ``insert(...)`` and friends, positional or ``table=``."""
+    candidates = [*call.args[:1]]
+    candidates.extend(
+        keyword.value for keyword in call.keywords if keyword.arg == "table"
+    )
+    for candidate in candidates:
+        if (table := _target(module, candidate)) is not None:
+            return table
+    return None
+
+
+def _queried(module: _Module, node: ast.expr) -> str | None:
+    """Return the scanned table of a ``query(Model)...`` chain, if any."""
     current: ast.expr = node
     while isinstance(current, (ast.Call, ast.Attribute)):
         if isinstance(current, ast.Call):
@@ -161,93 +193,154 @@ def _queried(module: _Module, node: ast.expr, verb: str) -> str | None:
                 and current.func.attr == "query"
                 and current.args
             ):
-                return _guarded(module, current.args[0], verb)
+                return _target(module, current.args[0])
             current = current.func
         else:
             current = current.value
     return None
 
 
-def _raw_sql_target(call: ast.Call) -> str | None:
-    """Return a guarded table a raw SQL string literal writes, if any."""
+def sql_writes(sql: str) -> list[tuple[str, str]]:
+    """Return each ``(verb, table)`` a SQL string writes to a scanned table.
+
+    Comments are removed first; a target may be quoted (``"t"``, `` `t` ``,
+    ``[t]``) or schema-qualified. ``INSERT OR ...`` and ``REPLACE`` are inserts.
+    """
+    cleaned = " ".join(_SQL_COMMENTS.sub(" ", sql).lower().split())
+    writes: list[tuple[str, str]] = []
+    for match in _SQL_WRITE.finditer(cleaned):
+        table = re.sub(r"[`\"\[\]\s]", "", match["target"]).rsplit(".", 1)[-1]
+        verb = match["verb"].split()[0]
+        if table in _TABLES:
+            writes.append(("insert" if verb == "replace" else verb, table))
+    return writes
+
+
+def _raw_sql_write(call: ast.Call) -> tuple[str, str] | None:
+    """Return the first scanned ``(verb, table)`` a SQL string literal writes."""
     for argument in call.args:
         if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-            sql = " ".join(argument.value.lower().split())
-            for prefix, verb in _SQL_VERBS.items():
-                for table in _TABLES_BY_VERB[verb]:
-                    if f"{prefix}{table}" in sql:
-                        written: str = table
-                        return written
+            writes = sql_writes(argument.value)
+            if writes:
+                return writes[0]
     return None
 
 
-def _reason(module: _Module, node: ast.Call) -> str | None:
-    """Return why a call bypasses the flush for a guarded table, if it does."""
+def _write(module: _Module, node: ast.Call) -> tuple[str, str, str] | None:
+    """Return ``(verb, table, form)`` for a call that bypasses the flush."""
     method = node.func.attr if isinstance(node.func, ast.Attribute) else None
     verb = _is_core_write(module, node.func)
     if method in _BULK_METHODS:
-        return f"session.{method}"
-    if verb and node.args and (target := _guarded(module, node.args[0], verb)):
-        return f"Core {verb}({target})"
+        bulk = (_target(module, node.args[0]) if node.args else None) or "?"
+        return "bulk", bulk, f"session.{method}"
+    if verb and (constructed := _statement_target(module, node)):
+        return verb, constructed, f"Core {verb}({constructed})"
     if (
         method in _CORE_WRITES
         and isinstance(node.func, ast.Attribute)
-        and (target := _guarded(module, node.func.value, method))
+        and (own := _target(module, node.func.value))
     ):
-        return f"{target}.{method}()"
+        return method, own, f"{own}.{method}()"
     if (
         method in {"update", "delete"}
         and isinstance(node.func, ast.Attribute)
-        and (target := _queried(module, node.func.value, method))
+        and (queried := _queried(module, node.func.value))
     ):
-        return f"Query({target}).{method}()"
+        return method, queried, f"Query({queried}).{method}()"
     if (
         method in {"execute", "exec_driver_sql"}
         or verb is None
         and (module.qualified(node.func) or "").endswith("text")
     ):
-        target = _raw_sql_target(node)
-        if target is not None:
-            return f"raw SQL writing {target}"
+        written = _raw_sql_write(node)
+        if written is not None:
+            return *written, f"raw SQL {written[0]} {written[1]}"
     return None
 
 
 def find_bypass_writes(source: str, path: str) -> list[_Finding]:
-    """Return every guarded-table write in ``source`` that skips the flush."""
+    """Return every scanned-table write in ``source`` that skips the flush."""
     tree = ast.parse(source)
     module = _imports(tree)
-    return [
-        _Finding(path=path, line=node.lineno, reason=reason)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Call) and (reason := _reason(module, node)) is not None
-    ]
+    findings: list[_Finding] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and (write := _write(module, node)):
+            verb, table, reason = write
+            findings.append(
+                _Finding(
+                    path=path, line=node.lineno, verb=verb, table=table, reason=reason
+                ),
+            )
+    return findings
 
 
-def _is_exempt(relative: str) -> bool:
-    return any(
-        relative == exempt or relative.startswith(f"{exempt}/") for exempt in _EXEMPT
+def _exemption(relative: str) -> _Exemption | None:
+    for path, exemption in _EXEMPT.items():
+        if relative == path or relative.startswith(f"{path}/"):
+            return exemption
+    return None
+
+
+def unexempted(findings: list[_Finding]) -> list[_Finding]:
+    """Drop the findings an exemption covers by both verb and table."""
+    kept: list[_Finding] = []
+    for finding in findings:
+        exemption = _exemption(finding.path)
+        if exemption is None or (finding.verb, finding.table) not in exemption.writes:
+            kept.append(finding)
+    return kept
+
+
+def _scan(relative: str) -> list[_Finding]:
+    return find_bypass_writes(
+        (_BACKEND / relative).read_text(encoding="utf-8"),
+        relative,
     )
 
 
 def test_no_module_writes_a_guarded_table_around_the_flush() -> None:
-    """Every guarded-table write in the backend goes through the ORM flush."""
+    """Every scanned-table write in the backend goes through the ORM flush."""
     findings: list[_Finding] = []
     for directory in _SCANNED:
         for path in sorted((_BACKEND / directory).rglob("*.py")):
-            relative = path.relative_to(_BACKEND).as_posix()
-            if _is_exempt(relative):
-                continue
-            findings.extend(
-                find_bypass_writes(path.read_text(encoding="utf-8"), relative),
-            )
+            findings.extend(_scan(path.relative_to(_BACKEND).as_posix()))
 
-    assert_that(findings).is_empty()
+    assert_that(unexempted(findings)).is_empty()
 
 
-def test_every_exemption_still_exists() -> None:
-    """An exemption for a moved or deleted path is removed, not left behind."""
-    for exempt in _EXEMPT:
-        assert_that((_BACKEND / exempt).exists()).described_as(exempt).is_true()
+def test_every_exemption_is_still_used_exactly() -> None:
+    """Each exempt module exists and still makes every write it is allowed."""
+    for path, exemption in _EXEMPT.items():
+        assert_that((_BACKEND / path).exists()).described_as(path).is_true()
+        made = {(finding.verb, finding.table) for finding in _scan(path)}
+        assert_that(made).described_as(path).is_equal_to(set(exemption.writes))
+
+
+@pytest.mark.parametrize(
+    "snippet",
+    [
+        "db.execute(update(Episode).values(podcast_id=2))",
+        "db.execute(delete(Episode).where(x))",
+        "db.execute(delete(Podcast).where(x))",
+        "db.query(Mention).filter(x).delete()",
+        "db.execute(text('UPDATE episodes SET podcast_id = 2'))",
+    ],
+    ids=["episode-move", "episode-delete", "podcast-delete", "mention-delete", "raw"],
+)
+def test_an_exemption_covers_only_its_own_writes(snippet: str) -> None:
+    """A write the exemption's reason does not name is reported in that module."""
+    path = "src/podex/services/takedown_requests.py"
+    findings = find_bypass_writes(_HEADER + snippet, path)
+
+    assert_that(unexempted(findings)).is_length(1)
+
+
+def test_an_exempt_write_is_not_reported() -> None:
+    """The writes an exemption names stay allowed in its module."""
+    path = "src/podex/services/takedown_requests.py"
+    snippet = "db.query(SemanticChunk).filter(x).delete()"
+
+    assert_that(unexempted(find_bypass_writes(_HEADER + snippet, path))).is_empty()
 
 
 _HEADER = "from sqlalchemy import insert, update, delete, text\n"
@@ -288,17 +381,59 @@ _BYPASSES = {
         "from .. import models\n"
         "db.execute(insert(models.EpisodeSummary).values(summary_text='x'))"
     ),
+    "keyword-target": "db.execute(update(table=Mention).values(context='x'))",
+    "aliased-target": (
+        "from sqlalchemy.orm import aliased\n"
+        "db.execute(update(aliased(Mention)).values(context='x'))"
+    ),
+    "quoted-sql": "db.execute(text('UPDATE \"mentions\" SET context = 1'))",
+    "schema-sql": "db.execute(text('DELETE FROM main.semantic_chunks'))",
+    "commented-sql": (
+        "db.execute(text('INSERT /* x */ INTO transcripts (a) VALUES (1)'))"
+    ),
+    "replace-sql": "db.execute(text('REPLACE INTO episode_summaries (a) VALUES (1)'))",
     "episode-move": "db.execute(update(Episode).values(podcast_id=2))",
     "episode-table-update": "conn.execute(Episode.__table__.update(), rows)",
     "episode-query-update": "db.query(Episode).filter(x).update({'podcast_id': 2})",
     "episode-delete": "db.execute(delete(Episode).where(x))",
     "podcast-delete": "db.execute(delete(Podcast).where(x))",
     "podcast-query-delete": "db.query(Podcast).filter(x).delete()",
+    "podcast-update": "db.execute(update(Podcast).values(status='paused'))",
+    "episode-insert": "db.execute(insert(Episode).values(podcast_id=1))",
+    "podcast-insert": "db.execute(insert(Podcast).values(name='x'))",
     "episode-raw-update": "db.execute(text('UPDATE episodes SET podcast_id = 2'))",
     "podcast-raw-delete": "db.execute(text('DELETE FROM podcasts WHERE id = 1'))",
     "podcast-table-by-name": (
         "import sqlalchemy as sa\n"
         "db.execute(sa.table('podcasts', sa.column('id')).delete())"
+    ),
+    "episode-keyword-target": (
+        "db.execute(update(table=Episode).values(podcast_id=destination))"
+    ),
+    "episode-aliased-target": (
+        "from sqlalchemy.orm import aliased\n"
+        "db.execute(update(aliased(Episode)).values(podcast_id=destination))"
+    ),
+    "episode-quoted-sql": "db.execute(text('UPDATE \"episodes\" SET podcast_id=:id'))",
+    "episode-schema-sql": "db.execute(text('UPDATE main.episodes SET podcast_id=:id'))",
+    "episode-commented-sql": (
+        "db.execute(text('UPDATE /* move */ episodes SET podcast_id=:id'))"
+    ),
+    "episode-core-upsert": (
+        "from sqlalchemy.dialects.sqlite import insert as sqlite_insert\n"
+        "db.execute(sqlite_insert(Episode).values(id=1).on_conflict_do_update("
+        "index_elements=['id'], set_={'podcast_id': other}))"
+    ),
+    "episode-raw-upsert": (
+        "db.execute(text('INSERT INTO episodes (id, podcast_id) VALUES (:id, :p)"
+        " ON CONFLICT (id) DO UPDATE SET podcast_id = excluded.podcast_id'))"
+    ),
+    "episode-insert-or-replace": (
+        "db.execute(text('INSERT OR REPLACE INTO episodes (id) VALUES (1)'))"
+    ),
+    "episode-replace": "db.execute(text('REPLACE INTO episodes (id) VALUES (1)'))",
+    "episode-quoted-delete": (
+        "db.execute(text('DELETE FROM \"episodes\" WHERE id=:id'))"
     ),
 }
 
@@ -309,23 +444,51 @@ def test_scan_detects_each_bypass_interface(snippet: str) -> None:
     assert_that(find_bypass_writes(_HEADER + snippet, "snippet.py")).is_length(1)
 
 
-def test_scan_ignores_orm_writes_and_unguarded_tables() -> None:
-    """ORM writes and bulk writes of other tables are not reported."""
+def test_scan_ignores_orm_writes_reads_and_unguarded_tables() -> None:
+    """ORM writes, reads and writes of other tables are not reported."""
     allowed = "\n".join(
         [
             _HEADER,
+            "from sqlalchemy.orm import aliased",
             "db.add(EpisodeSummary(summary_text='x'))",
+            "db.add(Episode(podcast_id=1, title='x'))",
+            "episode.podcast_id = 2",
+            "db.delete(episode)",
             "db.query(AccountAlertEvent).filter(x).update({'a': 1})",
             "db.execute(insert(AuditLog).values(summary='x'))",
+            "db.execute(update(table=AuditLog).values(summary='x'))",
+            "db.execute(update(aliased(AuditLog)).values(summary='x'))",
             "db.execute(text('UPDATE magic_link_tokens SET used = 1'))",
+            "db.execute(text('UPDATE content_suppressions SET id = id WHERE 0 = 1'))",
+            "db.execute(text('INSERT INTO audit_logs (a) VALUES (1)"
+            " ON CONFLICT (a) DO UPDATE SET a = 2'))",
+            "db.execute(text('SELECT id FROM episodes -- update episodes'))",
+            "db.execute(text('/* delete from podcasts */ SELECT 1'))",
+            "db.execute(text('UPDATE episodes_archive SET x = 1'))",
             "db.query(Mention).filter(x).all()",
+            "db.execute(select(Episode).where(Episode.podcast_id == 1))",
             "db.execute(sa.table('content_suppressions').insert())",
-            "db.execute(insert(Episode).values(podcast_id=1))",
-            "db.execute(insert(Podcast).values(name='x'))",
-            "db.execute(update(Podcast).values(status='paused'))",
-            "db.execute(text('UPDATE podcasts SET status = 1'))",
-            "db.delete(episode)",
         ],
     )
 
     assert_that(find_bypass_writes(allowed, "snippet.py")).is_empty()
+
+
+@pytest.mark.parametrize(
+    ("sql", "expected"),
+    [
+        ('UPDATE "episodes" SET podcast_id=:id', [("update", "episodes")]),
+        ("UPDATE main.episodes SET podcast_id=:id", [("update", "episodes")]),
+        ("update `podcasts` set name = 1", [("update", "podcasts")]),
+        ("DELETE FROM [mentions] WHERE 1", [("delete", "mentions")]),
+        ("INSERT OR IGNORE INTO podcasts (a) VALUES (1)", [("insert", "podcasts")]),
+        ("UPDATE OR REPLACE episodes SET title = 1", [("update", "episodes")]),
+        ("SELECT * FROM episodes", []),
+    ],
+)
+def test_sql_targets_are_read_through_quotes_schemas_and_variants(
+    sql: str,
+    expected: list[tuple[str, str]],
+) -> None:
+    """Raw SQL targets resolve to the table however they are spelled."""
+    assert_that(sql_writes(sql)).is_equal_to(expected)

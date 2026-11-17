@@ -30,10 +30,10 @@ from podex.models.content_suppression import (
     suppressed_episodes_statement,
     suppression_key,
 )
-from podex.models.suppression_guard import (
+from podex.models.suppression_guard import lock_media_rows, lock_podcasts_of_episodes
+from podex.models.suppression_identity import (
+    bump_suppression_version,
     hold_sqlite_write_lock,
-    lock_media_rows,
-    lock_podcasts_of_episodes,
 )
 
 __all__ = [
@@ -400,29 +400,6 @@ def suppression_version(db: Session) -> int:
         ),
     )
     return int(version or 0)
-
-
-def bump_suppression_version(db: Session) -> None:
-    """Increase the suppression change counter in this transaction.
-
-    The row is the last lock a suppression-relevant write takes, after media
-    and podcast rows, so it adds no new lock order.
-
-    The row is seeded when the table is created, so this only updates it and
-    concurrent bumps queue on its row lock.
-
-    Args:
-        db: Session of the transaction that changed suppressed content.
-
-    Raises:
-        LookupError: If the counter row is missing (migrations not applied).
-    """
-    row = db.get(ContentSuppressionVersion, 1, with_for_update=True)
-    if row is None:
-        message = "content_suppression_versions has no row; apply the migrations"
-        raise LookupError(message)
-    row.version += 1
-    db.flush()
 
 
 def delete_mentions(db: Session, mentions: Sequence[Mention]) -> list[int]:
