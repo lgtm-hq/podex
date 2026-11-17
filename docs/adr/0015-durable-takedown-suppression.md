@@ -2,7 +2,7 @@
 
 # 0015. Takedowns leave a durable suppression checked on every write
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: takedowns, data, legal
 

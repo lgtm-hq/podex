@@ -2,7 +2,7 @@
 
 # 0013. First-use setting failures carry no configured value
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: config, security, observability
 
