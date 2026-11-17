@@ -77,7 +77,7 @@ class _AuditDatabase:
         if not isinstance(column_type, String) or column_type.length is None:
             msg = f"expected a bounded string column, got {column_type!r}"
             raise AssertionError(msg)
-        return column_type.length
+        return int(column_type.length)
 
     def identifiers(self) -> list[tuple[int, str | None]]:
         """Return every audit entry's id and resource identifier."""
