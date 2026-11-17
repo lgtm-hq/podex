@@ -490,7 +490,7 @@ def test_title_similarity_thresholds(
     [
         ("urn:Show:1", "urn:show:1"),
         ("  URN:SHOW:1\t", "urn:show:1"),
-        ("urn:show:CALF\u00c9", "urn:show:calf\u00c9"),
+        ("urn:show:X\u00c9", "urn:show:x\u00c9"),
         ("   ", None),
         ("", None),
         (None, None),

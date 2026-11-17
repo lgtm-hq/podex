@@ -419,8 +419,8 @@ def test_guids_differing_only_in_case_are_one_episode_in_one_run(
     [
         ("  URN:Show:Return\t", "urn:show:return", True),
         ("urn:show:return", "URN:SHOW:RETURN", True),
-        ("urn:show:calfÉ", "urn:show:café", False),
-        ("urn:show:café", "URN:SHOW:CAFé", True),
+        ("urn:show:\u00c9", "urn:show:\u00e9", False),
+        ("urn:show:\u00e9", "URN:SHOW:\u00e9", True),
         ("urn:show:50%_off", "URN:SHOW:50%_OFF", True),
         ("urn:show:50xyoff", "urn:show:50%_off", False),
         ("   ", "   ", False),

@@ -48,8 +48,8 @@ def _lookup(
     ("stored", "reported", "found"),
     [
         ("  URN:Show:Return\t", "urn:show:return", True),
-        ("URN:CAFÉ", "urn:calfÉ", True),
-        ("urn:café", "urn:calfÉ", False),
+        ("URN:SHOW:\u00c9", "urn:show:\u00c9", True),
+        ("urn:show:\u00e9", "urn:show:\u00c9", False),
         ("urn:a\\b%c_d", "URN:A\\B%C_D", True),
         ("urn:aXbYcZd", "urn:a\\b%c_d", False),
         ("urn:show:10", "urn:show:1", False),
