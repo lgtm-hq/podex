@@ -1,7 +1,7 @@
 {
   "name": "podex-frontend",
   "type": "module",
-  "version": "0.41.44",
+  "version": "0.41.45",
   "private": true,
   "scripts": {
     "dev": "astro dev",
