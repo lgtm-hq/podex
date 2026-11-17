@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.40] - 2026-11-17
+
+### Changed
+
+- **deps**: update lintro to 0.181.2 (minor) (#882) (402c21c)
+
+### Fixed
+
+- **ops**: answer 409 or 422 instead of 500 when a podcast update conflicts or is too
+  long (#880) (a0b41e6)
+
 ## [0.41.39] - 2026-11-16
 
 ### Fixed
