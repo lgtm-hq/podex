@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.45] - 2026-11-17
+
+### Fixed
+
+- **discovery**: stop listing discovery at known episodes after a complete walk (#887)
+  (d8d3a1c)
+
 ## [0.41.44] - 2026-11-17
 
 ### Fixed
