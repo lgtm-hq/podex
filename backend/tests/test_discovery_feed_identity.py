@@ -529,6 +529,92 @@ def test_catalog_lookup_by_number_respects_the_season(
 
 
 @pytest.mark.parametrize(
+    ("stored_guid", "record_guid", "found"),
+    [
+        ("urn:show:s1e5", "urn:show:s2e5", False),
+        (None, "urn:show:s2e5", True),
+        ("urn:show:s1e5", None, True),
+    ],
+    ids=[
+        "row-with-another-guid-is-another-item",
+        "row-without-a-guid",
+        "record-without-a-guid",
+    ],
+)
+def test_a_seasoned_record_takes_a_seasonless_row_only_without_another_guid(
+    db_session: Session,
+    stored_guid: str | None,
+    record_guid: str | None,
+    found: bool,
+) -> None:
+    """A row stored before seasons were is not another feed item's by number."""
+    podcast = _podcast(db_session)
+    row = persist_episode(
+        db_session,
+        podcast=podcast,
+        title="The Arrival",
+        episode_number=5,
+        rss_guid=stored_guid,
+    )
+    db_session.commit()
+    record = DiscoveredEpisode(
+        title="The Departure",
+        episode_number=5,
+        season_number=2,
+        rss_guid=record_guid,
+    )
+
+    with DiscoveryOrchestrator(db_session) as orchestrator:
+        # Direct unit coverage of the private catalog lookup.
+        # pylint: disable-next=protected-access
+        existing = orchestrator._find_existing_episode(podcast, record)
+
+    assert_that(existing).is_equal_to(row if found else None)
+
+
+def test_season_two_is_stored_beside_a_row_stored_before_seasons(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Season 2 episode 5 gets its own row next to a season-less episode 5 row."""
+    podcast = _podcast(db_session)
+    persist_episode(
+        db_session,
+        podcast=podcast,
+        title="The Arrival",
+        episode_number=5,
+        rss_guid="urn:show:s1e5",
+        episode_url=f"{_SITE}s1e5",
+        published_at=_DAY - timedelta(days=300),
+    )
+    db_session.commit()
+    items = [
+        _Item(
+            "The Arrival",
+            guid="urn:show:s1e5",
+            link=f"{_SITE}s1e5",
+            season="1",
+            episode="5",
+            published_at=_DAY - timedelta(days=300),
+        ),
+        _Item(
+            "The Departure",
+            guid="urn:show:s2e5",
+            link=f"{_SITE}s2e5",
+            season="2",
+            episode="5",
+        ),
+    ]
+
+    for _ in range(2):
+        _run(db_session, monkeypatch, podcast, items)
+
+    assert_that(_guid_by_title(db_session, podcast)).is_equal_to(
+        {"The Arrival": "urn:show:s1e5", "The Departure": "urn:show:s2e5"},
+    )
+
+
+@pytest.mark.parametrize(
     ("record", "found"),
     [
         (DiscoveredEpisode(title="Why We Started", published_at=_DAY), True),

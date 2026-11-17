@@ -164,8 +164,10 @@ podcast with, in order:
    When the record carries a season, a row of that season comes first, then a
    row without a season, never a row of another season
    (`episodes.season_number`, migration 0026, is NULL for rows stored before
-   it and for rows of sources without seasons). A record without a season
-   matches any row with the number, as before;
+   it and for rows of sources without seasons). A row without a season is
+   skipped when the record has a GUID and the row has another one: step 3
+   has ruled it out, so it is another item of the feed. A record without a
+   season matches any row with the number, as before;
 6. only for a record with no YouTube id, Spotify URI, GUID or URL: the same
    title and the same publication time. This keeps feed items whose link and
    GUID the reader no longer passes on from being stored again on every run.
@@ -225,9 +227,10 @@ all already stored may end the walk.
     channel link, and for stored GUIDs of a feed that the current reader no
     longer reports for any item. Rows of one podcast whose GUIDs differ only in
     case are found by grouping on `lower(trim(rss_guid))`.
-  - Rows stored before migration 0026 have no season, so a seasoned record can
-    still find such a row of another season by number; rows stored afterwards
-    carry their season.
+  - Rows stored before migration 0026 have no season. A seasoned record with
+    a GUID does not take such a row when the row has another GUID, but a
+    seasoned record without a GUID can still find a row of another season by
+    number. Rows stored afterwards carry their season.
   - Items of a feed without GUIDs that share a title and fall within seven days
     still merge in one run; only distinct GUIDs keep same-source items apart.
   - Step 6 of the lookup needs the exact title and publication time; an item

@@ -503,16 +503,25 @@ class DiscoveryOrchestrator:
         """Return the first row with the record's number, in a compatible season.
 
         A record with a season matches a row of the same season first, then a
-        row without a season; never a row of another season. A record without
-        a season matches any row with the number.
+        row without a season; never a row of another season. A row without a
+        season (stored before seasons were, or from the listing) is skipped
+        when the record has a GUID and the row another one: the GUID step has
+        already ruled it out, so it is another item of the feed. A record
+        without a season matches any row with the number.
         """
         numbered = query.filter(Episode.episode_number == discovered.episode_number)
         season = known_number(discovered.season_number)
         if season is None:
             return numbered.first()
-        return (
-            numbered.filter(Episode.season_number == season).first()
-            or numbered.filter(Episode.season_number.is_(None)).first()
+        same_season = numbered.filter(Episode.season_number == season).first()
+        if same_season is not None:
+            return same_season
+        seasonless = numbered.filter(Episode.season_number.is_(None))
+        if guid_key(discovered.rss_guid) is None:
+            return seasonless.first()
+        return next(
+            (row for row in seasonless if guid_key(row.rss_guid) is None),
+            None,
         )
 
     @staticmethod
