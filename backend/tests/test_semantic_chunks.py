@@ -1,5 +1,6 @@
 """Tests for semantic transcript chunk derivatives."""
 
+import array
 import math
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,14 +15,14 @@ from podex.models import (
     EMBEDDING_DIMENSIONS,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
-    Transcript,
 )
 from podex.services.semantic_chunks import (
     SemanticChunkingPolicy,
     build_semantic_chunk_candidates,
     sync_semantic_chunks_for_transcript,
 )
-from tests.conftest import create_jre_episode
+from tests.semantic_chunk_support import create_transcript as _create_transcript
+from tests.semantic_chunk_support import sync_and_commit
 
 
 # This adapter implements one protocol operation; extra methods have no purpose.
@@ -211,26 +212,6 @@ def test_sync_semantic_chunks_deletes_stale_replay_windows(
     assert_that(chunks[0].text).is_equal_to("alpha beta gamma delta epsilon")
 
 
-def _create_transcript(
-    *,
-    db_session: Session,
-    cleaned_text: str | None = None,
-    segments_json: list[dict[str, object]] | None = None,
-) -> Transcript:
-    """Create a persisted transcript with podcast and episode parents."""
-    episode = create_jre_episode(db_session)
-    transcript = Transcript(
-        episode_id=episode.id,
-        provider="podscripts",
-        raw_text=cleaned_text,
-        cleaned_text=cleaned_text,
-        segments_json=segments_json,
-    )
-    db_session.add(transcript)
-    db_session.flush()
-    return transcript
-
-
 def _padded(values: list[float]) -> list[float]:
     """Pad ``values`` with zeros to the embedding column's dimension."""
     return values + [0.0] * (EMBEDDING_DIMENSIONS - len(values))
@@ -246,6 +227,7 @@ def _with_element(element: object) -> list[object]:
 _FLOAT32_MAX = 3.4028234663852886e38
 _DIMENSIONS_MISMATCH = "embedding: PipelineFailure; embedding_dimensions_mismatch"
 _INVALID_VALUE = "embedding: PipelineFailure; embedding_invalid_value"
+_INVALID_TYPE = "embedding: PipelineFailure; embedding_invalid_type"
 
 # Vectors the embedding column cannot store, each with its chunk's stored error.
 _REJECTED_VECTORS: dict[str, tuple[object, str]] = {
@@ -253,8 +235,16 @@ _REJECTED_VECTORS: dict[str, tuple[object, str]] = {
     "one-element-long": ([0.25] * (EMBEDDING_DIMENSIONS + 1), _DIMENSIONS_MISMATCH),
     "provider-sized": ([0.25, 0.5, 0.75], _DIMENSIONS_MISMATCH),
     "empty": ([], _DIMENSIONS_MISMATCH),
-    "text-of-column-length": ("0" * EMBEDDING_DIMENSIONS, _DIMENSIONS_MISMATCH),
-    "missing": (None, _DIMENSIONS_MISMATCH),
+    "text-of-column-length": ("0" * EMBEDDING_DIMENSIONS, _INVALID_TYPE),
+    "array-of-column-length": (
+        array.array("d", [0.25] * EMBEDDING_DIMENSIONS),
+        _INVALID_TYPE,
+    ),
+    "generator-of-column-length": (
+        (0.25 for _index in range(EMBEDDING_DIMENSIONS)),
+        _INVALID_TYPE,
+    ),
+    "missing": (None, _INVALID_TYPE),
     "nan": (_with_element(math.nan), _INVALID_VALUE),
     "positive-infinity": (_with_element(math.inf), _INVALID_VALUE),
     "negative-infinity": (_with_element(-math.inf), _INVALID_VALUE),
@@ -348,13 +338,7 @@ def test_provider_of_another_dimension_is_never_called(
     policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
     provider = Mock(model_name="other-embedding-v1", dimensions=dimensions)
 
-    result = sync_semantic_chunks_for_transcript(
-        db=db_session,
-        transcript=transcript,
-        embedding_provider=provider,
-        policy=policy,
-    )
-    db_session.commit()
+    result = sync_and_commit(db_session, transcript, provider=provider, policy=policy)
 
     chunks = db_session.query(SemanticChunk).all()
     provider.embed_texts.assert_not_called()

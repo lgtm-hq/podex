@@ -179,7 +179,7 @@ def test_takedown_cannot_commit_while_text_is_being_dispatched(
 
     1. The writer authorises the episode and starts reading its text.
     2. At that moment the approver tries to commit a takedown: it cannot.
-    3. The provider is called and the writer commits.
+    3. The provider is called (asserted) and the writer commits.
     4. The approver retries, commits, and removes the writer's output.
     """
     attempts: list[str] = []
@@ -203,6 +203,7 @@ def test_takedown_cannot_commit_while_text_is_being_dispatched(
     _take_down(sides)
 
     assert_that(attempts).is_equal_to(["blocked"])
+    assert_that(provider.mock_calls).is_not_empty()
     sides.approver.expire_all()
     assert_that(sides.approver.query(lane.output).count()).is_zero()
 
