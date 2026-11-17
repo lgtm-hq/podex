@@ -24,6 +24,7 @@ from podex.services.derivative_summaries import (
     generate_episode_summary,
     generate_media_summary,
     stable_source_text_hash,
+    summary_model_name,
 )
 from podex.services.field_normalization import (
     normalize_required as _normalize_required,
@@ -85,6 +86,9 @@ def generate_episode_derivatives(
             call, run row or other derived row. Authorisation holds the
             takedown lock until this transaction ends, so no takedown of the
             episode commits while its text is with a provider.
+        PipelineFailure: ``summary_invalid_model_name`` if the summary
+            provider's model name cannot be stored. It is raised after
+            authorisation and before any provider call or run row.
     """
     if summary_provider is not None:
         # Media summaries lock their media rows; the shared order takes media
@@ -108,7 +112,12 @@ def generate_episode_derivatives(
             pipeline_version=config.pipeline_version,
             chunk_pipeline_version=config.chunk_pipeline_version,
             summary_prompt_version=config.summary_prompt_version,
-            summary_model=summary_provider.model_name if summary_provider else None,
+            # Read before any provider call or run row; refused if unstorable.
+            summary_model=(
+                summary_model_name(summary_provider)
+                if summary_provider is not None
+                else None
+            ),
             source_text_hash=_run_source_hash(
                 db=db,
                 episode=episode,
