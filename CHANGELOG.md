@@ -22,6 +22,19 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.50] - 2026-11-17
+
+### Changed
+
+- **adr**: mark ADRs 0010 to 0016, 0018 and 0019 accepted (#921) (5719545)
+- **deps**: update ghcr.io/lgtm-hq/py-lintro docker tag to 0.181.6 (patch) (#926)
+  (eb454b8)
+
+### Fixed
+
+- **derivatives**: list an episode's media without DISTINCT over a JSON column (#925)
+  (b3349b1)
+
 ## [0.41.49] - 2026-11-17
 
 ### Fixed
