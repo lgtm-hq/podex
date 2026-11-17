@@ -16,6 +16,7 @@ from sqlalchemy import Engine
 from sqlalchemy.orm import Session
 
 from podex.models import (
+    AccountAlertRule,
     AccountSavedMedia,
     AccountUser,
     Episode,
@@ -26,6 +27,7 @@ from podex.models import (
     TakedownSubjectType,
 )
 from podex.models.suppression_guard import lock_media_rows
+from podex.services import account_alerts
 from podex.services.account_alerts import (
     delete_alert_rule,
     evaluate_alert_rules,
@@ -272,7 +274,41 @@ def test_rule_deletion_locks_media_then_rule_then_events(db_session: Session) ->
             for statement in statements[locked:events]
             if re.match(r"^SELECT .*\bFROM account_alert_rules\b", statement, re.DOTALL)
         ],
-    ).described_as("rule re-read under the media lock").is_length(1)
+    ).described_as("rule re-reads under the media lock").is_length(2)
+
+
+def test_rule_deletion_locks_the_record_a_rule_moved_to(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rule moved while the deletion waited: its new record is locked next."""
+    seeded = _seed(db_session)
+    survivor = Media(type=MediaType.BOOK, title="Dune (survivor)")
+    db_session.add(survivor)
+    db_session.commit()
+    locked: list[list[int]] = []
+
+    def lock_then_move(*, db: Session, media_ids: list[int]) -> dict[int, Media]:
+        if not locked:
+            # What a merge that committed during the wait leaves behind.
+            db.query(AccountAlertRule).filter(
+                AccountAlertRule.id == seeded.source_rule_id,
+            ).update({AccountAlertRule.target_id: survivor.id})
+        locked.append(list(media_ids))
+        rows: dict[int, Media] = lock_media(db=db, media_ids=media_ids)
+        return rows
+
+    monkeypatch.setattr(account_alerts, "lock_media", lock_then_move)
+
+    assert_that(
+        delete_alert_rule(
+            db=db_session,
+            user_id=seeded.user_id,
+            rule_id=seeded.source_rule_id,
+        ),
+    ).is_true()
+    assert_that(locked).is_equal_to([[seeded.source_id], [survivor.id]])
+    assert_that(db_session.get(AccountAlertRule, seeded.source_rule_id)).is_none()
 
 
 def test_deleting_a_rule_a_merge_collapsed_reports_it_missing(

@@ -26,6 +26,9 @@ from podex.services.content_suppression import (
 )
 from podex.services.media_locks import lock_media
 
+_STABLE_TARGET_ATTEMPTS = 3
+"""Reads of a rule's target before deleting it without a further media lock."""
+
 AlertTargetType = Literal["media", "podcast"]
 AlertEventType = Literal["new_mention", "new_episode"]
 
@@ -124,12 +127,21 @@ def delete_alert_rule(*, db: Session, user_id: int, rule_id: int) -> bool:
 
     The rule's media record is locked first, then the rule, then its events
     are deleted. A rule a merge collapsed meanwhile no longer exists.
+
+    A merge that committed while this waited may have moved the rule to its
+    surviving record. Only a merge moves a rule, and it deletes the record it
+    moved the rule from, so the lock taken there holds no row; the new record
+    is locked next, still before the rule, until the read is stable.
     """
-    rule = _get_rule(db=db, user_id=user_id, rule_id=rule_id)
-    if rule is None:
-        return False
-    if rule.target_type == "media":
-        lock_media(db=db, media_ids=[rule.target_id])
+    locked_target: int | None = None
+    for _attempt in range(_STABLE_TARGET_ATTEMPTS):
+        rule = _get_rule(db=db, user_id=user_id, rule_id=rule_id, refresh=True)
+        if rule is None:
+            return False
+        if rule.target_type != "media" or rule.target_id == locked_target:
+            break
+        locked_target = rule.target_id
+        lock_media(db=db, media_ids=[locked_target])
     rule = (
         db.query(AccountAlertRule)
         .filter(
@@ -213,16 +225,21 @@ def lock_alert_rules(*, db: Session, user_id: int) -> list[AccountAlertRule]:
     )
 
 
-def _get_rule(*, db: Session, user_id: int, rule_id: int) -> AccountAlertRule | None:
-    """Load an account-owned alert rule."""
-    return (
-        db.query(AccountAlertRule)
-        .filter(
-            AccountAlertRule.id == rule_id,
-            AccountAlertRule.user_id == user_id,
-        )
-        .first()
+def _get_rule(
+    *,
+    db: Session,
+    user_id: int,
+    rule_id: int,
+    refresh: bool = False,
+) -> AccountAlertRule | None:
+    """Load an account-owned alert rule, re-reading a loaded copy if asked."""
+    query = db.query(AccountAlertRule).filter(
+        AccountAlertRule.id == rule_id,
+        AccountAlertRule.user_id == user_id,
     )
+    if refresh:
+        query = query.populate_existing()
+    return query.first()
 
 
 def _is_eligible_target(

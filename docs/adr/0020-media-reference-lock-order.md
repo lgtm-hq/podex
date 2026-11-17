@@ -106,7 +106,10 @@ Each writer takes these levels, in this order:
 - **Alert rule creation** (media): 1, then the eligibility read and the rule
   insert.
 - **Alert rule deletion** (media): 1 (the rule's record), 4 (the rule, re-read),
-  5 (its events), then the rule.
+  5 (its events), then the rule. If a merge that committed during its wait moved
+  the rule, it locks the rule's new record before the rule. The merge deleted
+  the old record, so the earlier lock holds no row and the order holds. It
+  re-reads until the target is stable, three reads at most.
 - **Account deletion:** 1 (the records the account saved or watches), 4 (its
   rules, in id order), 5.
 - **Alert evaluation:** 4 (one account's rules, in id order), 5 (events and
@@ -182,11 +185,12 @@ delivery in it is bounded by the timeout.
     only within each batch of 5,000 episodes (ADR 0015). Share locks do not
     conflict with each other, so no cycle forms through them.
 - **Accepted out-of-order paths.** These cannot close a cycle:
-  - **Records moved while a writer waited.** Rule deletion and account deletion
-    lock the records they read before locking rules. A merge that committed
-    meanwhile moved a rule or save to a record they did not lock. They then hold
-    the rules and take no further media lock. A later merge of that record waits
-    for them at the rules.
+  - **Records moved while a writer waited.** Account deletion locks the records
+    it read before locking rules. A merge that committed meanwhile moved a rule
+    or save to a record it did not lock. It then holds the rules and takes no
+    further media lock. A later merge of that record waits for it at the rules.
+    Rule deletion re-locks a moved rule's record, and reaches this path only
+    after three moves in a row.
   - **Takedowns edit events without rule locks.** A takedown edits alert events
     after its podcast locks and never takes a rule lock. Skipping a level is
     allowed. A merge that touches the same events holds the record the takedown
@@ -196,8 +200,10 @@ delivery in it is bounded by the timeout.
 - **Statement counts.** ADR 0015's bound for a guarded flush is unchanged: at
   most five lookups per 5,000 episodes or pairs. The media lock is the same
   statement, now issued through `Query` so that a test can remove it.
-  - **Save, unsave, rule creation and rule deletion:** two more statements each
-    (the lock and the re-read).
+  - **Save, unsave and rule creation:** two more statements each (the lock and
+    the re-read).
+  - **Rule deletion:** three more (the lock, the re-read and a re-read of the
+    rule), and two more for each move it finds.
   - **Account deletion:** four more (two id reads, the lock, the re-read). Its
     rule-id read now locks the rules.
   - **Split:** one more (the lock before its read).
