@@ -468,7 +468,7 @@ def test_failed_reembed_keeps_no_vector_under_the_new_model(
         respond=_vectors(0, _COLUMN_VECTOR),
         model_name=_FIRST_MODEL,
     )
-    sync_semantic_chunks_for_transcript(
+    embedded = sync_semantic_chunks_for_transcript(
         db=db_session,
         transcript=transcript,
         embedding_provider=first,
@@ -476,6 +476,13 @@ def test_failed_reembed_keeps_no_vector_under_the_new_model(
         now=datetime(2026, 11, 1, tzinfo=UTC),
     )
     db_session.commit()
+    db_session.expire_all()
+    before = db_session.query(SemanticChunk).all()
+    assert_that(embedded.embedded_count).is_equal_to(2)
+    assert_that(
+        [(chunk.embedding_model, chunk.embedding_vector) for chunk in before],
+    ).is_equal_to([(_FIRST_MODEL, _COLUMN_VECTOR)] * 2)
+    assert_that([chunk.embedded_at for chunk in before]).does_not_contain(None)
 
     result = sync_semantic_chunks_for_transcript(
         db=db_session,

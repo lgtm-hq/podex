@@ -533,13 +533,14 @@ def test_failed_reembed_stores_null_vector_under_the_new_model(
     policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
     with postgres.sessions() as db:
         transcript = _add_transcript(db, slug="failed-reembed", text_value=words)
-        sync_semantic_chunks_for_transcript(
+        embedded = sync_semantic_chunks_for_transcript(
             db=db,
             transcript=transcript,
             embedding_provider=FullDimensionEmbeddingProvider(),
             policy=policy,
         )
         db.commit()
+        before = _stored_chunks(postgres)
         result = sync_semantic_chunks_for_transcript(
             db=db,
             transcript=transcript,
@@ -547,6 +548,11 @@ def test_failed_reembed_stores_null_vector_under_the_new_model(
             policy=policy,
         )
         db.commit()
+
+    assert_that(embedded.embedded_count).is_equal_to(2)
+    assert_that(
+        [(row.embedding_status, row.is_null) for row in before],
+    ).is_equal_to([(SemanticChunkEmbeddingStatus.EMBEDDED.value, False)] * 2)
 
     with postgres.sessions() as db:
         rows = db.execute(
