@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0021. Transcript cleanup applies the model's corrections, not its text
+# 0021. Transcript cleanup applies corrections, not the model's text
 
 - Status: proposed
 - Date: 2026-11-17

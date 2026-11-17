@@ -24,6 +24,7 @@ class FailureReason(StrEnum):
     EMBEDDING_INVALID_VALUE = auto()
     EMBEDDING_INVALID_TYPE = auto()
     EMBEDDING_INVALID_MODEL_NAME = auto()
+    SUMMARY_INVALID_MODEL_NAME = auto()
     INVALID_ADDRESS = auto()
     BLOCKED_ADDRESS = auto()
     INVALID_URL = auto()
