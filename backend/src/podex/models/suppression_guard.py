@@ -22,28 +22,29 @@ Guarded writes (``GUARDED_MODELS``, one rule per model in ``_RULES``):
 - ``Transcript``: an insert, text change or episode change while it carries
   cleaned or digest text.
 
-Suppressions are keyed by row ids, so episode moves and deletes of covered
-rows are handled too (``podex.models.suppression_identity``, ADR 0017).
+Suppressions are keyed by row ids, so a move of an episode next to a
+suppressed podcast, a stale move, and a delete of a covered row are refused
+(``podex.models.suppression_identity``, ADR 0017).
 
 Lock order, the same as the media merge (media rows before podcast rows):
 
 1. media rows of guarded mentions, ``FOR KEY SHARE``, ascending id;
-2. rows of episodes the flush moves, ``FOR NO KEY UPDATE``, ascending id,
-   reading the podcast each is really in (on SQLite, the database write lock
-   is taken first instead);
-3. podcast rows of every episode touched, moved or deleted, ``FOR SHARE``,
+2. podcast rows of every episode touched or deleted, ``FOR SHARE``,
    ascending id within each statement of up to ``SUPPRESSION_BATCH_SIZE``
-   episodes. A moved episode's row is the podcast step 2 read;
-4. the change counter, at commit, when a move changed coverage.
+   episodes; then the podcasts moves leave (as the session remembers them)
+   and join, ``FOR SHARE``, ascending id;
+3. rows of episodes the flush moves, ``FOR NO KEY UPDATE``, ascending id,
+   reading the podcast each is really in (on SQLite, the database write lock
+   is taken first instead). A move whose episode is no longer in the
+   remembered podcast is refused there, so no podcast is locked after an
+   episode row.
 
 The podcast order across statements cannot form a deadlock. Share locks do
 not conflict with each other. The locks that do conflict with them (a
 takedown's ``FOR UPDATE``, and an operator's update or archive) each take a
 single podcast row, so the other transaction never waits for a second
-podcast while it holds one. The episode lock of step 2 conflicts only with
-another update of the same episode row: takedowns and guarded flushes take
-``FOR KEY SHARE`` on episode rows (foreign key checks), which it does not
-block, so neither ever waits for a mover.
+podcast while it holds one. ADR 0017 states a cycle that does exist through
+rows a takedown deletes.
 
 Both are taken before the flush writes, so a writer never holds a row a
 takedown will delete while it waits. A takedown takes the same media rows and
@@ -55,12 +56,14 @@ while it waited for that lock is seen.
 
 Checks are batched: each flush runs a bounded number of statements
 (``SUPPRESSION_BATCH_SIZE`` ids or pairs each), independent of how many rows
-it writes. Podcast locks and passed checks are remembered until the flush
-ends, because another transaction may move an episode between two flushes of
-this one, and forgotten as soon as this session writes a suppression row or
-moves an episode, so a takedown executed in the same transaction applies to
-later writes. Media locks are remembered until the transaction or savepoint
-ends.
+it writes. Passed checks are remembered until the flush ends, and
+forgotten as soon as this session writes a suppression row, so a takedown
+executed in the same transaction applies to later writes. Episode podcast
+locks are remembered until the flush ends, and those taken by authorisation
+(``lock_episode_text``) until the end of the next flush; another transaction
+may move an episode in between. A move never relies on them: it locks the
+podcasts it names itself. Media locks are remembered until the transaction or
+savepoint ends.
 """
 
 from collections.abc import Callable, Iterable, Iterator, Sequence
@@ -93,12 +96,9 @@ from podex.models.mention import Mention
 from podex.models.podcast import Podcast
 from podex.models.semantic_chunk import SemanticChunk
 from podex.models.suppression_identity import (
-    bump_after_coverage_moves,
-    carry_podcast_suppressions,
-    forget_moves,
     identity_changes,
-    lock_moved_episodes,
     refuse_covered_deletions,
+    refuse_moves,
 )
 from podex.models.transcript import Transcript
 
@@ -364,11 +364,12 @@ _ORIGIN_COLUMNS: dict[type[Any], tuple[str, ...]] = {
     GraphTriple: ("provenance_episode_id",),
     MediaRelation: ("provenance_episode_id",),
     Transcript: ("episode_id",),
+    Episode: ("podcast_id",),
 }
-"""Columns whose value before a change the origin checks read.
+"""Columns whose value before a change the origin and move checks read.
 
-An episode move does not need one: its origin is read from the database
-under the episode's lock (``lock_moved_episodes``).
+For ``Episode.podcast_id`` it is the podcast the session remembers; a move
+whose persisted podcast differs is refused as stale.
 """
 
 
@@ -555,11 +556,11 @@ def lock_before_guarded_writes(
 ) -> None:
     """Take locks and read origins before the flush writes any guarded row.
 
-    Episode moves and deletes are handled here too, in the shared lock order:
-    media rows, then the rows of episodes being moved (reading where they
-    really are), then podcast rows. A delete a suppression covers is refused,
-    and a moved episode gets the suppressions of the podcast it leaves in
-    this flush.
+    Episode moves and deletes are checked here too, in the shared lock order:
+    media rows, then podcast rows (those of guarded rows' and deleted
+    episodes, then the podcasts moves leave and join), then the rows of
+    episodes being moved. A move near a suppression, a stale move and a
+    delete a suppression covers are refused.
     """
     if _touches_suppressions(session):
         forget_checks(session)
@@ -571,30 +572,13 @@ def lock_before_guarded_writes(
         session=session,
         media_ids={item.media_id for item in requirements if item.media_id is not None},
     )
-    persisted = lock_moved_episodes(session=session, episode_ids=changes.assigned)
-    moved = {
-        episode_id: podcast_id
-        for episode_id, podcast_id in persisted.items()
-        if changes.assigned[episode_id] != podcast_id
-    }
-    # The podcast an episode leaves is locked as the database names it, even
-    # if an earlier lock in this flush covered another one.
-    locked = _transaction_cache(session, _LOCKED_EPISODES)
-    locked.difference_update(changes.assigned)
     lock_podcasts_of_episodes(
         session=session,
         episode_ids={item.episode_id for item in requirements}
-        | set(changes.assigned)
         | set(changes.deleted_episodes),
     )
+    refuse_moves(session, changes.moves)
     refuse_covered_deletions(session, changes)
-    if moved:
-        # Moving into a suppressed podcast changes what a passed check meant.
-        forget_checks(session)
-    carry_podcast_suppressions(session, moved, changes.assigned)
-    # After the write a moved episode is in the podcast it joins; the check
-    # after the flush locks that one.
-    locked.difference_update(changes.assigned)
 
 
 def refuse_suppressed_writes(
@@ -640,14 +624,11 @@ def _forget_transaction_checks(
 
     PostgreSQL releases locks taken inside a savepoint that rolls back, so a
     savepoint's end forgets them too. A flush's internal subtransaction is
-    neither, and keeps them. A pending counter bump is dropped only with the
-    whole transaction.
+    neither, and keeps them.
     """
     if transaction.parent is None or transaction.nested:
         for key in (_LOCKED_EPISODES, _LOCKED_MEDIA, _CHECKED, _ORIGINS):
             session.info.pop(key, None)
-    if transaction.parent is None:
-        forget_moves(session)
 
 
 # Registered as plain calls: the listens_for decorator is untyped under the
@@ -655,7 +636,6 @@ def _forget_transaction_checks(
 event.listen(Session, "before_flush", lock_before_guarded_writes)
 event.listen(Session, "after_flush", refuse_suppressed_writes)
 event.listen(Session, "after_flush_postexec", _forget_flush_locks_and_checks)
-event.listen(Session, "before_commit", bump_after_coverage_moves)
 event.listen(Session, "do_orm_execute", _forget_bulk_suppression_changes)
 event.listen(Session, "after_transaction_end", _forget_transaction_checks)
 for _model, _columns in _ORIGIN_COLUMNS.items():

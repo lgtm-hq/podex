@@ -1,6 +1,6 @@
 <!-- markdownlint-disable MD041 -->
 
-# 0017. Suppressions survive episode moves and subject deletes
+# 0017. Moves and deletes that would lift a suppression are refused
 
 - Status: proposed
 - Date: 2026-11-17
@@ -29,187 +29,232 @@ or hard deletion would open these gaps.
 
 ## Decision
 
-This decision extends ADR 0015. It adds one lock step and changes one detail
-of the guard: podcast locks and passed checks are remembered for one flush,
-not for the whole transaction (see "Lock order").
+This decision extends ADR 0015. The flush guard refuses both changes instead
+of carrying a suppression to the new row (`podex.models.suppression_identity`,
+called from `podex.models.suppression_guard`).
 
-**An episode that leaves a podcast takes the podcast's suppressions with it.**
-The flush guard (`podex.models.suppression_identity`) finds an `Episode`
-whose podcast is assigned by column, relationship or collection. It does not
-trust the session's copy of the episode: another transaction may have moved
-the episode, or taken its podcast down, since the copy was loaded.
+### Moves
 
-- **Origin from the database.** Before reading anything, the guard locks the
-  episode's row and reads its persisted `podcast_id` under that lock. The
-  episode moves only if that podcast differs from the one it is assigned to.
-- **Carry.** For each podcast suppression of the podcast the episode really
-  leaves, it adds an episode suppression in the same flush: same scope, same
-  takedown case, key `episode:<id>:<scope>`. A key that is already recorded
-  is not added again.
-  - Suppressions pending in the session count. A takedown records one scope
-    per flush, and an unflushed move can be written by the first of those
-    flushes.
-  - An episode that left a podcast earlier in the transaction also gets any
-    suppression of that podcast recorded later in it. So a takedown that
-    counted the episode before the move was written covers it with every
-    scope it reports. This can over-suppress, which is the safe side.
-- **Moving into a suppressed podcast** stays allowed. The podcast suppression
-  covers the episode through `suppressed_clause`, so nothing is copied.
-- **Change counter.** A move into or out of a podcast with a podcast
-  suppression changes what is published: cached stats counted the episode's
-  mentions as published or hidden. Such a move bumps the change counter in the
-  same transaction, at commit, after pending writes are flushed. The counter
-  stays the last lock taken. A flush that moves nothing reads nothing for it.
-- **Carried rows** are suppressions like any other. Moving the episode back
-  does not remove them, and the application cannot lift them (ADR 0015).
+A change of `Episode.podcast_id`, by column, relationship or collection
+assignment, is refused in two cases.
 
-**Deleting a podcast or episode that a suppression covers is refused.**
+- **A suppression is involved.** The podcast the episode leaves (the one the
+  session remembers) or the podcast it joins has a podcast suppression. The
+  guard counts suppressions already stored and those pending in the same
+  session (`session.new`). It raises `ContentSuppressedError` naming the
+  episode, for example `Episode 5 (moved from podcast 1 to podcast 2; a
+  takedown suppresses podcast 1)`.
+  - Moving into a suppressed podcast is refused too. Nothing in the product
+    does it.
+  - Moves between two podcasts without a suppression stay allowed. An
+    episode's own episode and pair suppressions are keyed by its id and
+    follow it, so they do not block such a move.
+  - A podcast created in the same flush has no suppression yet. Only the
+    podcast the episode leaves is checked then.
+- **The session's copy is stale.** The database no longer has the episode in
+  the podcast the session remembers, because another change moved it since
+  the copy was loaded. The guard raises `RetryableLockError` (a `ValueError`,
+  answered as a 409) naming the episode; the caller reloads and retries.
+
+The remembered podcast comes from the column's active history: assigning the
+column of a row a commit expired loads the replaced value first. A relationship
+assignment reaches the column only during the flush, which still holds the
+remembered value when the guard reads it. Re-assigning the podcast an episode
+already has leaves no attribute history and is not a move.
+
+A permitted move cannot change what is published. Neither podcast has a
+podcast suppression, and the episode's own suppressions follow it. So a move
+does not bump the change counter and takes no counter lock.
+
+**Lock order for a move.** It extends ADR 0015's order (media rows, then
+podcast rows, counter last) with the episode row after the podcast rows:
+
+1. media rows of guarded mentions in the flush, `FOR KEY SHARE`;
+2. podcast rows `FOR SHARE`, ascending id. First, as before, the podcasts of
+   episodes with guarded rows and of deleted episodes, through their persisted
+   `podcast_id`. Then the podcasts the moves leave, as the session remembers
+   them, and join, by id;
+3. the rows of the moved episodes, `FOR NO KEY UPDATE`, ascending id, reading
+   each episode's persisted `podcast_id` in the same statement. On SQLite,
+   which ignores row locks, the database write lock is taken first with the
+   same no-op write that authorisation uses;
+4. if a persisted podcast differs from the remembered one, the move is refused
+   as stale here. No podcast found through the episode row is ever locked
+   after it;
+5. the coverage check of both podcasts. Only then does the flush write.
+
+A takedown of either podcast takes it `FOR UPDATE`. So a takedown that holds
+it first commits, and the move, which waited, is then refused. A move that
+holds it first commits, and the takedown, which waited, then covers what the
+podcast holds after the move. `FOR NO KEY UPDATE` on the episode is the lock
+the move's own `UPDATE` takes anyway; two moves of one episode therefore run
+one after the other, and the second is refused as stale.
+
+**Why this order agrees with discovery.** Discovery updates a podcast row and
+then its episode rows in one flush; the unit of work writes the parent before
+the child. A move also takes the podcast before the episode, so within those
+flushes one side waits at the podcast row:
+
+- A move that waits for discovery's podcast row holds no episode row yet.
+- Discovery waiting for a move's `FOR SHARE` on the podcast holds no episode
+  row of that flush yet.
+
+Because the move never locks a podcast after an episode row, refusing a stale
+origin instead, no podcast-then-episode cycle forms with discovery.
+
+**Remembered locks and checks.** A move does not rely on anything cached: it
+locks the podcasts it names and the episode row itself, and reads coverage
+fresh. The guard's caches are:
+
+- **Passed checks:** kept until the flush ends. They are forgotten earlier
+  when this session writes a suppression row.
+- **Podcast locks for guarded rows' episodes:** kept until the flush ends.
+- **Authorisation locks** (`lock_episode_text`): kept until the end of the
+  next flush, or of the transaction if no flush follows.
+- **Media locks:** kept until the transaction or savepoint ends.
+
+Another transaction can move an episode between two flushes of this one. The
+next flush therefore locks and checks the podcast the episode is in then.
+
+**Takedown execution with a pending move.** With autoflush off, a session may
+hold an unflushed move when it executes a takedown of the podcast the episode
+leaves or joins. Recording the suppression flushes the move with the pending
+suppression in `session.new`, and the flush refuses the move. Nothing is
+committed; once the move is undone, the takedown runs again.
+
+### Deletes
 
 - **Through the ORM.** Before the flush writes, the guard refuses to delete:
   - an `Episode` covered by its own suppression, a pair suppression of it, or
     its podcast's suppression;
   - a `Podcast` covered by its own suppression or any of its episodes'.
 
-  It raises `ContentSuppressedError` naming the row, such as `Podcast 3
-  (deleted while a takedown suppression covers it)`. The error now takes an
-  optional episode id and a podcast id, for a podcast with no covered episode.
+  Suppressions stored and pending in the same flush count. A takedown that
+  records its suppression in the flush that also deletes the row therefore
+  refuses the delete. `ContentSuppressedError` names the row, such as
+  `Podcast 3 (deleted while a takedown suppression covers it)`. It now takes
+  an optional episode id and a podcast id, for a podcast with no covered
+  episode.
 - **In the database.** Revision `0026` makes both foreign keys of
-  `content_suppressions` `ON DELETE RESTRICT`. The database therefore refuses
-  to delete a row a suppression names directly: a suppressed podcast, a
-  suppressed episode, the episode of a pair suppression, and the episodes a
-  podcast delete would cascade to when one of them is named.
+  `content_suppressions` `ON DELETE RESTRICT`. The database refuses deleting
+  only rows a suppression names directly: a suppressed podcast, a suppressed
+  episode, the episode of a pair suppression, and episodes a podcast delete
+  cascades to when one of them is named.
 - **Not in the database.** An episode covered only by its podcast's
-  suppression is not referenced by any suppression row. A Core or raw
-  `DELETE` of it succeeds in the database, and a new episode may then reuse
-  its id. Only the ORM guard and the structural scan stop that. A database
-  trigger is a possible later hardening; this decision does not add one.
+  suppression is referenced by no suppression row. A Core or raw `DELETE` of
+  it succeeds in the database, and a new episode may then reuse its id. Only
+  the ORM guard and the structural scan stop that. A database trigger is a
+  possible later hardening; this decision does not add one.
 
-**Inserts can move an episode too.** An upsert (`INSERT ... ON CONFLICT DO
-UPDATE`, `INSERT OR REPLACE`, `REPLACE`) can change an existing episode's
-podcast, and an insert can give a deleted row's id to new content. The ORM
-does neither on its own: an ORM `merge` of an existing episode is flushed as
-an update, which the guard handles. The structural scan refuses Core and raw
-inserts, upserts and replaces of `Episode` and `Podcast`.
+A partial flush (`session.flush([episode])`) does not skip either rule. The
+guard reads the session's moves, deletes and pending suppressions whatever
+the flush is limited to.
 
-**No stable external identity.** A suppression does not record a feed URL or
-an episode GUID, so it cannot recognise content that is ingested again under
-a new row. Deleting a suppressed row and ingesting it again is refused at the
-delete, not tracked afterwards. A real deletion of suppressed content needs
-an operator action this decision does not build:
+### Structural scan
 
-- either a stable identity carried on the suppression (for example feed URL
-  and episode GUID, checked at ingestion) so re-ingested content stays
-  refused after the row is gone;
-- or an audited lift of the suppression, with its own decision on whether the
-  content may return. ADR 0015 already notes that this action does not exist.
+`tests/test_guarded_table_writes.py` refuses writes that skip the flush, for
+the guarded tables and for `Episode` and `Podcast`.
+
+- **Forms covered:** Core and dialect `insert`, `update` and `delete`
+  (upserts included), `__table__` methods, `Query.update` and
+  `Query.delete`, `bulk_*` session methods, and raw SQL.
+- **Targets:** read positionally or as `table=`, through `aliased(...)` or
+  `__table__`, or named by string.
+- **Raw SQL:** read from string literals and from the literal parts of
+  f-strings and of `%`, `.format` and `+` expressions, positionally or as
+  `text=`. Comments are removed first. Targets may be quoted,
+  schema-qualified or follow `ONLY`. `INSERT`, `INSERT OR ...`, `REPLACE`,
+  `MERGE`, `UPDATE`, `DELETE`, `TRUNCATE` and `COPY ... FROM` count, and
+  every write in a string is reported before exemptions apply.
+- **Exemptions** name exact verbs and tables. Takedown execution keeps its
+  bulk deletes of derivative runs, semantic chunks and episode summaries,
+  and its bulk update of transcripts.
+
+Limits:
+
+- SQL or a table object held in a variable is not followed.
+  `podex.suppression_backfill` writes that way; its writes go to the
+  suppression tables, which the scan does not cover.
+- An ORM bulk statement run through the session
+  (`session.execute(update(Episode)...)`) skips the flush guard at run time.
+  Only the scan refuses it.
+- Code outside `backend/src`, `backend/scripts` and `backend/alembic` is not
+  scanned.
+
+### Not built: a real move or deletion of suppressed content
+
+A suppression does not record a stable identity (feed URL, episode GUID), so
+it cannot follow content to a new row or recognise it when ingested again.
+Deleting a suppressed row and ingesting it again is refused at the delete,
+not tracked afterwards. Moving or deleting suppressed content for real needs
+an operator action with its own audit trail, which does not exist:
+
+- **Moving:** re-key the suppression to the episode in its new podcast, in
+  the same transaction as the move.
+- **Deleting:** either carry a stable identity on the suppression, checked
+  at ingestion, so content ingested again stays refused after the row is
+  gone; or lift the suppression with a recorded decision that the content may
+  return. ADR 0015 already notes that lifting does not exist.
 
 Until then, archiving is how a suppressed podcast is retired.
 
-**Lock order.** ADR 0015's order gains one step, between media and podcast
-rows:
-
-1. media rows of guarded mentions, `FOR KEY SHARE`;
-2. rows of the episodes the flush moves, `FOR NO KEY UPDATE`, ascending id,
-   reading their persisted podcast. On SQLite, which ignores row locks, the
-   database write lock is taken first, with the same no-op write that
-   authorisation uses;
-3. podcast rows `FOR SHARE`: those of guarded rows' episodes, of deleted
-   episodes, and the podcast each moved episode really leaves (as step 2 read
-   it, even if the flush had locked another podcast for the episode);
-4. the change counter, last, at commit.
-
-`FOR NO KEY UPDATE`, rather than `FOR UPDATE`, is the lock the move's own
-`UPDATE` takes anyway; it is taken earlier, before the origin is read. Two
-moves of one episode therefore run one after the other. `FOR UPDATE` would
-deadlock with a takedown:
-
-- the mover would hold the episode and wait for the podcast's `FOR SHARE`;
-- a takedown holding that podcast `FOR UPDATE` would then wait for the
-  `FOR KEY SHARE` that recording an episode or pair suppression takes on the
-  episode.
-
-Why the order cannot deadlock with a takedown or a guarded flush:
-
-- **Episode rows.** Takedowns and guarded flushes lock episode rows only
-  `FOR KEY SHARE`, through foreign key checks when they insert a row that
-  references the episode. That never conflicts with `FOR NO KEY UPDATE`, so
-  neither ever waits for a mover's episode lock.
-- **Podcast rows.** A mover waits only for a podcast held `FOR UPDATE` (a
-  takedown) or updated (an operator edit). Each of those holds a single
-  podcast row and, as above, never waits for an episode row. So no cycle
-  closes.
-- **Media rows and counter.** A mover's media locks are `FOR KEY SHARE`, as
-  a takedown's are. The counter is taken only at commit, after every other
-  lock.
-- **Movers among themselves.** Two transactions that move the same episodes
-  in opposite orders, across separate flushes, can deadlock exactly as two
-  plain `UPDATE`s would. PostgreSQL then aborts one with a retryable error.
-
-**Remembered locks and checks.** A podcast lock and a passed check are kept
-until the flush ends, no longer, because another transaction can move an
-episode between two flushes of this one. The next flush locks and checks the
-podcast the episode is in then. A moved episode is also dropped right after
-the move, so the check after the write locks the podcast it joined. Media
-locks are still kept until the transaction or savepoint ends. A media record
-cannot change identity.
-
-**Structural scan.** `tests/test_guarded_table_writes.py` treats `Episode` and
-`Podcast` like the guarded tables, for inserts, upserts, replaces, updates
-and deletes that skip the flush.
-
-- **Forms it reads.** It reads a statement's target whether it is passed
-  positionally or as `table=`, through `aliased(...)` or `__table__`, or as a
-  table named by string. Raw SQL targets are read after comments are
-  removed, quoted or schema-qualified.
-- **Exemptions.** Each exemption now names the exact verbs and tables its
-  reason covers. Takedown execution keeps its bulk deletes of derivative runs,
-  semantic chunks and episode summaries, and its bulk update of transcripts.
-  The migrations exemption is removed. Its reason (schema changes and the
-  suppression backfill) covers no table the scan reads, and no migration
-  writes one.
-
 ## Consequences
 
-- **Cost.** A flush that moves and deletes nothing runs no added statement.
-  Moves and deletes are found in memory.
-  - **Moves.** A moving flush adds:
-    - one episode-lock statement per 5,000 moved episodes;
-    - one statement per 5,000 origin and destination podcasts (their
-      suppressions);
-    - when there is something to carry, one per 5,000 keys (those already
-      recorded).
-
-    On SQLite it also runs the no-op write. The moved episodes join the
-    podcast-lock statement; when the flush writes no guarded row, that
-    statement is added too. A move that changes coverage adds one counter
-    read and update at commit.
-  - **Deletes.** The flush adds one statement per 5,000 deleted episodes and
-    one per 5,000 deleted podcasts. The deleted episodes join the
-    podcast-lock statement.
-  - **Guarded rows for a moved episode.** When one is written in the same
-    flush, the check after the write locks the episode's new podcast: one
-    more statement.
+- **Cost.** A flush that moves and deletes nothing runs no added statement;
+  moves and deletes are found in memory.
+  - **Moving flush.** One podcast-lock statement per 5,000 podcasts, one
+    episode-lock statement per 5,000 episodes, and one coverage read per
+    5,000 podcasts. That is three `SELECT`s for any number of moves within
+    those batches, plus the no-op write on SQLite.
+  - **Deleting flush.** The deleted episodes join the podcast-lock statement,
+    plus one coverage read per 5,000 deleted episodes and per 5,000 deleted
+    podcasts. When the same flush also records suppressions, up to one more
+    read per 5,000 deleted episodes and per 5,000 deleted podcasts.
   - **ADR 0015's bound** for guarded rows is unchanged: at most five lookups
-    per 5,000 episodes or pairs in each flush. A transaction with several
-    flushes now runs the podcast lock and check again in each.
-- **Waits.** A move waits for another move or update of the same episode, and
-  for a takedown or operator edit of the podcast it leaves. Nothing waits for
-  a move except those.
-- **Residual race.** Within one flush, the episode can be moved between the
-  guard's podcast lock and its check after the write. If a takedown of the
-  new podcast commits in that window, the row is written but hidden by every
-  read; it is not published. Making a writer's lock block movers would let a
-  mover deadlock with a writer that spans several flushes.
+    per 5,000 episodes or pairs in each flush.
+- **Known deadlock.** This protocol is not deadlock-free. One cycle, reasoned
+  rather than tested:
+  1. A writer updates an existing derivative row of episode E and flushes. It
+     holds that row and podcast A `FOR SHARE`.
+  2. A move of E from A to B commits; neither podcast is suppressed yet.
+  3. A takedown of B takes B `FOR UPDATE` and waits to delete the writer's
+     row.
+  4. The writer's second flush for E waits for B.
+
+  PostgreSQL aborts one side, or the takedown's lock wait expires. The
+  takedown answers its retryable 409; an ordinary writer sees a database
+  error.
+- **Residual race.** A row can be written for an episode that is then
+  suppressed, without the takedown deleting it, in two ways:
+  - **Takedown of the new podcast.** A writer locks the episode's podcast A
+    and checks. A concurrent move of the episode to B commits, then a
+    takedown of B commits after the writer's check and before the writer's
+    commit. The window runs to the writer's commit. The takedown did not
+    see the writer's uncommitted row, and the writer never locked B.
+  - **Episode or mention takedown.** The takedown resolves the episode's
+    podcast before it locks it. If a move commits in between, it locks the
+    old podcast, and a writer of the moved episode, which locks the new one,
+    is not ordered against it.
+
+  What such a row means:
+  - **Mentions** are hidden on every read path, because all of them use one
+    predicate (`published_mention_clause`).
+  - **Derivative rows** are read by no route today.
+  - **The retention coverage check** (`services/derivative_coverage.py`)
+    counts summaries, chunks and graph triples without the predicate.
+  - **Provider authorisation** pins the episode's podcast, not the episode's
+    membership of it. So a provider call can be made for an episode that was
+    moved and then taken down while the call was being authorised and made.
 - **Writes around the flush.** The database refuses deletes of rows a
-  suppression names; everything else around the flush is caught only by the
+  suppression names. Everything else around the flush is caught only by the
   structural scan: a move by Core or raw `UPDATE`, an upsert, a delete of an
   episode covered only by its podcast.
 - **Unaffected paths.** Account deletion, and media merges and splits, neither
-  move nor delete episodes or podcasts.
-- **Deletion is blocked.** Any future hard-delete or podcast-merge feature
-  must handle `ContentSuppressedError` for suppressed rows. A merge can move
-  the episodes first, which carries their suppressions, and then delete the
-  emptied podcast unless it has its own suppression.
+  move nor delete episodes or podcasts. Discovery does not reassign episodes
+  to another podcast.
+- **Deletion and merges are blocked.** Any future hard-delete or
+  podcast-merge feature must handle `ContentSuppressedError` for suppressed
+  rows, and the operator action above.
 - **Rollout.** Apply revision `0026` before or with the code. Nothing in
   production moves or deletes these rows, so the order is not critical.
   - Existing suppressions are kept unchanged. Only the delete rule of the two
@@ -219,5 +264,4 @@ and deletes that skip the flush.
     `podcasts` and `episodes` and checks the existing suppression rows.
   - On SQLite the table is copied with its rows, check constraint and indexes.
 - **Rollback.** Revert the change and downgrade to `0025`, which restores
-  `ON DELETE CASCADE` and keeps every row. Episode suppressions carried in the
-  meantime stay: they are valid suppressions of the same takedown cases.
+  `ON DELETE CASCADE` and keeps every row.

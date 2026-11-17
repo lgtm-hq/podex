@@ -1,20 +1,19 @@
-"""Keep suppressions in force when an episode moves or its subject is deleted.
+"""Refuse moves and deletes that would take a row out of a suppression.
 
 Suppressions are keyed by row ids (ADR 0017). The flush guard in
 ``podex.models.suppression_guard`` calls these steps before a flush writes:
 
-- an ``Episode`` assigned to another podcast has its row locked and its
-  persisted podcast read (``lock_moved_episodes``); if it really moves, it
-  gets an episode suppression for each podcast suppression of the podcast it
-  leaves, recorded or pending in the session, in the same flush and with the
-  same takedown case (``carry_podcast_suppressions``);
-- deleting an ``Episode`` or ``Podcast`` that a suppression covers is refused
-  (``refuse_covered_deletions``);
-- a move into or out of a suppressed podcast bumps the change counter at
-  commit, after every other lock (``bump_after_coverage_moves``).
+- a change of an ``Episode``'s podcast is refused when the podcast it leaves
+  or the one it joins has a podcast suppression, stored or pending in the
+  session, and refused as stale when the database no longer has the episode
+  in the podcast the session remembers (``refuse_moves``);
+- deleting an ``Episode`` or ``Podcast`` that a suppression covers, stored or
+  pending in the session, is refused (``refuse_covered_deletions``).
+
+An episode's own episode and pair suppressions are keyed by its id and follow
+it, so they do not block a move between two podcasts without suppressions.
 """
 
-from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import dataclass
 
@@ -26,47 +25,38 @@ from podex.models.content_suppression import (
     ContentSuppression,
     ContentSuppressionScope,
     ContentSuppressionSubjectType,
-    ContentSuppressionVersion,
+    RetryableLockError,
     batches,
-    suppression_key,
 )
 from podex.models.episode import Episode
 from podex.models.podcast import Podcast
 
-_COVERAGE_CHANGED = "podex_suppression_coverage_changed"
-_LEFT_PODCASTS = "podex_suppression_left_podcasts"
 
+@dataclass(frozen=True, slots=True)
+class Move:
+    """An episode the flush assigns to another podcast.
 
-def _podcast_changed(row: Episode) -> bool:
-    """Return whether an episode's podcast column or relationship changed."""
-    attributes = inspect(row).attrs
-    return any(
-        attributes[name].history.has_changes() for name in ("podcast_id", "podcast")
-    )
+    ``origin`` is the podcast the session remembers; ``destination`` is the
+    podcast id it is assigned to, or ``None`` for a podcast the same flush
+    creates (which has no suppression yet).
+    """
+
+    origin: int
+    destination: int | None
+
+    @property
+    def podcasts(self) -> set[int]:
+        """The existing podcasts the move names."""
+        return {self.origin} | ({self.destination} if self.destination else set())
 
 
 @dataclass(frozen=True, slots=True)
 class IdentityChanges:
-    """Episodes this flush assigns to a podcast, and rows it deletes.
+    """Episodes this flush moves, and the episodes and podcasts it deletes."""
 
-    ``assigned`` maps each episode whose podcast changes in memory to the
-    podcast id, or new ``Podcast``, it is assigned to. Whether it really
-    moves, and from where, is decided from the database under the episode's
-    lock (``lock_moved_episodes``), never from the session's copy.
-    """
-
-    assigned: dict[int, object]
+    moves: dict[int, Move]
     deleted_episodes: tuple[int, ...]
     deleted_podcasts: tuple[int, ...]
-
-
-def _destination(episode: Episode) -> object:
-    """Return the podcast id, or new ``Podcast``, an episode is assigned to."""
-    added = inspect(episode).attrs["podcast"].history.added
-    if added:
-        target = added[0]
-        return target.id if target is not None and target.id is not None else target
-    return episode.podcast_id
 
 
 def _persisted_id(row: object) -> int:
@@ -78,19 +68,41 @@ def _persisted_id(row: object) -> int:
     return int((inspect(row).identity or (0,))[0])
 
 
-def identity_changes(session: Session) -> IdentityChanges:
-    """Collect the episode podcast assignments and the episode and podcast deletes.
+def _move_of(episode: Episode) -> Move | None:
+    """Return the move an episode's pending podcast change makes, if any.
 
-    Found in memory: a flush that assigns and deletes nothing runs no
-    statement for them.
+    The column keeps active history (``suppression_guard``), so its replaced
+    value is known even when a commit expired the row; a relationship
+    assignment reaches the column only during the flush, which then still
+    holds the remembered podcast.
     """
-    assigned: dict[int, object] = {}
+    state = inspect(episode)
+    column = state.attrs["podcast_id"].history
+    origin = column.deleted[0] if column.deleted else episode.podcast_id
+    added = state.attrs["podcast"].history.added
+    if added and added[0] is not None:
+        destination = added[0].id
+    elif column.added:
+        destination = column.added[0]
+    else:
+        # Re-assigning the podcast an episode already has leaves no history.
+        return None
+    return Move(origin=int(origin), destination=destination)
+
+
+def identity_changes(session: Session) -> IdentityChanges:
+    """Collect the episode moves and the episode and podcast deletes.
+
+    Found in memory: a flush that moves and deletes nothing runs no statement
+    for them.
+    """
+    moves: dict[int, Move] = {}
     for row in session.dirty:
-        if isinstance(row, Episode) and _podcast_changed(row):
-            assigned[_persisted_id(row)] = _destination(row)
+        if isinstance(row, Episode) and (move := _move_of(row)) is not None:
+            moves[_persisted_id(row)] = move
     deleted = list(session.deleted)
     return IdentityChanges(
-        assigned=assigned,
+        moves=moves,
         deleted_episodes=tuple(
             sorted(_persisted_id(row) for row in deleted if isinstance(row, Episode)),
         ),
@@ -115,20 +127,36 @@ def hold_sqlite_write_lock(session: Session) -> None:
         session.execute(text("UPDATE content_suppressions SET id = id WHERE 0 = 1"))
 
 
+def lock_move_podcasts(*, session: Session, podcast_ids: Iterable[int]) -> None:
+    """Lock the podcasts moves leave and join ``FOR SHARE``, ascending id.
+
+    A takedown of either takes the row ``FOR UPDATE``, so it waits for the
+    move, or the move waits for it and is then refused.
+
+    Args:
+        session: Session whose transaction moves the episodes.
+        podcast_ids: Remembered origins and destinations of the moves.
+    """
+    for batch in batches(podcast_ids):
+        session.execute(
+            select(Podcast.id)
+            .where(Podcast.id.in_(batch))
+            .order_by(Podcast.id)
+            .with_for_update(read=True),
+        ).all()
+
+
 def lock_moved_episodes(
-    *, session: Session, episode_ids: Iterable[int]
+    *,
+    session: Session,
+    episode_ids: Iterable[int],
 ) -> dict[int, int]:
     """Lock the rows of episodes about to move and read their persisted podcast.
 
-    ``FOR NO KEY UPDATE``, ascending id: the lock the move's own ``UPDATE``
-    takes, taken before anything is read. Two moves of one episode therefore
-    run one after the other, and the podcast read here is the one the episode
-    really leaves, whatever the session's copy says. On SQLite the database
+    ``FOR NO KEY UPDATE``, ascending id, after the podcast rows: the lock the
+    move's own ``UPDATE`` takes, taken before the podcast is read, so two
+    moves of one episode run one after the other. On SQLite the database
     write lock is taken first.
-
-    The lock never conflicts with the ``FOR KEY SHARE`` that a takedown or a
-    guarded flush takes on an episode row (foreign key checks), so neither
-    ever waits for it.
 
     Args:
         session: Session whose transaction moves the episodes.
@@ -137,12 +165,9 @@ def lock_moved_episodes(
     Returns:
         Each episode's persisted podcast id.
     """
-    wanted = set(episode_ids)
-    if not wanted:
-        return {}
     hold_sqlite_write_lock(session)
     persisted: dict[int, int] = {}
-    for batch in batches(wanted):
+    for batch in batches(episode_ids):
         rows = session.execute(
             select(Episode.id, Episode.podcast_id)
             .where(Episode.id.in_(batch))
@@ -153,20 +178,88 @@ def lock_moved_episodes(
     return persisted
 
 
+def _pending(session: Session) -> list[ContentSuppression]:
+    """Suppressions added in this session and not yet written."""
+    return [row for row in session.new if isinstance(row, ContentSuppression)]
+
+
+def _suppressed_podcasts(
+    session: Session,
+    podcast_ids: set[int],
+) -> dict[int, ContentSuppressionScope]:
+    """Return which podcasts have a podcast suppression, stored or pending.
+
+    Runs one statement per batch of podcasts.
+    """
+    found: dict[int, ContentSuppressionScope] = {}
+    for batch in batches(podcast_ids):
+        found.update(
+            (int(podcast_id), ContentSuppressionScope(scope))
+            for podcast_id, scope in session.execute(
+                select(ContentSuppression.podcast_id, ContentSuppression.scope)
+                .where(
+                    ContentSuppression.subject_type
+                    == ContentSuppressionSubjectType.PODCAST.value,
+                    ContentSuppression.podcast_id.in_(batch),
+                )
+                .order_by(ContentSuppression.id),
+            )
+            if podcast_id is not None
+        )
+    for row in _pending(session):
+        if (
+            row.subject_type == ContentSuppressionSubjectType.PODCAST.value
+            and row.podcast_id in podcast_ids
+        ):
+            found.setdefault(row.podcast_id, ContentSuppressionScope(row.scope))
+    return found
+
+
+def refuse_moves(session: Session, moves: dict[int, Move]) -> None:
+    """Refuse a stale move, and a move that leaves or joins a suppressed podcast.
+
+    Lock order: the podcasts the moves name ``FOR SHARE``, then the episode
+    rows, reading where each episode really is. If that is not the podcast
+    the session remembers, the move is refused as stale, before any podcast
+    found that way would have to be locked.
+
+    Raises:
+        RetryableLockError: If an episode was moved since it was loaded.
+        ContentSuppressedError: If a podcast the move names is suppressed.
+    """
+    if not moves:
+        return
+    podcasts = set().union(*(move.podcasts for move in moves.values()))
+    lock_move_podcasts(session=session, podcast_ids=podcasts)
+    persisted = lock_moved_episodes(session=session, episode_ids=moves)
+    for episode_id, move in sorted(moves.items()):
+        if persisted.get(episode_id) != move.origin:
+            message = (
+                f"Episode {episode_id} is no longer in podcast {move.origin}"
+                " (another change moved it since it was loaded); reload it and"
+                " retry the move"
+            )
+            raise RetryableLockError(message)
+    suppressed = _suppressed_podcasts(session, podcasts)
+    for episode_id, move in sorted(moves.items()):
+        for podcast_id in sorted(move.podcasts & set(suppressed)):
+            raise ContentSuppressedError(
+                scope=suppressed[podcast_id],
+                episode_id=episode_id,
+                row=(
+                    f"Episode {episode_id} (moved from podcast {move.origin} to"
+                    f" podcast {move.destination}; a takedown suppresses podcast"
+                    f" {podcast_id})"
+                ),
+            )
+
+
 def _deleted_label(kind: str, row_id: int) -> str:
     return f"{kind} {row_id} (deleted while a takedown suppression covers it)"
 
 
-def refuse_covered_deletions(session: Session, changes: IdentityChanges) -> None:
-    """Refuse deleting an episode or podcast that a suppression covers.
-
-    An episode is covered by a suppression of itself, of one of its mention
-    pairs, or of its podcast; a podcast by its own suppression or one of any
-    of its episodes. Each batch runs one statement.
-
-    Raises:
-        ContentSuppressedError: Naming the first covered row.
-    """
+def _refuse_stored_coverage(session: Session, changes: IdentityChanges) -> None:
+    """Refuse a delete a stored suppression covers; one statement per batch."""
     for batch in batches(changes.deleted_episodes):
         covered = session.execute(
             select(Episode.id, ContentSuppression.scope)
@@ -216,173 +309,65 @@ def refuse_covered_deletions(session: Session, changes: IdentityChanges) -> None
             )
 
 
-def _podcast_suppressions(
-    session: Session,
-    podcast_ids: set[int],
-) -> dict[int, list[ContentSuppression]]:
-    """Return the podcast suppressions of ``podcast_ids``, recorded or pending.
+def _refuse_pending_coverage(session: Session, changes: IdentityChanges) -> None:
+    """Refuse a delete a suppression pending in this session covers.
 
-    A suppression added in this session but not yet written (a takedown that
-    records it in the same flush as the move) counts as much as a stored one.
+    Runs statements only when the flush both deletes and records
+    suppressions: one for the deleted episodes' podcasts and one for the
+    deleted podcasts' episodes, per batch.
     """
-    found: dict[int, list[ContentSuppression]] = defaultdict(list)
-    pending = [
-        row
-        for row in session.new
-        if isinstance(row, ContentSuppression)
-        and row.subject_type == ContentSuppressionSubjectType.PODCAST.value
-        and row.podcast_id in podcast_ids
-    ]
-    for batch in batches(podcast_ids):
-        stored = session.scalars(
-            select(ContentSuppression)
-            .where(
-                ContentSuppression.subject_type
-                == ContentSuppressionSubjectType.PODCAST.value,
-                ContentSuppression.podcast_id.in_(batch),
+    pending = _pending(session)
+    if not pending or not (changes.deleted_episodes or changes.deleted_podcasts):
+        return
+    podcast_of: dict[int, int] = {}
+    for batch in batches(changes.deleted_episodes):
+        podcast_of.update(
+            (int(row.id), int(row.podcast_id))
+            for row in session.execute(
+                select(Episode.id, Episode.podcast_id).where(Episode.id.in_(batch)),
             )
-            .order_by(ContentSuppression.id),
         )
-        for suppression in [*stored]:
-            if suppression.podcast_id is not None:
-                found[suppression.podcast_id].append(suppression)
-    for suppression in pending:
-        if suppression.podcast_id is not None:
-            found[suppression.podcast_id].append(suppression)
-    return found
-
-
-def carry_podcast_suppressions(
-    session: Session,
-    moved: dict[int, int],
-    destinations: dict[int, object],
-) -> None:
-    """Give each moved episode the podcast suppressions of the podcast it leaves.
-
-    ``moved`` maps each episode to its persisted podcast, read under the
-    episode's lock. A podcast suppression covers the podcast's episodes
-    through their current ``podcast_id``, so a moved episode would otherwise
-    leave it behind. Each one becomes an episode suppression with the same
-    scope and takedown case, added to this flush; a key already recorded is
-    not added again.
-
-    Episodes that left a podcast earlier in this transaction also get any
-    podcast suppression this flush records for it. A takedown that read its
-    episodes before the move was written, and records one scope per flush,
-    therefore covers the episode with every scope it reports.
-
-    A move into or out of a suppressed podcast changes what is published, so
-    it marks the transaction for a change-counter bump at commit. Runs one
-    statement per batch of podcasts, and one per batch of keys when there is
-    something to carry; none when nothing moves and no suppression of a
-    podcast left earlier is pending.
-    """
-    left: dict[int, set[int]] = session.info.setdefault(_LEFT_PODCASTS, {})
-    wanted: dict[str, tuple[int, ContentSuppression]] = {}
-    for suppression in session.new:
-        if (
-            isinstance(suppression, ContentSuppression)
-            and suppression.subject_type == ContentSuppressionSubjectType.PODCAST.value
-            and suppression.podcast_id in left
-        ):
-            for episode_id in sorted(left[suppression.podcast_id]):
-                _want(wanted, episode_id, suppression)
-    if moved:
-        joined = {
-            destination
-            for destination in destinations.values()
-            if isinstance(destination, int)
-        }
-        by_podcast = _podcast_suppressions(session, set(moved.values()) | joined)
-        if by_podcast:
-            session.info[_COVERAGE_CHANGED] = True
-        for episode_id, podcast_id in sorted(moved.items()):
-            left.setdefault(podcast_id, set()).add(episode_id)
-            for suppression in by_podcast.get(podcast_id, []):
-                _want(wanted, episode_id, suppression)
-    if wanted:
-        _add_missing_episode_suppressions(session, wanted)
-
-
-def _want(
-    wanted: dict[str, tuple[int, ContentSuppression]],
-    episode_id: int,
-    suppression: ContentSuppression,
-) -> None:
-    """Record that ``episode_id`` needs an episode copy of ``suppression``."""
-    key = suppression_key(
-        subject_type=ContentSuppressionSubjectType.EPISODE,
-        scope=ContentSuppressionScope(suppression.scope),
-        subject_ids=(episode_id,),
-    )
-    wanted.setdefault(key, (episode_id, suppression))
-
-
-def _add_missing_episode_suppressions(
-    session: Session,
-    wanted: dict[str, tuple[int, ContentSuppression]],
-) -> None:
-    """Add each wanted episode suppression whose key is not recorded yet."""
-    recorded = {
-        row.suppression_key
-        for row in session.new
-        if isinstance(row, ContentSuppression)
-    }
-    for batch in batches(wanted):
-        recorded.update(
-            session.scalars(
-                select(ContentSuppression.suppression_key).where(
-                    ContentSuppression.suppression_key.in_(batch),
-                ),
+    episodes_of: dict[int, set[int]] = {}
+    for batch in batches(changes.deleted_podcasts):
+        for row in session.execute(
+            select(Episode.id, Episode.podcast_id).where(
+                Episode.podcast_id.in_(batch),
             ),
-        )
-    for key, (episode_id, suppression) in sorted(wanted.items()):
-        if key not in recorded:
-            session.add(
-                ContentSuppression(
-                    suppression_key=key,
-                    takedown_request_id=suppression.takedown_request_id,
-                    subject_type=ContentSuppressionSubjectType.EPISODE.value,
-                    scope=suppression.scope,
+        ):
+            episodes_of.setdefault(int(row.podcast_id), set()).add(int(row.id))
+    for suppression in sorted(pending, key=lambda row: row.suppression_key):
+        scope = ContentSuppressionScope(suppression.scope)
+        for episode_id in sorted(podcast_of):
+            if (
+                suppression.episode_id == episode_id
+                or suppression.podcast_id == podcast_of[episode_id]
+            ):
+                raise ContentSuppressedError(
+                    scope=scope,
                     episode_id=episode_id,
-                ),
-            )
+                    row=_deleted_label("Episode", episode_id),
+                )
+        for podcast_id in changes.deleted_podcasts:
+            if suppression.podcast_id == podcast_id or (
+                suppression.episode_id in episodes_of.get(podcast_id, set())
+            ):
+                raise ContentSuppressedError(
+                    scope=scope,
+                    episode_id=suppression.episode_id,
+                    podcast_id=podcast_id,
+                    row=_deleted_label("Podcast", podcast_id),
+                )
 
 
-def bump_suppression_version(session: Session) -> None:
-    """Increase the suppression change counter in this transaction.
+def refuse_covered_deletions(session: Session, changes: IdentityChanges) -> None:
+    """Refuse deleting an episode or podcast that a suppression covers.
 
-    The row is the last lock a suppression-relevant write takes, after media,
-    episode and podcast rows, so it adds no new lock order. The row is seeded
-    when the table is created, so this only updates it and concurrent bumps
-    queue on its row lock.
-
-    Args:
-        session: Session of the transaction that changed suppressed content.
+    An episode is covered by a suppression of itself, of one of its mention
+    pairs, or of its podcast; a podcast by its own suppression or one of any
+    of its episodes. Suppressions stored and pending in the session count.
 
     Raises:
-        LookupError: If the counter row is missing (migrations not applied).
+        ContentSuppressedError: Naming the first covered row.
     """
-    row = session.get(ContentSuppressionVersion, 1, with_for_update=True)
-    if row is None:
-        message = "content_suppression_versions has no row; apply the migrations"
-        raise LookupError(message)
-    row.version += 1
-    session.flush()
-
-
-def bump_after_coverage_moves(session: Session) -> None:
-    """Bump the change counter at commit when a move changed coverage.
-
-    Pending writes are flushed first, so every lock they take comes before
-    the counter, which stays the last lock of the transaction.
-    """
-    session.flush()
-    if session.info.pop(_COVERAGE_CHANGED, False):
-        bump_suppression_version(session)
-
-
-def forget_moves(session: Session) -> None:
-    """Drop what this module remembers once the whole transaction ends."""
-    session.info.pop(_COVERAGE_CHANGED, None)
-    session.info.pop(_LEFT_PODCASTS, None)
+    _refuse_stored_coverage(session, changes)
+    _refuse_pending_coverage(session, changes)

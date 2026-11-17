@@ -1,14 +1,13 @@
-"""PostgreSQL: a suppression survives its episode's move and its subject's delete.
+"""PostgreSQL: moves near a suppression and deletes under one are refused.
 
-An episode move locks the episode row ``FOR NO KEY UPDATE`` and reads the
-podcast the database says it is in, then locks that podcast ``FOR SHARE``
-before reading what to carry (shared order: media rows, episode rows, podcast
-rows). Two moves of one episode therefore run one after the other, and a
-takedown of the podcast it leaves, which locks it ``FOR UPDATE``, runs either
-wholly before the move (and the move carries its suppressions) or wholly after
-it (and no longer covers the episode). The ``RESTRICT`` foreign keys refuse
-deletes that skip the flush guard, and revision ``0026`` round-trips with rows
-present.
+A move locks the podcasts it leaves (as the session remembers it) and joins
+``FOR SHARE``, then the episode row ``FOR NO KEY UPDATE``, reading where the
+episode really is. A takedown of either podcast takes it ``FOR UPDATE``, so
+the two run one after the other: a move that waits is then refused, and a
+takedown that waits then covers what the podcast holds. Discovery updates a
+podcast row and then its episode rows; the move takes the same order, so
+neither race deadlocks. The ``RESTRICT`` foreign keys refuse deletes that skip
+the flush guard, and revision ``0026`` round-trips with rows present.
 """
 
 from collections.abc import Iterable
@@ -27,12 +26,12 @@ from podex.models import (
     ContentSuppression,
     ContentSuppressionScope,
     Episode,
-    Mention,
     Podcast,
     TakedownSubjectType,
-    suppression_guard,
+    suppression_identity,
 )
 from podex.services import content_suppression
+from podex.services.content_suppression import RetryableLockError
 from tests.conftest import seed_catalog_graph
 from tests.postgres.concurrency import ExpectedWait, row_lock_wait, run_overlapping
 from tests.postgres.conftest import PostgresDatabase, alembic_config
@@ -45,6 +44,20 @@ _MOVE_WAITS = ExpectedWait(
     row_lock_table="podcasts",
 )
 _TAKEDOWN_WAITS = row_lock_wait("podcasts")
+# A row another transaction updated (not only locked) is waited for on that
+# transaction, without a tuple lock; the statement and blocker identify it.
+_MOVE_WAITS_ON_UPDATED_PODCAST = ExpectedWait(
+    statement_patterns=(r"\bFROM podcasts\b", r"\bFOR SHARE\b"),
+    row_lock_table=None,
+)
+_UPDATE_WAITS_ON_MOVE = ExpectedWait(
+    statement_patterns=(r"\bUPDATE podcasts\b",),
+    row_lock_table=None,
+)
+_EPISODE_LOCK_WAITS = ExpectedWait(
+    statement_patterns=(r"\bFROM episodes\b", r"\bFOR NO KEY UPDATE\b"),
+    row_lock_table=None,
+)
 _BOTH = ["unpublish_mentions", "suppress_derivatives"]
 _DELETE_RULES = text(
     "SELECT conname, confdeltype FROM pg_constraint"
@@ -56,10 +69,11 @@ _DELETE_RULES = text(
 
 @dataclass(frozen=True, slots=True)
 class _Shows:
-    """A podcast with an episode and its mention, and a second podcast."""
+    """A podcast with an episode and its mention, and two more podcasts."""
 
     podcast: int
     other: int
+    third: int
     episode: int
     media: int
 
@@ -68,11 +82,13 @@ def _seed(postgres: PostgresDatabase) -> _Shows:
     with postgres.sessions() as db:
         graph = seed_catalog_graph(db)
         other = Podcast(name="Other Show", slug="other-show")
-        db.add(other)
+        third = Podcast(name="Third Show", slug="third-show")
+        db.add_all([other, third])
         db.commit()
         return _Shows(
             podcast=graph.podcast_id,
             other=other.id,
+            third=third.id,
             episode=graph.episode_id,
             media=graph.media_id,
         )
@@ -98,170 +114,164 @@ def _move(db: Session, *, episode_id: int, podcast_id: int) -> int:
     """Move an episode to another podcast and flush without committing.
 
     Returns:
-        The number of suppressions the episode has after the flush.
+        The podcast the episode was moved to.
     """
-    episode = db.get_one(Episode, episode_id)
-    episode.podcast_id = podcast_id
+    db.get_one(Episode, episode_id).podcast_id = podcast_id
     db.flush()
-    carried: int = (
-        db.query(ContentSuppression)
-        .filter(ContentSuppression.episode_id == episode_id)
-        .count()
-    )
-    return carried
+    return podcast_id
 
 
-def _takedown_first(postgres: PostgresDatabase) -> _Shows:
-    """Hold a podcast takedown open; the move waits, then carries it."""
-    shows = _seed(postgres)
-    unpublished, carried = run_overlapping(
-        postgres,
-        first=partial(_take_down_podcast, podcast_id=shows.podcast),
-        second=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
-        expected=_MOVE_WAITS,
-    )
-    assert_that(unpublished).is_equal_to(1)
-    assert_that(carried).is_equal_to(2)
-    return shows
-
-
-def test_move_waiting_on_a_takedown_carries_its_suppressions(
-    postgres: PostgresDatabase,
-) -> None:
-    """The moved episode stays suppressed for both scopes in its new podcast."""
-    shows = _takedown_first(postgres)
-
+def _suppressed(postgres: PostgresDatabase, episode_id: int) -> bool:
     with postgres.sessions() as db:
-        assert_that(db.get_one(Episode, shows.episode).podcast_id).is_equal_to(
-            shows.other,
+        suppressed: bool = content_suppression.is_episode_suppressed(
+            db=db,
+            episode_id=episode_id,
+            scope=ContentSuppressionScope.MENTIONS,
         )
-        for scope in ContentSuppressionScope:
-            assert_that(
-                content_suppression.is_episode_suppressed(
-                    db=db,
-                    episode_id=shows.episode,
-                    scope=scope,
-                ),
-            ).described_as(scope.value).is_true()
-        db.add(Mention(episode_id=shows.episode, media_id=shows.media))
-        with pytest.raises(ContentSuppressedError):
-            db.commit()
+        return suppressed
 
 
-def test_takedown_waiting_on_a_move_no_longer_covers_the_episode(
+def _podcast_of(postgres: PostgresDatabase, episode_id: int) -> int:
+    with postgres.sessions() as db:
+        podcast_id: int = db.get_one(Episode, episode_id).podcast_id
+        return podcast_id
+
+
+@pytest.mark.parametrize("side", ["origin", "destination"])
+def test_move_waiting_on_a_takedown_is_refused(
+    postgres: PostgresDatabase,
+    side: str,
+) -> None:
+    """A takedown of either podcast holds it; the move waits, then is refused."""
+    shows = _seed(postgres)
+    taken_down = shows.podcast if side == "origin" else shows.other
+
+    with pytest.raises(ContentSuppressedError, match=f"Episode {shows.episode} "):
+        run_overlapping(
+            postgres,
+            first=partial(_take_down_podcast, podcast_id=taken_down),
+            second=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
+            expected=_MOVE_WAITS,
+        )
+
+    assert_that(_podcast_of(postgres, shows.episode)).is_equal_to(shows.podcast)
+    assert_that(_suppressed(postgres, shows.episode)).is_equal_to(side == "origin")
+
+
+def test_takedown_of_the_origin_waiting_on_a_move_no_longer_covers_it(
     postgres: PostgresDatabase,
 ) -> None:
-    """A move that locked first commits; the takedown then covers what is left."""
+    """A move that locked first commits; the takedown covers what is left."""
     shows = _seed(postgres)
 
-    carried, unpublished = run_overlapping(
+    _, unpublished = run_overlapping(
         postgres,
         first=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
         second=partial(_take_down_podcast, podcast_id=shows.podcast),
         expected=_TAKEDOWN_WAITS,
     )
 
-    assert_that(carried).is_zero()
     assert_that(unpublished).is_zero()
-    with postgres.sessions() as db:
-        assert_that(
-            content_suppression.is_episode_suppressed(
-                db=db,
-                episode_id=shows.episode,
-                scope=ContentSuppressionScope.MENTIONS,
-            ),
-        ).is_false()
-        assert_that(db.query(Mention).count()).is_equal_to(1)
+    assert_that(_suppressed(postgres, shows.episode)).is_false()
 
 
-def _skip_lock(**_kwargs: object) -> None:
-    """Stand in for the move's podcast lock and take none."""
-
-
-def test_move_without_its_podcast_lock_fails(
+def test_takedown_of_the_destination_waiting_on_a_move_covers_it(
     postgres: PostgresDatabase,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Without the lock the move does not wait and would leave the takedown behind."""
-    monkeypatch.setattr(suppression_guard, "lock_podcasts_of_episodes", _skip_lock)
+    """The takedown waits, sees the episode arrive, refuses, and covers it on retry.
 
-    with pytest.raises(AssertionError, match="never waited on the expected lock"):
-        _takedown_first(postgres)
-
-
-_EPISODE_LOCK_WAITS = ExpectedWait(
-    statement_patterns=(r"\bFROM episodes\b", r"\bFOR NO KEY UPDATE\b"),
-    row_lock_table="episodes",
-)
-
-
-def _seed_suppressed_podcast(postgres: PostgresDatabase) -> tuple[_Shows, int]:
-    """Seed the shows and a third podcast taken down for both scopes.
-
-    Returns:
-        The shows and the suppressed podcast's id.
+    Its covered mentions changed while it waited, which it answers with its
+    retryable error; run again, it takes the moved episode down.
     """
     shows = _seed(postgres)
-    with postgres.sessions() as db:
-        suppressed = Podcast(name="Suppressed", slug="suppressed")
-        db.add(suppressed)
-        db.commit()
-        approve_takedown(
-            db,
-            subject_type=TakedownSubjectType.PODCAST,
-            subject_id=suppressed.id,
-            actions=_BOTH,
+
+    with pytest.raises(RetryableLockError):
+        run_overlapping(
+            postgres,
+            first=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
+            second=partial(_take_down_podcast, podcast_id=shows.other),
+            expected=_TAKEDOWN_WAITS,
         )
-        suppressed_id: int = suppressed.id
-    return shows, suppressed_id
+    with postgres.sessions() as db:
+        unpublished = _take_down_podcast(db, podcast_id=shows.other)
+        db.commit()
+
+    assert_that(unpublished).is_equal_to(1)
+    assert_that(_suppressed(postgres, shows.episode)).is_true()
 
 
-def _stale_move(db: Session, *, episode_id: int, podcast_id: int) -> int:
-    """Load the episode, assign it another podcast and flush.
-
-    The copy is loaded while another transaction's move of it is still
-    uncommitted, so it names the podcast the episode is leaving there.
+def _discovery_update(db: Session, *, shows: _Shows) -> int:
+    """Update a podcast row and then one of its episodes in one flush.
 
     Returns:
-        The number of suppressions the episode has after the flush.
+        The episode id.
     """
-    return _move(db, episode_id=episode_id, podcast_id=podcast_id)
+    db.get_one(Podcast, shows.podcast).name = "Renamed by discovery"
+    db.get_one(Episode, shows.episode).title = "Retitled by discovery"
+    db.flush()
+    return shows.episode
 
 
-def _stale_copy_race(postgres: PostgresDatabase) -> tuple[_Shows, int]:
-    """Move an episode into a suppressed podcast; a stale move waits behind it."""
-    shows, suppressed = _seed_suppressed_podcast(postgres)
-    _, carried = run_overlapping(
-        postgres,
-        first=partial(_move, episode_id=shows.episode, podcast_id=suppressed),
-        second=partial(_stale_move, episode_id=shows.episode, podcast_id=shows.other),
-        expected=_EPISODE_LOCK_WAITS,
-    )
-    assert_that(carried).is_equal_to(2)
-    return shows, suppressed
-
-
-def test_concurrent_moves_serialise_and_carry_from_the_persisted_podcast(
+def test_move_waiting_on_discovery_does_not_deadlock(
     postgres: PostgresDatabase,
 ) -> None:
-    """The second move waits on the episode row, then carries what it really left."""
-    shows, _ = _stale_copy_race(postgres)
+    """Discovery holds the podcast and the episode; the move waits, then runs."""
+    shows = _seed(postgres)
+
+    _, destination = run_overlapping(
+        postgres,
+        first=partial(_discovery_update, shows=shows),
+        second=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
+        expected=_MOVE_WAITS_ON_UPDATED_PODCAST,
+    )
+
+    assert_that(_podcast_of(postgres, shows.episode)).is_equal_to(destination)
+
+
+def test_discovery_waiting_on_a_move_does_not_deadlock(
+    postgres: PostgresDatabase,
+) -> None:
+    """The move holds both podcasts and the episode; discovery waits, then runs."""
+    shows = _seed(postgres)
+
+    _, episode_id = run_overlapping(
+        postgres,
+        first=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
+        second=partial(_discovery_update, shows=shows),
+        expected=_UPDATE_WAITS_ON_MOVE,
+    )
 
     with postgres.sessions() as db:
-        assert_that(db.get_one(Episode, shows.episode).podcast_id).is_equal_to(
-            shows.other,
+        episode = db.get_one(Episode, episode_id)
+        assert_that(episode.podcast_id).is_equal_to(shows.other)
+        assert_that(episode.title).is_equal_to("Retitled by discovery")
+
+
+def _stale_copy_race(postgres: PostgresDatabase) -> _Shows:
+    """Move an episode; a copy loaded before that move commits waits behind it.
+
+    The second session loads the episode while the first move is uncommitted,
+    so its copy names the podcast the episode is leaving there. It locks the
+    podcasts it names, then waits on the episode row.
+    """
+    shows = _seed(postgres)
+    with pytest.raises(RetryableLockError, match=f"Episode {shows.episode} "):
+        run_overlapping(
+            postgres,
+            first=partial(_move, episode_id=shows.episode, podcast_id=shows.other),
+            second=partial(_move, episode_id=shows.episode, podcast_id=shows.third),
+            expected=_EPISODE_LOCK_WAITS,
         )
-        for scope in ContentSuppressionScope:
-            assert_that(
-                content_suppression.is_episode_suppressed(
-                    db=db,
-                    episode_id=shows.episode,
-                    scope=scope,
-                ),
-            ).described_as(scope.value).is_true()
-        db.add(Mention(episode_id=shows.episode, media_id=shows.media))
-        with pytest.raises(ContentSuppressedError):
-            db.commit()
+    return shows
+
+
+def test_concurrent_moves_serialise_and_the_stale_one_is_refused(
+    postgres: PostgresDatabase,
+) -> None:
+    """Scenario A: the second move waits on the episode row, then is refused."""
+    shows = _stale_copy_race(postgres)
+
+    assert_that(_podcast_of(postgres, shows.episode)).is_equal_to(shows.other)
 
 
 def _read_without_lock(
@@ -281,66 +291,33 @@ def test_concurrent_move_without_the_episode_lock_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Without the episode lock the stale move reads the old podcast and races."""
-    monkeypatch.setattr(suppression_guard, "lock_moved_episodes", _read_without_lock)
+    monkeypatch.setattr(suppression_identity, "lock_moved_episodes", _read_without_lock)
 
     with pytest.raises(AssertionError, match="never waited on the expected lock"):
         _stale_copy_race(postgres)
 
 
-def _edit_podcast(db: Session, *, podcast_id: int) -> int:
-    """Update a podcast row as an operator edit does, without committing.
-
-    Returns:
-        The podcast id.
-    """
-    db.get_one(Podcast, podcast_id).name = "Renamed"
-    db.flush()
-    return podcast_id
-
-
-# The moving flush's own foreign-key check already holds the joined podcast
-# row FOR KEY SHARE, so PostgreSQL makes its later FOR SHARE wait on the
-# blocking transaction without a tuple lock. The statement and the blocker
-# still identify the guard's lock.
-_JOINED_PODCAST_WAITS = ExpectedWait(
-    statement_patterns=(r"\bFROM podcasts\b", r"\bFOR SHARE OF podcasts\b"),
-    row_lock_table=None,
-)
-
-
-def _move_with_mention(db: Session, *, shows: _Shows) -> int:
-    """Move the episode and write a mention of it in the same flush.
-
-    Returns:
-        The mention id.
-    """
-    db.get_one(Episode, shows.episode).podcast_id = shows.other
-    mention = Mention(episode_id=shows.episode, media_id=shows.media)
-    db.add(mention)
-    db.flush()
-    mention_id: int = mention.id
-    return mention_id
-
-
-def test_moved_episode_locks_the_podcast_it_joins_after_the_write(
+def test_stale_copy_after_a_takedown_of_the_new_podcast_is_refused(
     postgres: PostgresDatabase,
 ) -> None:
-    """The check after the write locks the new podcast, not the cached old one.
-
-    An operator edit holds the destination podcast; the moving flush's own
-    foreign-key check does not conflict with it, so only the guard's
-    ``FOR SHARE`` lock of the podcast the episode joined makes it wait.
-    """
+    """Scenario B: moved and taken down elsewhere since it was loaded; refused."""
     shows = _seed(postgres)
+    stale = postgres.sessions()
+    episode = stale.get_one(Episode, shows.episode)
+    with postgres.sessions() as db:
+        _move(db, episode_id=shows.episode, podcast_id=shows.other)
+        db.commit()
+    with postgres.sessions() as db:
+        _take_down_podcast(db, podcast_id=shows.other)
+        db.commit()
 
-    _, mention_id = run_overlapping(
-        postgres,
-        first=partial(_edit_podcast, podcast_id=shows.other),
-        second=partial(_move_with_mention, shows=shows),
-        expected=_JOINED_PODCAST_WAITS,
-    )
+    episode.podcast_id = shows.third
+    with pytest.raises(RetryableLockError, match=f"Episode {shows.episode} "):
+        stale.flush()
+    stale.close()
 
-    assert_that(mention_id).is_positive()
+    assert_that(_podcast_of(postgres, shows.episode)).is_equal_to(shows.other)
+    assert_that(_suppressed(postgres, shows.episode)).is_true()
 
 
 def _take_down_episode(postgres: PostgresDatabase, shows: _Shows) -> None:

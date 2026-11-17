@@ -98,6 +98,14 @@ class ContentSuppressedError(ValueError):
         self.row = row
 
 
+class RetryableLockError(ValueError):
+    """Content changed, or a lock was busy, while locks were being taken.
+
+    Nothing was written; the operation can be retried as it is. Routes map
+    ``ValueError`` to 409.
+    """
+
+
 class ContentSuppression(Base):
     """One approved takedown's suppression of one scope for one subject."""
 
