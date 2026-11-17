@@ -16,6 +16,13 @@ from podex.models.account_user import AccountUser
 from podex.models.audit_log import AuditAction, AuditLog
 from podex.models.base import Base
 from podex.models.billing_webhook_event import BillingWebhookEvent
+from podex.models.content_suppression import (
+    ContentSuppressedError,
+    ContentSuppression,
+    ContentSuppressionScope,
+    ContentSuppressionSubjectType,
+    ContentSuppressionVersion,
+)
 from podex.models.derivative_generation_run import (
     DerivativeGenerationRun,
     DerivativeGenerationRunStatus,
@@ -51,6 +58,9 @@ from podex.models.semantic_chunk import (
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
 )
+
+# Importing the guard installs its flush events on every session.
+from podex.models.suppression_guard import GUARDED_MODELS
 from podex.models.sweep_checkpoint import SweepCheckpoint
 from podex.models.takedown_request import (
     TakedownRequest,
@@ -80,11 +90,17 @@ __all__ = [
     "AuditLog",
     "Base",
     "BillingWebhookEvent",
+    "ContentSuppressedError",
+    "ContentSuppression",
+    "ContentSuppressionScope",
+    "ContentSuppressionSubjectType",
+    "ContentSuppressionVersion",
     "DerivativeGenerationRun",
     "DerivativeGenerationRunStatus",
     "DerivativeSummaryKind",
     "DerivativeSummaryStatus",
     "EpisodeSummary",
+    "GUARDED_MODELS",
     "GraphTriple",
     "GraphTripleObjectKind",
     "MagicLinkToken",

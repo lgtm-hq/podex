@@ -13,6 +13,10 @@ from sqlalchemy.orm import Session
 
 from podex.database import fetch_page
 from podex.models import Episode, Mention
+from podex.services.content_suppression import (
+    count_published_mentions,
+    published_mentions,
+)
 
 
 def list_episodes(
@@ -96,10 +100,8 @@ def list_episode_mentions(
     """
     if db.get(Episode, episode_id) is None:
         return None
-    statement = (
-        select(Mention)
-        .where(Mention.episode_id == episode_id)
-        .order_by(Mention.timestamp_seconds)
+    statement = published_mentions(Mention.episode_id == episode_id).order_by(
+        Mention.timestamp_seconds,
     )
     rows: list[Mention] = fetch_page(
         db=db, statement=statement, limit=limit, offset=offset
@@ -117,9 +119,5 @@ def count_episode_mentions(db: Session, episode_id: int) -> int:
     Returns:
         The mention count for the episode (0 when the episode is unknown).
     """
-    statement = (
-        select(func.count())
-        .select_from(Mention)
-        .where(Mention.episode_id == episode_id)
-    )
-    return int(db.execute(statement).scalar_one())
+    count: int = count_published_mentions(db, Mention.episode_id == episode_id)
+    return count

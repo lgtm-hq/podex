@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import ForeignKey
+from sqlalchemy import JSON, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 
 from podex.models.base import Base
@@ -25,3 +25,6 @@ class AccountAlertEvent(Base):
         index=True,
     )
     created_at: "Mapped[datetime]" = mapped_column(default=lambda: datetime.now(UTC))
+    # Ids of the mentions this event reports, newest first; ``None`` for
+    # podcast events and for events raised before ids were recorded.
+    mention_ids_json: "Mapped[list[int] | None]" = mapped_column(JSON, default=None)

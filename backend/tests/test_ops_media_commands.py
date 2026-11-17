@@ -62,10 +62,12 @@ from podex.services.ops_media_commands import (
     update_ops_media,
     upsert_ops_media_external_ref,
 )
-from tests.conftest import create_media_alert_rule
+from tests.conftest import create_media_alert_rule, persist_episode
+from tests.takedown_support import take_down_new_mention
 
 _MERGE_POLICY_BY_MEDIA_COLUMN = {
     "account_saved_media.media_id": "move",
+    "content_suppressions.media_id": "move",
     "graph_triples.object_media_id": "move",
     "graph_triples.subject_media_id": "move",
     "media_aliases.media_id": "move",
@@ -504,6 +506,15 @@ def _require_rule(rule: AccountAlertRule | None) -> AccountAlertRule:
 def test_merge_resolves_every_media_reference(db_session: Session) -> None:
     """Every media foreign key and alert target has a merge policy and no orphan."""
     episode, source, target = _seed_merge_pair(db_session)
+    take_down_new_mention(
+        db_session,
+        episode_id=persist_episode(
+            db_session,
+            podcast=episode.podcast,
+            title="Taken Down",
+        ).id,
+        media_id=source.id,
+    )
     other = Media(type=MediaType.MOVIE, title="Dune (1984)")
     db_session.add(other)
     db_session.flush()
@@ -569,7 +580,6 @@ def test_merge_resolves_every_media_reference(db_session: Session) -> None:
     _require_rule(
         create_media_alert_rule(db=db_session, user_id=user.id, media_id=source.id),
     )
-    db_session.commit()
     columns = _media_reference_columns()
     assert_that(sorted(columns)).is_equal_to(sorted(_MERGE_POLICY_BY_MEDIA_COLUMN))
     for name, column in columns.items():

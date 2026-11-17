@@ -8,7 +8,7 @@ recorded in the immutable audit log.
 from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request, status
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 
 from podex.api.deps import AppSettings, DbSession, require_ops_access
 from podex.config import RetentionSettings
@@ -65,9 +65,11 @@ from podex.services.ops_retention_commands import (
 )
 from podex.services.pipeline_queries import list_recent_ingestion_runs
 from podex.services.takedown_requests import (
+    TAKEDOWN_BUSY_MESSAGE,
     TakedownDecisionInputData,
     decide_takedown_request,
     execute_approved_takedown_request,
+    is_lock_conflict,
     list_takedown_requests,
 )
 from podex.services.transcript_artifacts import build_transcript_artifact_store
@@ -479,6 +481,33 @@ def decide_ops_takedown_request(
 ) -> OpsTakedownDecisionRead:
     """Decide a pending takedown; approvals execute suppression immediately."""
     _require_ops_access(request=request, settings=settings)
+    # A lock that cannot be taken in time (a writer or another takedown holds
+    # it) answers a retryable 409 with nothing changed.
+    try:
+        return _decide_takedown(
+            request_id=request_id,
+            payload=payload,
+            db=db,
+            settings=settings,
+        )
+    except OperationalError as error:
+        if not is_lock_conflict(error):
+            raise
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=TAKEDOWN_BUSY_MESSAGE,
+        ) from error
+
+
+def _decide_takedown(
+    *,
+    request_id: int,
+    payload: OpsTakedownDecisionRequest,
+    db: DbSession,
+    settings: AppSettings,
+) -> OpsTakedownDecisionRead:
+    """Record the decision and, for an approval, execute it in one transaction."""
     try:
         decided = decide_takedown_request(
             db=db,

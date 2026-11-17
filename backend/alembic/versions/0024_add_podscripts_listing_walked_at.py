@@ -3,8 +3,8 @@
 The column starts empty for every podcast, so the next discovery run reads
 each listing in full, as before, and only then records a complete walk.
 
-Revision ID: 0022
-Revises: 0021
+Revision ID: 0024
+Revises: 0023
 Create Date: 2026-11-17 06:00:00.000000
 """
 
@@ -13,8 +13,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op  # type: ignore[attr-defined]
 
-revision: str = "0022"
-down_revision: str | None = "0021"
+revision: str = "0024"
+down_revision: str | None = "0023"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
