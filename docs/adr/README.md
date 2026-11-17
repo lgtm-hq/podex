@@ -26,6 +26,7 @@ the changelog record _what_ changed.
 | [0016](./0016-podscripts-listing-cursor.md)             | Catalog as the podscripts listing cursor after a complete walk  | proposed | 2026-11-17 |
 | [0017](./0017-suppression-identity-changes.md)          | Suppressions survive episode moves and subject deletes          | proposed | 2026-11-17 |
 | [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | proposed | 2026-11-17 |
+| [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | proposed | 2026-11-17 |
 
 ## Format
 
