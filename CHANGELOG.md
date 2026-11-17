@@ -22,6 +22,17 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.47] - 2026-11-17
+
+### Changed
+
+- **deps**: update lintro to 0.181.5 (patch) (#911) (7b46744)
+
+### Fixed
+
+- **discovery**: keep numbered series episodes apart when grouping one run's records
+  (#903) (8e0b889)
+
 ## [0.41.46] - 2026-11-17
 
 ### Changed
