@@ -18,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from podex.models.base import Base
+from podex.models.model_name import MODEL_NAME_LENGTH
 
 if TYPE_CHECKING:
     from podex.models.episode import Episode
@@ -63,7 +64,10 @@ class DerivativeGenerationRun(Base):
     pipeline_version: Mapped[str] = mapped_column(String(80), index=True)
     chunk_pipeline_version: Mapped[str] = mapped_column(String(80), index=True)
     summary_prompt_version: Mapped[str] = mapped_column(String(80), index=True)
-    summary_model: Mapped[str | None] = mapped_column(String(120), index=True)
+    summary_model: Mapped[str | None] = mapped_column(
+        String(MODEL_NAME_LENGTH),
+        index=True,
+    )
     source_text_hash: Mapped[str] = mapped_column(String(64), index=True)
     semantic_chunks_created: Mapped[int] = mapped_column(Integer, default=0)
     semantic_chunks_updated: Mapped[int] = mapped_column(Integer, default=0)
