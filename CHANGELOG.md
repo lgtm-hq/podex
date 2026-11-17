@@ -22,6 +22,13 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.49] - 2026-11-17
+
+### Fixed
+
+- **takedowns**: refuse episode moves and deletes that would lift a takedown suppression
+  (#900) (018ee36)
+
 ## [0.41.48] - 2026-11-17
 
 ### Changed
