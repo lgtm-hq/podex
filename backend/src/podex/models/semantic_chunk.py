@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum, auto
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,28 @@ if TYPE_CHECKING:
     from podex.models.transcript import Transcript
 
 
+def _checked_dimensions(dimensions: object) -> int:
+    """Return ``dimensions`` if it is a positive integer.
+
+    Args:
+        dimensions: Requested vector dimension.
+
+    Returns:
+        The validated dimension.
+
+    Raises:
+        TypeError: If ``dimensions`` is not an integer (``bool`` included).
+        ValueError: If ``dimensions`` is not positive.
+    """
+    if isinstance(dimensions, bool) or not isinstance(dimensions, int):
+        raise TypeError(
+            f"vector dimensions must be an integer, got {type(dimensions).__name__}",
+        )
+    if dimensions <= 0:
+        raise ValueError(f"vector dimensions must be positive, got {dimensions}")
+    return dimensions
+
+
 class PostgresVectorBind(UserDefinedType[list[float] | None]):
     """PostgreSQL implementation type of ``PgVectorType``.
 
@@ -33,29 +56,33 @@ class PostgresVectorBind(UserDefinedType[list[float] | None]):
 
     cache_ok = True
     render_bind_cast = True
+    # TypeEngine refuses COLLATE by raising NotImplementedError, which reads as
+    # an abstract method; vectors keep that refusal unchanged.
+    _with_collation = UserDefinedType._with_collation
 
     def __init__(self, dimensions: int) -> None:
-        self.dimensions = dimensions
+        self.dimensions = _checked_dimensions(dimensions)
 
     def get_col_spec(self, **_kwargs: Any) -> str:
         """Return the pgvector type with this column's dimension."""
         return f"vector({self.dimensions})"
 
-    def _with_collation(
-        self,
-        collation: str,
-        collation_schema: str | None = None,
-    ) -> PostgresVectorBind:
-        """Refuse ``COLLATE``: pgvector values have no collation.
+    def literal_processor(self, _dialect: Dialect) -> Callable[[str], str]:
+        """Render a serialized vector as a quoted literal cast to this type.
 
         Args:
-            collation: Requested collation name.
-            collation_schema: Schema of the requested collation.
+            _dialect: SQLAlchemy dialect rendering the literal.
 
-        Raises:
-            NotImplementedError: Always; vectors cannot be collated.
+        Returns:
+            Function turning pgvector text into a ``'...'::vector(N)`` literal.
         """
-        raise NotImplementedError(f"vector values have no collation: {collation}")
+        spec = self.get_col_spec()
+
+        def process(value: str) -> str:
+            escaped = value.replace("'", "''")
+            return f"'{escaped}'::{spec}"
+
+        return process
 
 
 # SQLAlchemy uses process_bind_param for literal fallback when this optional
@@ -73,7 +100,7 @@ class PgVectorType(TypeDecorator[list[float] | None]):
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
-        self.dimensions = dimensions
+        self.dimensions = _checked_dimensions(dimensions)
 
     def load_dialect_impl(self, dialect: Dialect) -> TypeEngine[Any]:
         """Bind as pgvector on PostgreSQL and as text everywhere else.
@@ -119,6 +146,9 @@ class PgVectorType(TypeDecorator[list[float] | None]):
 
         Returns:
             Embedding vector as floats, or ``None``.
+
+        Raises:
+            TypeError: If the driver returned neither text, a list nor ``None``.
         """
         if value is None:
             return None
@@ -126,7 +156,10 @@ class PgVectorType(TypeDecorator[list[float] | None]):
             return [float(item) for item in value]
         if isinstance(value, str):
             return [float(item) for item in json.loads(value)]
-        return None
+        raise TypeError(
+            f"unexpected embedding value type from the database: "
+            f"{type(value).__name__}",
+        )
 
 
 def _compile_pgvector_type(

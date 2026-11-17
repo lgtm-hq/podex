@@ -8,6 +8,7 @@ equal, others read back as the nearest float32 (compared at that precision).
 
 import struct
 from collections.abc import Sequence
+from dataclasses import dataclass
 
 import pytest
 from assertpy import assert_that
@@ -89,13 +90,12 @@ def _stored_vector(postgres: PostgresDatabase, key: str) -> list[float] | None:
     return vector
 
 
-# This adapter implements one protocol operation; extra methods have no purpose.
-# pylint: disable-next=too-few-public-methods
+@dataclass(slots=True)
 class FullDimensionEmbeddingProvider:
     """Deterministic provider returning vectors of the column's dimension."""
 
-    model_name = "synthetic-embedding-v1"
-    dimensions = DIMENSIONS
+    model_name: str = "synthetic-embedding-v1"
+    dimensions: int = DIMENSIONS
 
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """Return one float32-exact vector per text, distinct per position."""
@@ -144,6 +144,8 @@ def test_full_dimension_embedding_round_trips_equal(
     assert_that(raw).is_instance_of(str)
     assert_that(raw).starts_with("[")
     assert_that(stored).is_equal_to(vector)
+    # Equality alone would accept ints; the conversion must yield floats.
+    assert_that({type(item) for item in stored or []}).is_equal_to({float})
 
 
 def test_embedding_rounds_to_float32_precision(postgres: PostgresDatabase) -> None:
