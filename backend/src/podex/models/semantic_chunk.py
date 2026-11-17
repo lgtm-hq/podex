@@ -21,6 +21,9 @@ if TYPE_CHECKING:
     from podex.models.episode import Episode
     from podex.models.transcript import Transcript
 
+EMBEDDING_DIMENSIONS = 1536
+"""Dimension of the ``semantic_chunks.embedding_vector`` column (migration 0010)."""
+
 
 def _checked_dimensions(dimensions: object) -> int:
     """Return ``dimensions`` if it is a positive integer.
@@ -224,7 +227,9 @@ class SemanticChunk(Base):
     )
     embedding_model: Mapped[str | None] = mapped_column(String(120), index=True)
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
-    embedding_vector: Mapped[list[float] | None] = mapped_column(PgVectorType(1536))
+    embedding_vector: Mapped[list[float] | None] = mapped_column(
+        PgVectorType(EMBEDDING_DIMENSIONS),
+    )
     embedding_error: Mapped[str | None] = mapped_column(Text)
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(default=lambda: datetime.now(UTC))

@@ -55,6 +55,7 @@ from podex.models.scheduled_work import (
     ScheduledWorkStatus,
 )
 from podex.models.semantic_chunk import (
+    EMBEDDING_DIMENSIONS,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
 )
@@ -77,6 +78,7 @@ from podex.models.transcript_source_retention_policy import (
 from podex.models.user_session import UserSession
 
 __all__ = [
+    "EMBEDDING_DIMENSIONS",
     "AccountAlertEvent",
     "AccountAlertRule",
     "AccountDigest",
