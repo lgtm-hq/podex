@@ -5,7 +5,7 @@ The orchestrator runs its real Podscripts provider against a listing served by
 the complete-walk record and the full-walk interval are deterministic.
 """
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import NoReturn
@@ -13,12 +13,19 @@ from typing import NoReturn
 import httpx
 import pytest
 from assertpy import assert_that
+from pydantic import ValidationError
 from sqlalchemy import event, select
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Session
 
 from podex.config import Settings
-from podex.models import Episode, Podcast
+from podex.models import (
+    Episode,
+    IngestionRun,
+    IngestionRunStatus,
+    Podcast,
+    PodcastStatus,
+)
 from podex.services import discovery_orchestrator, discovery_podscripts
 from podex.services.discovery import (
     DiscoveredEpisode,
@@ -33,6 +40,10 @@ from podex.services.ops_podcast_commands import (
     OpsPodcastSourceInputData,
     UpdateOpsPodcastInputData,
     update_ops_podcast,
+)
+from podex.services.recurring_discovery import (
+    plan_recurring_discovery_work,
+    run_due_episode_discovery_work,
 )
 from tests.conftest import persist_episode
 
@@ -67,11 +78,14 @@ class _Site:
     )
     failing: dict[int, int] = field(default_factory=dict)
     requested: list[int] = field(default_factory=list)
+    on_request: list[Callable[[], None]] = field(default_factory=list)
 
     def route(self, request: httpx.Request) -> httpx.Response:
         """Serve the requested page, or its scripted failure status."""
         page = int(request.url.params["page"])
         self.requested.append(page)
+        for hook in self.on_request:
+            hook()
         if page in self.failing:
             return httpx.Response(self.failing[page])
         links = "".join(
@@ -275,6 +289,139 @@ def test_walk_is_not_recorded_when_storing_its_episodes_fails(
     assert_that(podcast.podscripts_listing_walked_at).is_none()
 
 
+def test_scheduled_run_whose_storing_fails_leaves_no_skippable_gap(
+    db_session: Session,
+    site: _Site,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A run that stores part of the new episodes and fails clears the record."""
+    podcast = _podcast(db_session, walked_at=datetime.now(UTC) - timedelta(days=1))
+    podcast.status = PodcastStatus.ACTIVE
+    for number in range(12, 4, -1):
+        _store(db_session, podcast, number, url=_url(_slug(number)))
+    site.pages = _numbered_pages(
+        (18, 17, 16),
+        (15, 14, 13),
+        (12, 11, 10),
+        (9, 8, 7),
+        (6, 5),
+    )
+    plan_recurring_discovery_work(
+        db=db_session,
+        interval_minutes=60,
+        now=datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
+    )
+    db_session.commit()
+    create = vars(DiscoveryOrchestrator)["_create_episode"]
+    created: list[DiscoveredEpisode] = []
+
+    def fail_on_fourth(
+        self: DiscoveryOrchestrator,
+        podcast: Podcast,
+        discovered: DiscoveredEpisode,
+    ) -> Episode:
+        """Store three new episodes, then fail."""
+        created.append(discovered)
+        if len(created) == 4:
+            raise RuntimeError("storage failed")
+        episode: Episode = create(self, podcast, discovered)
+        return episode
+
+    monkeypatch.setattr(DiscoveryOrchestrator, "_create_episode", fail_on_fourth)
+
+    run_due_episode_discovery_work(db=db_session)
+    db_session.commit()
+
+    assert_that(db_session.query(IngestionRun).one().status).is_equal_to(
+        IngestionRunStatus.FAILED,
+    )
+    assert_that(_stored_urls(db_session, podcast)).contains(
+        *(_url(_slug(number)) for number in (18, 17, 16)),
+    )
+    assert_that(_walked_at(podcast)).is_none()
+
+    monkeypatch.setattr(DiscoveryOrchestrator, "_create_episode", create)
+    site.requested.clear()
+    with DiscoveryOrchestrator(db_session) as orchestrator:
+        orchestrator.discover_for_podcast(podcast)
+
+    assert_that(site.requested).is_equal_to([1, 2, 3, 4, 5, 6])
+    assert_that(_stored_urls(db_session, podcast)).contains(
+        *(_url(_slug(number)) for number in (15, 14, 13)),
+    )
+
+
+def test_empty_first_page_records_no_walk_over_a_known_catalog(
+    db_session: Session,
+    orchestrator: DiscoveryOrchestrator,
+    site: _Site,
+) -> None:
+    """A listing that reads as empty while the catalog has episodes is not trusted."""
+    podcast = _podcast(db_session)
+    _store(db_session, podcast, 1, url="https://feeds.example/1")
+    site.pages = {}
+
+    result = orchestrator.discover_for_podcast(podcast)
+
+    assert_that(site.requested).is_equal_to([1])
+    assert_that(result.errors).is_empty()
+    assert_that(_walked_at(podcast)).is_none()
+
+
+def test_walk_shorter_than_the_catalogs_listing_is_not_recorded(
+    db_session: Session,
+    orchestrator: DiscoveryOrchestrator,
+    site: _Site,
+) -> None:
+    """A soft-empty page that cuts the listing short leaves the walk unrecorded."""
+    podcast = _podcast(db_session)
+    for number in range(12, 4, -1):
+        _store(db_session, podcast, number, url=_url(_slug(number)))
+    site.pages = _numbered_pages((12, 11), (10, 9))
+
+    orchestrator.discover_for_podcast(podcast)
+
+    assert_that(site.requested).is_equal_to([1, 2, 3])
+    assert_that(_walked_at(podcast)).is_none()
+
+
+def test_walk_record_in_the_future_counts_as_absent(
+    db_session: Session,
+    orchestrator: DiscoveryOrchestrator,
+    site: _Site,
+) -> None:
+    """A record dated after now never turns the cursor on."""
+    podcast = _podcast(db_session, walked_at=_NOW + timedelta(days=1))
+    for number in range(12, 4, -1):
+        _store(db_session, podcast, number, url=_url(_slug(number)))
+
+    orchestrator.discover_for_podcast(podcast)
+
+    assert_that(site.requested).is_equal_to([1, 2, 3, 4, 5])
+    assert_that(_walked_at(podcast)).is_equal_to(_NOW)
+
+
+def test_walk_is_recorded_at_its_start_not_its_end(
+    db_session: Session,
+    site: _Site,
+) -> None:
+    """The record holds the time the walk began, so nothing added during it is lost."""
+    ticks = [_NOW]
+
+    def advance() -> None:
+        """Move the clock forward a minute per page request."""
+        ticks[0] += timedelta(minutes=1)
+
+    site.on_request.append(advance)
+    podcast = _podcast(db_session)
+
+    with DiscoveryOrchestrator(db_session, clock=lambda: ticks[0]) as orchestrator:
+        orchestrator.discover_for_podcast(podcast)
+
+    assert_that(ticks[0]).is_greater_than(_NOW)
+    assert_that(_walked_at(podcast)).is_equal_to(_NOW)
+
+
 def test_number_only_catalog_matches_do_not_end_paging(
     db_session: Session,
     orchestrator: DiscoveryOrchestrator,
@@ -471,10 +618,12 @@ def test_each_episode_is_matched_against_the_catalog_once(
         statement: str,
         *_rest: object,
     ) -> None:
-        """Record each catalog episode lookup."""
+        """Record each per-episode catalog lookup."""
         del conn, cursor
-        if statement.lstrip().upper().startswith("SELECT") and (
-            "FROM episodes" in statement
+        if (
+            statement.lstrip().upper().startswith("SELECT")
+            and "FROM episodes" in statement
+            and " LIMIT " in statement
         ):
             statements.append(statement)
 
@@ -522,10 +671,24 @@ class _CursorDouble:
         *,
         cursor: ListingCursor | None = None,
     ) -> EpisodeListing:
-        """Record the cursor and report a complete, empty walk."""
+        """Record the cursor and report a complete walk of one episode."""
         del podcast
         self.cursors.append(cursor)
-        return EpisodeListing(complete=True)
+        return EpisodeListing(
+            episodes=[
+                DiscoveredEpisode(
+                    title="Episode 12",
+                    episode_number=12,
+                    episode_url=_url(_slug(12)),
+                ),
+            ],
+            complete=True,
+        )
+
+    def listing_url_prefix(self, podcast: Podcast) -> str | None:
+        """Return the listing URL prefix the fake listing uses."""
+        del podcast
+        return _url("")
 
     def close(self) -> None:
         """Release nothing."""
@@ -591,6 +754,18 @@ def test_full_walk_interval_defaults_to_a_week(
     assert_that(settings.discovery.podscripts_full_walk_interval_hours).is_equal_to(
         168,
     )
+
+
+@pytest.mark.parametrize("hours", ["0", "-1"])
+def test_full_walk_interval_must_be_at_least_an_hour(
+    monkeypatch: pytest.MonkeyPatch,
+    hours: str,
+) -> None:
+    """An interval below one hour is rejected at start-up."""
+    monkeypatch.setenv("PODEX_DISCOVERY__PODSCRIPTS_FULL_WALK_INTERVAL_HOURS", hours)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
 
 
 @pytest.mark.parametrize(

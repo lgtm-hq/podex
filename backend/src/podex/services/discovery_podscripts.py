@@ -285,6 +285,18 @@ class PodscriptsDiscovery:
         )
         return listing
 
+    def listing_url_prefix(self, podcast: Podcast) -> str | None:
+        """Return the prefix of the podcast's podscripts.co episode URLs.
+
+        Args:
+            podcast: The podcast whose listing is walked.
+
+        Returns:
+            The URL prefix, or None when the podcast has no podscripts slug.
+        """
+        slug = podcast.podscripts_slug
+        return f"{BASE_URL}/podcasts/{slug}/" if slug else None
+
     def _fetch_episode_page(
         self,
         slug: str,

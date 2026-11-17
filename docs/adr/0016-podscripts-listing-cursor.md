@@ -35,9 +35,17 @@ Nothing guaranteed that:
    `podcasts.podscripts_listing_walked_at` (nullable, migration 0024) is set to
    the run's start time when a walk reached the listing's real end (an empty
    page) with no failed page, no early stop and below the page limit. It is
-   committed with that run's episodes. While it is unset, discovery reads the
-   whole listing as before. It is cleared when a run hits a failed page (that
-   run may have left a gap below known pages) and when the podcast's
+   written after every episode of that run is stored and committed with them;
+   that holds on the success path. If storing raises part-way, the record is
+   cleared instead, and the scheduled runner, which records the failure and
+   commits the session at the end of the tick, commits the cleared record
+   together with whatever episodes were stored, so the next run reads the whole
+   listing. A complete walk is also not recorded when it saw no episode while
+   the catalog has episodes, or saw fewer distinct listing URLs than the catalog
+   already stores under this podcast's listing. While the record is unset,
+   discovery reads the whole listing as before. A record dated after the current
+   time counts as unset. The record is cleared when a run hits a failed page
+   (that run may have left a gap below known pages) and when the podcast's
    podscripts slug changes through the ops update; setting it to NULL by hand
    forces the next run to read the whole listing.
 3. **Stopping matches by listing URL only.** A page counts as known only when
@@ -64,14 +72,25 @@ Nothing guaranteed that:
 ## Consequences
 
 - A podcast pays a full walk on its first run after deployment, after any failed
-  page, after a slug change and once per interval; other runs read only up to
-  the first fully known page.
+  page or failed store, after a slug change and once per interval. Other runs
+  stop at the first fully known page only where the conditions above hold; see
+  the gaps below.
 - A failing listing page now fails the scheduled discovery run instead of
   passing silently.
 - Not covered, knowingly:
   - A page that loads but has lost its episode links (a layout change or a soft
-    error page) still reads as the end of the listing and can record a complete
-    walk.
+    error page) still reads as the end of the listing. The walk is not recorded
+    when that leaves it short of the catalog (no episode while the catalog has
+    some, or fewer listing URLs than the catalog stores), but a soft-empty page
+    below everything the catalog holds, for example on a podcast's first walk,
+    can still record a complete walk.
+  - Shows whose listing links carry no leading number never show an order, so
+    they never stop early and read the whole listing on every run (bounded by
+    `MAX_LISTING_PAGES`). Safe, but no saving; tracked in #895.
+  - Episodes first stored from the feed keep their feed URL, so their listing
+    URL is never recorded and pages holding them are never fully known; they are
+    re-read on every run until they scroll past the first fully known page.
+    Safe, but no saving; tracked in #895.
   - Listings longer than `MAX_LISTING_PAGES` never complete, so they never use
     the cursor and keep reading 200 pages per run.
   - Episode numbers come from the leading digits of the slug, the only numbering

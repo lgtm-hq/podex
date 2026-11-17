@@ -173,6 +173,17 @@ class ListingCursorProvider(Protocol):
         """
         ...
 
+    def listing_url_prefix(self, podcast: Podcast) -> str | None:
+        """Return the prefix every listing URL of ``podcast`` starts with.
+
+        Args:
+            podcast: The podcast whose listing is walked.
+
+        Returns:
+            The URL prefix, or None when the podcast has no listing here.
+        """
+        ...
+
 
 def published_in_window(
     published_at: datetime | None,

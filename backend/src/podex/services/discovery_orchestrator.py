@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from podex.config import get_settings
@@ -182,8 +182,63 @@ class DiscoveryOrchestrator:
                 podcast,
                 cursor=self._listing_cursor(podcast, now=now),
             )
+            if listing.complete and not self._walk_covers_catalog(
+                podcast,
+                listing=listing,
+                prefix=source.listing_url_prefix(podcast),
+            ):
+                listing.complete = False
             return listing
         return EpisodeListing(episodes=source.discover_episodes(podcast, since=since))
+
+    def _walk_covers_catalog(
+        self,
+        podcast: Podcast,
+        *,
+        listing: EpisodeListing,
+        prefix: str | None,
+    ) -> bool:
+        """Return whether a complete walk saw at least what the catalog holds.
+
+        A page that loads without episode links ends a walk like the real end
+        of the listing does. A walk is not recorded when it saw no episode
+        while the catalog has some, or saw fewer distinct listing URLs than
+        the catalog already stores under this podcast's listing.
+        """
+        stored = self.session.scalar(
+            select(func.count())
+            .select_from(Episode)
+            .where(Episode.podcast_id == podcast.id),
+        )
+        if not listing.episodes and stored:
+            logger.warning(
+                "Not recording a complete podscripts.co walk for %s: "
+                "the listing read as empty but the catalog has %s episodes",
+                podcast.slug,
+                stored,
+            )
+            return False
+        if prefix is None:
+            return True
+        seen = {episode.episode_url for episode in listing.episodes}
+        listed = self.session.scalar(
+            select(func.count())
+            .select_from(Episode)
+            .where(
+                Episode.podcast_id == podcast.id,
+                Episode.episode_url.startswith(prefix, autoescape=True),
+            ),
+        )
+        if listed is not None and len(seen) < listed:
+            logger.warning(
+                "Not recording a complete podscripts.co walk for %s: "
+                "it saw %s listing URLs but the catalog holds %s",
+                podcast.slug,
+                len(seen),
+                listed,
+            )
+            return False
+        return True
 
     def _listing_cursor(
         self,
@@ -202,6 +257,13 @@ class DiscoveryOrchestrator:
             logger.info(
                 "Reading the whole podscripts.co listing for %s: "
                 "no complete walk is recorded",
+                podcast.slug,
+            )
+            return None
+        if as_utc(walked_at) > now:
+            logger.info(
+                "Reading the whole podscripts.co listing for %s: "
+                "the recorded complete walk is dated in the future",
                 podcast.slug,
             )
             return None
@@ -370,22 +432,31 @@ class DiscoveryOrchestrator:
         new_count = 0
         updated_count = 0
 
-        for discovered in episodes:
-            existing = self._find_existing_episode(podcast, discovered)
-            published_at = discovered.published_at
-            if published_at is None and existing is not None:
-                published_at = existing.published_at
-            inside = published_in_window(published_at, since)
+        stored_all = False
+        try:
+            for discovered in episodes:
+                existing = self._find_existing_episode(podcast, discovered)
+                published_at = discovered.published_at
+                if published_at is None and existing is not None:
+                    published_at = existing.published_at
+                inside = published_in_window(published_at, since)
 
-            if existing is not None:
-                if self._update_episode(existing, discovered):
-                    updated_count += 1
-            elif inside:
-                self._create_episode(podcast, discovered)
-                new_count += 1
+                if existing is not None:
+                    if self._update_episode(existing, discovered):
+                        updated_count += 1
+                elif inside:
+                    self._create_episode(podcast, discovered)
+                    new_count += 1
 
-            if inside:
-                in_window.append(discovered)
+                if inside:
+                    in_window.append(discovered)
+            stored_all = True
+        finally:
+            if not stored_all:
+                # The scheduled runner records the failure and commits what was
+                # stored so far. Clearing the record in that same commit makes
+                # the next run read the whole listing and fill any gap.
+                podcast.podscripts_listing_walked_at = None
 
         if listing_walked_at is not None:
             # Recorded only once every episode of the complete walk is stored,
