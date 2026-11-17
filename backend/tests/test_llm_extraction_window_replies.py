@@ -9,7 +9,6 @@ import json
 import time
 from collections.abc import Callable
 from dataclasses import fields
-from types import SimpleNamespace
 from typing import Any
 
 import anthropic
@@ -427,45 +426,55 @@ def test_retries_bound_requests_and_characters_per_transcript(
     assert_that(result.unextracted_ranges).is_equal_to([(0, 1_399_999)])
 
 
-@pytest.mark.parametrize(
-    ("reply", "name"),
-    [
-        (
-            text_reply(
+def test_reply_that_overflows_while_decoded_fails_only_its_window() -> None:
+    """A number too large for a float fails its window, not the run."""
+    model = WindowModel(
+        {
+            1: text_reply(
                 '[{"title": "Big 1", "type": "book", "confidence": 1' + "0" * 400 + "}]"
-            ),
-            "OverflowError",
-        ),
-        (text_reply("[" * 100_000 + "]" * 100_000), "RecursionError"),
-    ],
-    ids=["overflowing-number", "deep-nesting"],
-)
-def test_reply_that_breaks_decoding_fails_only_its_window(
-    reply: SimpleNamespace,
-    name: str,
-) -> None:
-    """A reply that raises while it is decoded fails its window, not the run."""
-    model = WindowModel({1: reply})
+            )
+        }
+    )
 
     result = run_model(marked_four_windows(), model)
 
     assert_that(result.errors).is_equal_to(
-        [f"extraction: {name}; unclassified_failure"]
+        ["extraction: OverflowError; unclassified_failure"]
     )
     assert_that(titles_of(result)).contains("Before 1", "After 3")
     assert_that(result.unextracted_ranges).is_equal_to([(149_999, 295_800)])
 
 
-def test_client_type_error_fails_its_window() -> None:
-    """A client that raises ``TypeError`` fails the window, not the run."""
-    model = WindowModel({0: TypeError("client fault")})
+def test_deeply_nested_reply_never_discards_other_windows() -> None:
+    """Deep nesting fails its window or yields no items; nothing is raised.
+
+    Whether decoding 100,000 nested arrays raises ``RecursionError`` depends
+    on the Python version, so both outcomes are accepted here.
+    """
+    model = WindowModel({1: text_reply("[" * 100_000 + "]" * 100_000)})
+
+    result = run_model(marked_four_windows(), model)
+
+    assert_that([[], ["extraction: RecursionError; unclassified_failure"]]).contains(
+        result.errors
+    )
+    assert_that(titles_of(result)).contains("Before 1", "After 3")
+
+
+@pytest.mark.parametrize("error", [TypeError, RecursionError, ValueError])
+def test_client_error_in_the_reply_families_fails_its_window(
+    error: type[Exception],
+) -> None:
+    """A client raising a reply-handling exception fails only that window."""
+    model = WindowModel({0: error("client fault")})
 
     result = run_model(marked_four_windows(), model)
 
     assert_that(result.errors).is_equal_to(
-        ["extraction: TypeError; unclassified_failure"]
+        [f"extraction: {error.__name__}; unclassified_failure"]
     )
     assert_that(titles_of(result)).contains("After 3")
+    assert_that(result.unextracted_ranges).is_equal_to([(0, 147_900)])
 
 
 def test_other_exceptions_propagate_as_for_a_single_request() -> None:
