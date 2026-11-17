@@ -10,6 +10,7 @@ from podex.services.discovery import DiscoveredEpisode
 from podex.services.episode_matching import (
     episodes_match,
     group_same_episodes,
+    guid_key,
     title_numbers_conflict,
 )
 
@@ -157,10 +158,8 @@ def test_number_zero_means_no_number() -> None:
             ["Trailer", "Bonus: Live Q&A", "Announcement", "Holiday Special"],
         )
     ]
-    numbered = replace(
-        _episode("Holiday Special", number=12),
-        rss_guid="urn:example:12",
-    )
+    # Another source: two items of one feed with distinct GUIDs never match.
+    numbered = _episode("Holiday Special", number=12, source="spotify")
 
     assert_that(episodes_match(items[0], items[1])).is_false()
     assert_that(group_same_episodes(items)).is_length(4)
@@ -484,3 +483,140 @@ def test_title_similarity_thresholds(
     )
 
     assert_that(episodes_match(first, second)).is_equal_to(expected)
+
+
+@pytest.mark.parametrize(
+    ("guid", "key"),
+    [
+        ("urn:Show:1", "urn:show:1"),
+        ("  URN:SHOW:1\t", "urn:show:1"),
+        ("urn:show:CALF\u00c9", "urn:show:calf\u00c9"),
+        ("   ", None),
+        ("", None),
+        (None, None),
+    ],
+    ids=[
+        "ascii-case",
+        "surrounding-whitespace",
+        "non-ascii-exact",
+        "blank",
+        "empty",
+        "none",
+    ],
+)
+def test_guid_key(guid: str | None, key: str | None) -> None:
+    """GUIDs compare without surrounding whitespace or ASCII letter case."""
+    assert_that(guid_key(guid)).is_equal_to(key)
+
+
+def test_guids_differing_only_in_case_and_spacing_are_one_episode() -> None:
+    """A GUID written in another case or with spaces still identifies the episode."""
+    first = replace(_episode("The Return", number=5), rss_guid="URN:UUID:AB")
+    second = replace(_episode("Retitled", number=6), rss_guid=" urn:uuid:ab ")
+
+    assert_that(episodes_match(first, second)).is_true()
+    assert_that(group_same_episodes([first, second])).is_length(1)
+
+
+def test_distinct_guids_of_one_feed_never_match_by_title() -> None:
+    """Identically titled items a day apart with their own GUIDs stay apart.
+
+    A listing record without a date pairs with one of them only.
+    """
+    briefings = [
+        replace(
+            _episode("Morning Briefing", published_at=_DAY + timedelta(days=day)),
+            rss_guid=f"urn:show:briefing:{day}",
+        )
+        for day in range(4)
+    ]
+    listing = _episode("Morning Briefing", source="podscripts")
+
+    assert_that(episodes_match(briefings[0], briefings[1])).is_false()
+    groups = group_same_episodes([listing, *briefings])
+    assert_that(groups).is_length(4)
+    assert_that(groups[0]).is_equal_to([listing, briefings[0]])
+
+
+def test_distinct_guids_outrank_an_equal_number_and_a_shared_url() -> None:
+    """Two items of one feed with their own GUIDs differ whatever else they share."""
+    first = replace(
+        _episode("The Return", number=5, episode_url=_HOMEPAGE),
+        rss_guid="urn:show:a",
+    )
+    second = replace(
+        _episode("The Return", number=5, episode_url=_HOMEPAGE),
+        rss_guid="urn:show:b",
+    )
+
+    assert_that(episodes_match(first, second)).is_false()
+
+
+def test_distinct_guids_from_records_without_a_source_leave_it_to_the_titles() -> None:
+    """Records without a source are never the same feed; the titles decide."""
+    first = replace(_episode("Morning Briefing", source=None), rss_guid="urn:a")
+    second = replace(_episode("Morning Briefing", source=None), rss_guid="urn:b")
+
+    assert_that(episodes_match(first, second)).is_true()
+
+
+def _seasoned(
+    title: str,
+    season: int | None,
+    number: int,
+    *,
+    source: str | None = "rss",
+) -> DiscoveredEpisode:
+    """Return a record numbered within ``season``."""
+    return replace(_episode(title, number=number, source=source), season_number=season)
+
+
+def test_equal_numbers_in_two_seasons_of_one_feed_differ() -> None:
+    """Season 1 episode 5 and season 2 episode 5 of one feed are two episodes."""
+    first = _seasoned("Opening Night", 1, 5)
+    second = _seasoned("Opening Night", 2, 5)
+
+    assert_that(episodes_match(first, second)).is_false()
+    assert_that(group_same_episodes([first, second])).is_length(2)
+
+
+@pytest.mark.parametrize(
+    ("first_season", "second_season"),
+    [(None, 2), (2, None), (2, 2), (0, 2)],
+    ids=["first-unknown", "second-unknown", "same-season", "season-zero-is-none"],
+)
+def test_an_unknown_season_leaves_the_numbers_comparable(
+    first_season: int | None,
+    second_season: int | None,
+) -> None:
+    """Equal numbers still mean one episode unless both seasons are known and differ."""
+    first = _seasoned("The Return", first_season, 5, source="podscripts")
+    second = _seasoned("Something Else", second_season, 5)
+
+    assert_that(episodes_match(first, second)).is_true()
+
+
+def test_equal_numbers_in_two_seasons_from_two_sources_leave_it_to_the_titles() -> None:
+    """Across sources, differing seasons decide nothing; the titles do."""
+    same_title = (
+        _seasoned("The Return", 1, 5, source="spotify"),
+        _seasoned("The Return", 2, 5),
+    )
+    other_title = (
+        _seasoned("The Return", 1, 5, source="spotify"),
+        _seasoned("A Different Story", 2, 5),
+    )
+
+    assert_that(episodes_match(*same_title)).is_true()
+    assert_that(episodes_match(*other_title)).is_false()
+
+
+def test_a_listing_number_pairs_with_a_seasoned_feed_number_as_before() -> None:
+    """The listing has no season, so an equal number pairs as it did without seasons."""
+    listing = _episode("Opening Night", number=5, source="podscripts")
+    first = _seasoned("Opening Night", 1, 5)
+    second = _seasoned("Opening Night", 2, 5)
+
+    groups = group_same_episodes([listing, first, second])
+
+    assert_that(groups).is_equal_to([[listing, first], [second]])

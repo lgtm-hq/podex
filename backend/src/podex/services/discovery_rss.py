@@ -8,6 +8,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from io import BytesIO
@@ -22,12 +25,106 @@ from podex.services.discovery import (
     published_in_window,
     slugify_podcast_name,
 )
+from podex.services.episode_matching import guid_key
 from podex.services.feed_http import FeedFetcher, FeedHttpClient
 
 if TYPE_CHECKING:
     from podex.models import Podcast
 
 logger = logging.getLogger(__name__)
+
+
+def link_key(link: str | None) -> str | None:
+    """Return the form in which two links are compared, or None for no link.
+
+    Surrounding whitespace, the case of the scheme and host, a trailing slash
+    and the fragment are ignored; the path and query compare exactly. A link
+    that cannot be read as a URL compares as written, without the whitespace.
+
+    Args:
+        link: A link as written in a feed.
+
+    Returns:
+        The comparison key, or None for a missing or blank link.
+    """
+    if link is None or not link.strip():
+        return None
+    try:
+        parts = urlsplit(link.strip())
+    except ValueError:
+        return link.strip()
+    return parts._replace(
+        scheme=parts.scheme.lower(),
+        netloc=parts.netloc.lower(),
+        path=parts.path.rstrip("/"),
+        fragment="",
+    ).geturl()
+
+
+def _repeated(keys: Iterable[str | None]) -> frozenset[str]:
+    """Return the keys that occur more than once, ignoring missing ones."""
+    counts = Counter(key for key in keys if key is not None)
+    return frozenset(key for key, count in counts.items() if count > 1)
+
+
+@dataclass(frozen=True, slots=True)
+class _FeedIdentity:
+    """What tells one feed's items apart, read from the whole feed.
+
+    A link or GUID that several items share, or that is the feed's own site
+    link, names the show rather than an episode, so it is not passed on.
+    """
+
+    site_link: str | None
+    shared_links: frozenset[str]
+    shared_guids: frozenset[str]
+
+    @classmethod
+    def of(cls, feed: Any) -> _FeedIdentity:
+        """Read the site link and the values shared by several items."""
+        entries = feed.entries
+        return cls(
+            site_link=link_key(feed.feed.get("link")),
+            shared_links=_repeated(link_key(entry.get("link")) for entry in entries),
+            shared_guids=_repeated(guid_key(_entry_guid(entry)) for entry in entries),
+        )
+
+    def _names_the_show(self, link: str | None) -> bool:
+        """Return whether a link key is the site link or shared by items."""
+        return link is not None and (
+            link == self.site_link or link in self.shared_links
+        )
+
+    def episode_url(self, link: str | None) -> str | None:
+        """Return the item link, or None when it does not name one item."""
+        return None if self._names_the_show(link_key(link)) else link
+
+    def rss_guid(self, guid: str | None) -> str | None:
+        """Return the item GUID, or None when it does not name one item."""
+        key = guid_key(guid)
+        if key is None or key in self.shared_guids:
+            return None
+        return None if self._names_the_show(link_key(guid)) else guid
+
+
+_NO_FEED_IDENTITY = _FeedIdentity(
+    site_link=None,
+    shared_links=frozenset(),
+    shared_guids=frozenset(),
+)
+
+
+def _entry_guid(entry: Any) -> str | None:
+    """Return the GUID an entry carries, as the feed wrote it."""
+    guid: str | None = entry.get("id") or entry.get("guid")
+    return guid
+
+
+def _whole_number(value: Any) -> int | None:
+    """Return a whole number written in a feed, or None when it is not one."""
+    with contextlib.suppress(ValueError, TypeError):
+        return int(value)
+    return None
 
 
 class RSSDiscovery:
@@ -115,9 +212,10 @@ class RSSDiscovery:
             return []
 
         episodes = []
+        identity = _FeedIdentity.of(feed)
 
         for entry in feed.entries:
-            episode = self._parse_episode(entry)
+            episode = self._parse_episode(entry, identity)
 
             if episode:
                 # Filter by date if specified
@@ -143,8 +241,16 @@ class RSSDiscovery:
             },
         )
 
-    def _parse_episode(self, entry: Any) -> DiscoveredEpisode | None:
-        """Parse an episode from a feed entry."""
+    def _parse_episode(
+        self,
+        entry: Any,
+        identity: _FeedIdentity = _NO_FEED_IDENTITY,
+    ) -> DiscoveredEpisode | None:
+        """Parse an episode from a feed entry.
+
+        The item link and GUID are kept only when they name this item
+        (``identity``); the season is carried with the episode number.
+        """
         title = entry.get("title")
         if not title:
             return None
@@ -169,14 +275,18 @@ class RSSDiscovery:
         episode_number = None
         ep_num = entry.get("itunes_episode")
         if ep_num:
-            with contextlib.suppress(ValueError, TypeError):
-                episode_number = int(ep_num)
+            episode_number = _whole_number(ep_num)
 
-        # Get episode URL
-        episode_url = entry.get("link")
+        # Seasons start at 1; a missing, 0 or unreadable season means none.
+        season_number = _whole_number(entry.get("itunes_season"))
+        if season_number is not None and season_number < 1:
+            season_number = None
 
-        # Get GUID for deduplication
-        rss_guid = entry.get("id") or entry.get("guid")
+        # Get episode URL, unless it is the show's page rather than the item's
+        episode_url = identity.episode_url(entry.get("link"))
+
+        # Get GUID for deduplication, unless other items of the feed share it
+        rss_guid = identity.rss_guid(_entry_guid(entry))
 
         # Get description
         description = entry.get("summary") or entry.get("description")
@@ -201,6 +311,7 @@ class RSSDiscovery:
             description=description,
             episode_url=episode_url,
             thumbnail_url=thumbnail_url,
+            season_number=season_number,
             rss_guid=rss_guid,
             has_transcript=False,  # RSS doesn't include transcripts
             discovery_source=self.name,

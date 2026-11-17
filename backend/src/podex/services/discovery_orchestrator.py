@@ -9,13 +9,13 @@ This module provides the DiscoveryOrchestrator class which:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from podex.config import get_settings
 from podex.models import Episode
@@ -32,7 +32,11 @@ from podex.services.discovery import (
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
-from podex.services.episode_matching import group_same_episodes
+from podex.services.episode_matching import (
+    group_same_episodes,
+    guid_key,
+    known_number,
+)
 from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
@@ -44,6 +48,21 @@ logger = logging.getLogger(__name__)
 def _utc_now() -> datetime:
     """Return the current time in UTC."""
     return datetime.now(UTC)
+
+
+def _guid_candidates_pattern(key: str) -> str:
+    """Return a LIKE pattern that every GUID with comparison key ``key`` meets.
+
+    Matched against the lowercased stored GUID, in SQLite (ASCII lowercasing)
+    and PostgreSQL (Unicode lowercasing) alike: ASCII characters are matched
+    as they are, LIKE's own characters escaped, and any other character by a
+    single-character wildcard. Candidates are then checked with ``guid_key``.
+    """
+    pattern = "".join(
+        (f"\\{char}" if char in "%_\\" else char) if char.isascii() else "_"
+        for char in key
+    )
+    return f"%{pattern}%"
 
 
 class DiscoveryOrchestrator:
@@ -320,12 +339,26 @@ class DiscoveryOrchestrator:
             # Identity precedence is handled above; fill the remaining data fields.
             for record_field in fields(DiscoveredEpisode):
                 name = record_field.name
-                if name in {"title", "has_transcript", "discovery_source"}:
+                if name in {
+                    "title",
+                    "has_transcript",
+                    "discovery_source",
+                    "season_number",
+                }:
                     continue
                 value = getattr(ep, name)
                 if value and not getattr(merged, name):
                     setattr(merged, name, value)
 
+        # A season qualifies the number it came with, never another source's.
+        merged.season_number = next(
+            (
+                ep.season_number
+                for ep in episodes
+                if ep.season_number and ep.episode_number == merged.episode_number
+            ),
+            None,
+        )
         return merged
 
     def _upsert_episodes(
@@ -401,39 +434,113 @@ class DiscoveryOrchestrator:
         podcast: Podcast,
         discovered: DiscoveredEpisode,
     ) -> Episode | None:
-        """Find an existing episode that matches the discovered one."""
-        query = self.session.query(Episode).filter(Episode.podcast_id == podcast.id)
+        """Find an existing episode that matches the discovered one (ADR 0019).
 
+        In order: YouTube id, Spotify URI, feed GUID (by ``guid_key``), URL,
+        episode number (within the record's season when it has one), and, for
+        a record with none of the identifiers or a URL, title and publication
+        time together. Each step runs only when the earlier ones found nothing.
+        """
+        query = self.session.query(Episode).filter(Episode.podcast_id == podcast.id)
+        return next(
+            (ep for ep in self._lookup_steps(query, discovered) if ep is not None),
+            None,
+        )
+
+    def _lookup_steps(
+        self,
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Iterator[Episode | None]:
+        """Yield each lookup step's row, or None, strongest evidence first."""
         # Try matching by source-specific IDs first
         if discovered.youtube_id:
-            ep = query.filter(Episode.youtube_id == discovered.youtube_id).first()
-            if ep:
-                return ep
-
+            yield query.filter(Episode.youtube_id == discovered.youtube_id).first()
         if discovered.spotify_uri:
-            ep = query.filter(Episode.spotify_uri == discovered.spotify_uri).first()
-            if ep:
-                return ep
-
-        if discovered.rss_guid:
-            ep = query.filter(Episode.rss_guid == discovered.rss_guid).first()
-            if ep:
-                return ep
-
+            yield query.filter(Episode.spotify_uri == discovered.spotify_uri).first()
+        if discovered.rss_guid and guid_key(discovered.rss_guid) is not None:
+            yield self._find_by_guid(query, discovered.rss_guid)
         if discovered.episode_url:
-            ep = query.filter(Episode.episode_url == discovered.episode_url).first()
-            if ep:
-                return ep
-
+            yield query.filter(Episode.episode_url == discovered.episode_url).first()
         # Try matching by episode number
         if discovered.episode_number:
-            ep = query.filter(
-                Episode.episode_number == discovered.episode_number
-            ).first()
-            if ep:
-                return ep
+            yield self._find_by_number(query, discovered)
+        if not (
+            discovered.youtube_id
+            or discovered.spotify_uri
+            or guid_key(discovered.rss_guid)
+            or discovered.episode_url
+        ):
+            yield self._find_by_title_and_time(query, discovered)
 
-        return None
+    @staticmethod
+    def _find_by_guid(query: Query[Episode], guid: str) -> Episode | None:
+        """Return the first row whose GUID equals ``guid`` by ``guid_key``.
+
+        An exactly equal GUID is preferred; otherwise a GUID differing only
+        in surrounding whitespace or ASCII letter case matches.
+        """
+        ep = query.filter(Episode.rss_guid == guid).first()
+        if ep:
+            return ep
+        key = guid_key(guid)
+        candidates = query.filter(
+            func.lower(Episode.rss_guid).like(
+                _guid_candidates_pattern(key or ""),
+                escape="\\",
+            ),
+        )
+        return next(
+            (row for row in candidates if guid_key(row.rss_guid) == key),
+            None,
+        )
+
+    @staticmethod
+    def _find_by_number(
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Episode | None:
+        """Return the first row with the record's number, in a compatible season.
+
+        A record with a season matches a row of the same season first, then a
+        row without a season; never a row of another season. A record without
+        a season matches any row with the number.
+        """
+        numbered = query.filter(Episode.episode_number == discovered.episode_number)
+        season = known_number(discovered.season_number)
+        if season is None:
+            return numbered.first()
+        return (
+            numbered.filter(Episode.season_number == season).first()
+            or numbered.filter(Episode.season_number.is_(None)).first()
+        )
+
+    @staticmethod
+    def _find_by_title_and_time(
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Episode | None:
+        """Return the first row with the record's exact title and publication time.
+
+        Used only for a record that carries no identifier and no URL, such as
+        a feed item whose link and GUID name the show rather than the item.
+        """
+        if discovered.published_at is None:
+            return None
+        published_at = as_utc(discovered.published_at)
+        candidates = query.filter(
+            Episode.title == discovered.title,
+            Episode.published_at.is_not(None),
+        )
+        return next(
+            (
+                row
+                for row in candidates
+                if row.published_at is not None
+                and as_utc(row.published_at) == published_at
+            ),
+            None,
+        )
 
     def _create_episode(
         self,
@@ -445,6 +552,7 @@ class DiscoveryOrchestrator:
             podcast_id=podcast.id,
             title=discovered.title,
             episode_number=discovered.episode_number,
+            season_number=known_number(discovered.season_number),
             youtube_id=discovered.youtube_id,
             published_at=discovered.published_at,
             duration_seconds=discovered.duration_seconds,
