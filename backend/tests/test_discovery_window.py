@@ -264,13 +264,19 @@ def test_failed_page_clears_an_existing_walk_record(
     assert_that(_walked_at(podcast)).is_equal_to(_NOW)
 
 
+@pytest.mark.parametrize(
+    "walked_at",
+    [None, _NOW - _INTERVAL],
+    ids=["no-record", "record-due-for-a-full-walk"],
+)
 def test_walk_is_not_recorded_when_storing_its_episodes_fails(
     db_session: Session,
     orchestrator: DiscoveryOrchestrator,
     monkeypatch: pytest.MonkeyPatch,
+    walked_at: datetime | None,
 ) -> None:
-    """A complete walk whose episodes were not all stored is not recorded."""
-    podcast = _podcast(db_session)
+    """A complete walk whose episodes were not all stored leaves no record."""
+    podcast = _podcast(db_session, walked_at=walked_at)
 
     def refuse(
         self: DiscoveryOrchestrator,
