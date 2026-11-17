@@ -485,3 +485,92 @@ def test_sync_update_never_sends_a_rejected_vector(
     assert_that(pending.created_count).is_equal_to(3)
     assert_that(results[0].created_count).is_zero()
     _assert_only_middle_failed(postgres, results, sent, error)
+
+
+@dataclass(slots=True)
+class FailingReembedProvider:
+    """Second-model provider that fails: it raises, or declares ``dimensions``."""
+
+    dimensions: Any
+    error: Exception | None
+    model_name: str = "failing-embedding-v2"
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Raise ``error``, or return storable vectors."""
+        if self.error is not None:
+            raise self.error
+        return [_quarter_vector(index) for index, _text in enumerate(texts)]
+
+
+# A provider error, and a declared dimension the int4 column cannot hold.
+_REEMBED_FAILURES: dict[str, tuple[FailingReembedProvider, str, int | None]] = {
+    "provider-error": (
+        FailingReembedProvider(dimensions=DIMENSIONS, error=OSError("unreachable")),
+        "embedding: OSError; request_failed",
+        DIMENSIONS,
+    ),
+    "int4-overflow-dimension": (
+        FailingReembedProvider(dimensions=2**31, error=None),
+        _DIMENSIONS_MISMATCH,
+        None,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    ("provider", "error", "dimensions"),
+    _REEMBED_FAILURES.values(),
+    ids=_REEMBED_FAILURES.keys(),
+)
+def test_failed_reembed_stores_null_vector_under_the_new_model(
+    postgres: PostgresDatabase,
+    provider: FailingReembedProvider,
+    error: str,
+    dimensions: int | None,
+) -> None:
+    """A failed re-embed commits FAILED rows whose vector is SQL NULL."""
+    words = " ".join(f"word{index}" for index in range(6))
+    policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
+    with postgres.sessions() as db:
+        transcript = _add_transcript(db, slug="failed-reembed", text_value=words)
+        sync_semantic_chunks_for_transcript(
+            db=db,
+            transcript=transcript,
+            embedding_provider=FullDimensionEmbeddingProvider(),
+            policy=policy,
+        )
+        db.commit()
+        result = sync_semantic_chunks_for_transcript(
+            db=db,
+            transcript=transcript,
+            embedding_provider=provider,
+            policy=policy,
+        )
+        db.commit()
+
+    with postgres.sessions() as db:
+        rows = db.execute(
+            select(
+                SemanticChunk.embedding_status,
+                SemanticChunk.embedding_model,
+                SemanticChunk.embedding_dimensions,
+                SemanticChunk.embedding_error,
+                SemanticChunk.embedding_vector.is_(None).label("vector_is_null"),
+                SemanticChunk.embedded_at,
+            ).order_by(SemanticChunk.chunk_index),
+        ).all()
+
+    assert_that(result.failed_count).is_equal_to(2)
+    assert_that([tuple(row) for row in rows]).is_equal_to(
+        [
+            (
+                SemanticChunkEmbeddingStatus.FAILED.value,
+                "failing-embedding-v2",
+                dimensions,
+                error,
+                True,
+                None,
+            ),
+        ]
+        * 2,
+    )

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import struct
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum, auto
@@ -23,6 +24,46 @@ if TYPE_CHECKING:
 
 EMBEDDING_DIMENSIONS = 1536
 """Dimension of the ``semantic_chunks.embedding_vector`` column (migration 0010)."""
+
+FLOAT32_MAX: float = struct.unpack("<f", b"\xff\xff\x7f\x7f")[0]
+"""Largest finite float32. pgvector stores each element as a 4-byte float and
+refuses NaN, infinity and any value that overflows it."""
+
+
+def storable_vector(value: object) -> list[float]:
+    """Return ``value`` as floats if pgvector would store every element.
+
+    The check applies on every dialect, so SQLite (which keeps the vector as
+    text) refuses what PostgreSQL refuses. The length is not checked here; the
+    database reports a vector of another dimension.
+
+    Args:
+        value: Embedding vector to bind.
+
+    Returns:
+        The elements as floats.
+
+    Raises:
+        TypeError: If ``value`` is not a list or tuple, or an element is not an
+            ``int`` or ``float`` (``bool``, strings and ``None`` included).
+        ValueError: If an element is NaN, infinite or outside float32.
+    """
+    if not isinstance(value, list | tuple):
+        raise TypeError(
+            f"embedding vector must be a list or tuple, got {type(value).__name__}",
+        )
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, int | float):
+            raise TypeError(
+                f"embedding vector element {index} must be an int or float, "
+                f"got {type(item).__name__}",
+            )
+        # NaN fails both comparisons, so it is refused with the infinities.
+        if not -FLOAT32_MAX <= item <= FLOAT32_MAX:
+            raise ValueError(
+                f"embedding vector element {index} must be finite in float32",
+            )
+    return [float(item) for item in value]
 
 
 def _checked_dimensions(dimensions: object) -> int:
@@ -131,10 +172,14 @@ class PgVectorType(TypeDecorator[list[float] | None]):
 
         Returns:
             Serialized vector value accepted by pgvector and SQLite text columns.
+
+        Raises:
+            TypeError: If ``value`` or an element has a type pgvector refuses.
+            ValueError: If an element is not finite in float32.
         """
         if value is None:
             return None
-        return json.dumps([float(item) for item in value], separators=(",", ":"))
+        return json.dumps(storable_vector(value), separators=(",", ":"))
 
     def process_result_value(
         self,
@@ -198,7 +243,13 @@ class SemanticChunkEmbeddingStatus(StrEnum):
 
 
 class SemanticChunk(Base):
-    """Transcript window persisted as a durable semantic derivative."""
+    """Transcript window persisted as a durable semantic derivative.
+
+    ``embedding_vector`` and ``embedded_at`` are set only while the status is
+    ``embedded``, and then ``embedding_model`` names the model that produced
+    the vector. A ``failed`` chunk has neither; its model and dimensions are
+    those of the failed attempt (dimensions null when not a storable integer).
+    """
 
     __tablename__ = "semantic_chunks"
     __table_args__ = (
