@@ -255,6 +255,34 @@ def test_since_stops_at_the_first_older_episode(sdk: _Sdk) -> None:
     assert_that(client.episode_calls).is_length(1)
 
 
+def test_since_keeps_same_day_episodes_dated_at_the_cut_off(sdk: _Sdk) -> None:
+    """The window is at or after ``since``: day-granular siblings on it are kept."""
+    client = _PagedSpotify(
+        [
+            _page(
+                [
+                    _episode(3, "2026-03-01"),
+                    _episode(2, "2026-02-01"),
+                    _episode(1, "2026-02-01"),
+                    _episode(0, "2026-01-31"),
+                ],
+                more=True,
+            ),
+            _page([_episode(-1, "2026-01-01")], more=False),
+        ],
+    )
+
+    episodes = sdk.install(client).discover_episodes(
+        _podcast(),
+        since=datetime(2026, 2, 1, tzinfo=UTC),
+    )
+
+    assert_that([episode.title for episode in episodes]).is_equal_to(
+        ["Episode 3", "Episode 2", "Episode 1"],
+    )
+    assert_that(client.episode_calls).is_length(1)
+
+
 def test_since_keeps_undated_episodes(sdk: _Sdk) -> None:
     """Episodes without a release date are never treated as older than ``since``."""
     undated = _episode(1)
