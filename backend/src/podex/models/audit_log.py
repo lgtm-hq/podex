@@ -50,7 +50,7 @@ class AuditLog(Base):
     action: "Mapped[str]" = mapped_column(String(64), index=True)
     resource_type: "Mapped[str]" = mapped_column(String(64), index=True)
     resource_id: "Mapped[int | None]" = mapped_column(index=True)
-    resource_identifier: "Mapped[str | None]" = mapped_column(String(120))
+    resource_identifier: "Mapped[str | None]" = mapped_column(String(255))
     actor_name: "Mapped[str | None]" = mapped_column(String(100))
     summary: "Mapped[str]" = mapped_column(Text)
     metadata_json: "Mapped[dict[str, Any] | None]" = mapped_column(JSON)
