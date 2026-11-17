@@ -1,6 +1,6 @@
 """Tests for the RSS/Spotify discovery providers and orchestrator flows."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import httpx
@@ -124,6 +124,25 @@ def test_rss_discover_episodes_parses_entries(db_session: Session) -> None:
         datetime(2026, 1, 3, 10, 0, tzinfo=UTC),
     )
     assert_that(episodes[1].duration_seconds).is_equal_to(3600)
+
+
+def test_rss_since_excludes_an_episode_dated_at_the_cut_off() -> None:
+    """The RSS window is strictly after ``since``; undated entries are kept."""
+    stub = Podcast(
+        name="Example Show", slug="example-show", rss_url="https://feeds.example/show"
+    )
+    pilot_date = datetime(2026, 1, 3, 10, 0, tzinfo=UTC)
+
+    at_cut_off = _rss_with_feed().discover_episodes(stub, since=pilot_date)
+    before_cut_off = _rss_with_feed().discover_episodes(
+        stub,
+        since=pilot_date - timedelta(seconds=1),
+    )
+
+    assert_that([episode.title for episode in at_cut_off]).is_equal_to(["Untimed"])
+    assert_that([episode.title for episode in before_cut_off]).is_equal_to(
+        ["Pilot", "Untimed"],
+    )
 
 
 def test_rss_duration_and_slug_helpers() -> None:

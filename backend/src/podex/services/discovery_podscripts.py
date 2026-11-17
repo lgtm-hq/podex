@@ -9,6 +9,8 @@ from __future__ import annotations
 import logging
 import re
 import time
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -18,6 +20,7 @@ from bs4 import BeautifulSoup, Tag
 from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveredPodcast,
+    KnownEpisodes,
 )
 from podex.services.failure_descriptors import describe_failure, log_failure
 from podex.services.podscripts_client import (
@@ -31,6 +34,9 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+MAX_LISTING_PAGES = 200
+"""Most listing pages one discovery run requests for one podcast."""
 
 
 def _html_attr_to_str(value: object) -> str:
@@ -50,6 +56,37 @@ def _episode_link_title(*, href: str, link_text: str) -> tuple[int | None, str]:
             title or match.group(2).replace("-", " ").title(),
         )
     return None, title or slug.replace("-", " ").title()
+
+
+@dataclass(slots=True)
+class _ListingOrder:
+    """Track whether the episode numbers read so far run newest first.
+
+    Listing pages carry no publication dates, so the episode numbers in the
+    links are the only evidence of order. The order counts as newest first
+    only once numbers have been seen falling and never rising.
+    """
+
+    previous: int | None = None
+    falling: bool = False
+    rising: bool = False
+
+    def observe(self, episodes: Iterable[DiscoveredEpisode]) -> None:
+        """Fold the numbers of ``episodes``, in listing order, into the evidence."""
+        for episode in episodes:
+            number = episode.episode_number
+            if number is None:
+                continue
+            if self.previous is not None and number < self.previous:
+                self.falling = True
+            elif self.previous is not None and number > self.previous:
+                self.rising = True
+            self.previous = number
+
+    @property
+    def newest_first(self) -> bool:
+        """Return whether the listing is shown to be newest first."""
+        return self.falling and not self.rising
 
 
 class PodscriptsDiscovery:
@@ -141,41 +178,73 @@ class PodscriptsDiscovery:
         self,
         podcast: Podcast,
         since: datetime | None = None,
+        *,
+        known: KnownEpisodes | None = None,
     ) -> list[DiscoveredEpisode]:
         """Discover episodes for a podcast from podscripts.co.
 
         All discovered episodes have has_transcript=True since
         podscripts.co only lists episodes with transcripts.
 
+        Listing pages carry no publication dates, so this provider cannot
+        apply ``since`` itself; the caller applies it once a date is known.
+        Paging instead stops at the first page whose episodes are all
+        ``known``, provided the listing is shown to be newest first. When the
+        order cannot be shown, every page is read, up to
+        ``MAX_LISTING_PAGES``.
+
         Args:
             podcast: The podcast to discover episodes for
-            since: Only discover episodes published after this date
+            since: Only discover episodes published after this date. Unused
+                here: listing pages carry no dates.
+            known: Episodes the catalog already holds for this podcast.
 
         Returns:
             List of discovered episodes
         """
+        del since  # Listing pages carry no dates; the caller filters by date.
         if not podcast.podscripts_slug:
             logger.warning("Podcast %s has no podscripts_slug", podcast.slug)
             return []
 
-        episodes = []
-        page = 1
-        max_pages = 200  # Safety limit
+        if known is None:
+            known = KnownEpisodes()
+        order = _ListingOrder()
+        episodes: list[DiscoveredEpisode] = []
 
-        while page <= max_pages:
+        for page in range(1, MAX_LISTING_PAGES + 1):
             page_episodes = self._fetch_episode_page(podcast.podscripts_slug, page)
 
             if not page_episodes:
                 break
 
-            # Filter by date if specified
-            if since:
-                # Since we don't have exact dates from the list page,
-                # we'll include all episodes and let the caller filter
-                pass
-
             episodes.extend(page_episodes)
-            page += 1
+            order.observe(page_episodes)
+
+            if known.is_empty or not all(map(known.includes, page_episodes)):
+                continue
+            if order.newest_first:
+                logger.info(
+                    "Stopped podscripts.co listing for %s at page %s: "
+                    "every episode on it is already known",
+                    podcast.podscripts_slug,
+                    page,
+                )
+                break
+        else:
+            logger.warning(
+                "Stopped podscripts.co listing for %s at the %s-page limit "
+                "before the listing ended",
+                podcast.podscripts_slug,
+                MAX_LISTING_PAGES,
+            )
+
+        if not known.is_empty and not order.newest_first:
+            logger.info(
+                "Read podscripts.co listing for %s without stopping early: "
+                "its order is not shown to be newest first",
+                podcast.podscripts_slug,
+            )
 
         logger.info("Discovered %s episodes from podscripts.co", len(episodes))
         return episodes

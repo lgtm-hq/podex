@@ -14,6 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from rapidfuzz import fuzz
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import Episode
@@ -21,6 +22,8 @@ from podex.services.discovery import (
     DiscoveredEpisode,
     DiscoveryProvider,
     DiscoveryResult,
+    KnownEpisodes,
+    published_after,
 )
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
@@ -55,6 +58,9 @@ class DiscoveryOrchestrator:
     ) -> DiscoveryResult:
         """Discover new episodes for a podcast from all configured sources.
 
+        Episodes dated at or before ``since`` are dropped once their date is
+        known, from any source or from the matching catalog episode.
+
         Args:
             podcast: The podcast to discover episodes for
             since: Only discover episodes published after this date
@@ -69,7 +75,14 @@ class DiscoveryOrchestrator:
         if podcast.podscripts_slug:
             try:
                 source = self._sources["podscripts"]
-                eps = source.discover_episodes(podcast, since=since)
+                if isinstance(source, PodscriptsDiscovery):
+                    eps = source.discover_episodes(
+                        podcast,
+                        since=since,
+                        known=self._known_episodes(podcast),
+                    )
+                else:
+                    eps = source.discover_episodes(podcast, since=since)
                 logger.info("Discovered %s episodes from podscripts.co", len(eps))
                 discovered.extend(eps)
             # Keep other providers and tasks running after this failure.
@@ -108,6 +121,13 @@ class DiscoveryOrchestrator:
         # Deduplicate and merge
         merged = self._deduplicate_episodes(discovered)
         logger.info("After deduplication: %s unique episodes", len(merged))
+        if since is not None:
+            merged = [
+                episode
+                for episode in merged
+                if self._within_window(podcast, episode, since)
+            ]
+            logger.info("Inside the requested window: %s episodes", len(merged))
 
         # Create/update episode records
         new_count, updated_count = self._upsert_episodes(podcast, merged)
@@ -119,6 +139,36 @@ class DiscoveryOrchestrator:
             errors=errors,
             discovered_episodes=merged,
         )
+
+    def _known_episodes(self, podcast: Podcast) -> KnownEpisodes:
+        """Return the identifiers of the catalog's episodes for ``podcast``."""
+        rows = self.session.execute(
+            select(Episode.episode_url, Episode.episode_number).where(
+                Episode.podcast_id == podcast.id,
+            ),
+        ).all()
+        return KnownEpisodes(
+            episode_urls=frozenset(url for url, _ in rows if url),
+            episode_numbers=frozenset(number for _, number in rows if number),
+        )
+
+    def _within_window(
+        self,
+        podcast: Podcast,
+        discovered: DiscoveredEpisode,
+        since: datetime,
+    ) -> bool:
+        """Return whether an episode is published after ``since``.
+
+        An undated discovery takes the date of the catalog episode it matches;
+        one with no date anywhere is kept.
+        """
+        published_at = discovered.published_at
+        if published_at is None:
+            existing = self._find_existing_episode(podcast, discovered)
+            published_at = existing.published_at if existing else None
+        inside: bool = published_after(published_at, since)
+        return inside
 
     def _deduplicate_episodes(
         self,
