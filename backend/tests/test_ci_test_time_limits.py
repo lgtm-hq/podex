@@ -59,3 +59,14 @@ def test_faulthandler_dumps_before_any_job_limit() -> None:
     assert_that(timeout).is_greater_than(0)
     for minutes in (*REUSABLE_LIMITS.values(), *DIRECT_LIMITS.values()):
         assert_that(timeout).is_less_than(minutes * 60)
+
+
+def test_a_stuck_test_is_reported_not_stopped_by_pytest() -> None:
+    """The stack dump only prints; no per-test limit ends a test."""
+    pyproject = tomllib.loads(
+        (REPO_ROOT / "backend/pyproject.toml").read_text(encoding="utf-8"),
+    )
+    options = pyproject["tool"]["pytest"]["ini_options"]
+
+    assert_that(options.get("faulthandler_exit_on_timeout", False)).is_false()
+    assert_that(options).does_not_contain_key("timeout")

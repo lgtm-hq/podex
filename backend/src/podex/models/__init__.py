@@ -47,6 +47,7 @@ from podex.models.mention_candidate_provenance import (
     MentionCandidateProvenance,
     MentionCandidateProvenanceEventType,
 )
+from podex.models.model_name import exact_str, is_storable_model_name
 from podex.models.podcast import Podcast, PodcastStatus
 from podex.models.review_item import ReviewItem, ReviewItemStatus, ReviewPriority
 from podex.models.scheduled_work import (
@@ -58,8 +59,6 @@ from podex.models.semantic_chunk import (
     EMBEDDING_DIMENSIONS,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
-    exact_str,
-    is_storable_model_name,
 )
 
 # Importing the guard installs its flush events on every session.

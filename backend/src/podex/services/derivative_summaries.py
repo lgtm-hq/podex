@@ -19,12 +19,15 @@ from podex.models import (
     Mention,
     SemanticChunk,
     Transcript,
+    exact_str,
+    is_storable_model_name,
 )
 from podex.services.content_suppression import (
     authorize_episode_text,
     authorize_media_summary_text,
     summary_source_mentions,
 )
+from podex.services.failure_codes import FailureReason, PipelineFailure
 from podex.services.field_normalization import (
     normalize_optional as _normalize_optional,
 )
@@ -59,7 +62,11 @@ class GeneratedSummaryData:
 
 
 class SummaryProvider(Protocol):
-    """Port implemented by LLM or deterministic summary generators."""
+    """Port implemented by LLM or deterministic summary generators.
+
+    ``model_name`` must pass ``is_storable_model_name`` as an exact ``str``, or
+    the provider is never called (``summary_invalid_model_name``).
+    """
 
     model_name: str
 
@@ -88,6 +95,7 @@ def generate_episode_summary(
     pipeline_version: str,
     prompt_version: str,
     generated_at: datetime | None = None,
+    model_name: str | None = None,
 ) -> EpisodeSummary:
     """Generate and persist an episode summary.
 
@@ -99,6 +107,9 @@ def generate_episode_summary(
         pipeline_version: Derivative pipeline version.
         prompt_version: Summary prompt version.
         generated_at: Optional generation timestamp.
+        model_name: The provider's model name, already read by the caller.
+            When given it is checked and stored and the provider's own
+            ``model_name`` is not read; otherwise it is read here once.
 
     Returns:
         Persisted episode summary.
@@ -107,8 +118,11 @@ def generate_episode_summary(
         ContentSuppressedError: If an approved takedown suppresses the
             episode's derivatives; the provider is not called. The check
             holds the takedown lock until this transaction ends.
+        PipelineFailure: ``summary_invalid_model_name`` if the provider's
+            model name cannot be stored; the provider is not called.
     """
     authorize_episode_text(db=db, episode_ids=[episode.id])
+    source_model = _resolved_model_name(provider=provider, model_name=model_name)
     source = build_episode_summary_source(db=db, episode=episode)
     generated = provider.summarize(source)
     return upsert_episode_summary(
@@ -117,7 +131,7 @@ def generate_episode_summary(
         summary_kind=summary_kind,
         pipeline_version=pipeline_version,
         prompt_version=prompt_version,
-        source_model=provider.model_name,
+        source_model=source_model,
         source_text_hash=source.source_text_hash,
         summary_text=generated.summary_text,
         short_summary=generated.short_summary,
@@ -142,6 +156,7 @@ def generate_media_summary(
     pipeline_version: str,
     prompt_version: str,
     generated_at: datetime | None = None,
+    model_name: str | None = None,
 ) -> MediaSummary:
     """Generate and persist a media summary.
 
@@ -153,6 +168,9 @@ def generate_media_summary(
         pipeline_version: Derivative pipeline version.
         prompt_version: Summary prompt version.
         generated_at: Optional generation timestamp.
+        model_name: The provider's model name, already read by the caller.
+            When given it is checked and stored and the provider's own
+            ``model_name`` is not read; otherwise it is read here once.
 
     Returns:
         Persisted media summary.
@@ -161,9 +179,12 @@ def generate_media_summary(
     locked before the source is read, and stay locked until this transaction
     ends, so no takedown of that text commits while it is with the provider.
     Mentions of episodes whose mentions or derivatives are suppressed are left
-    out of the source.
+    out of the source. A provider whose model name cannot be stored is refused
+    with ``summary_invalid_model_name`` (a ``PipelineFailure``) before it is
+    called.
     """
     authorize_media_summary_text(db=db, media_id=media.id)
+    source_model = _resolved_model_name(provider=provider, model_name=model_name)
     source = build_media_summary_source(db=db, media=media)
     generated = provider.summarize(source)
     return upsert_media_summary(
@@ -172,7 +193,7 @@ def generate_media_summary(
         summary_kind=summary_kind,
         pipeline_version=pipeline_version,
         prompt_version=prompt_version,
-        source_model=provider.model_name,
+        source_model=source_model,
         source_text_hash=source.source_text_hash,
         summary_text=generated.summary_text,
         short_summary=generated.short_summary,
@@ -184,6 +205,62 @@ def generate_media_summary(
         },
         generated_at=generated_at,
     )
+
+
+def summary_model_name(provider: SummaryProvider) -> str:
+    """Return the provider's model name if every model-name column can store it.
+
+    Call this after authorising the text and before the provider is called.
+    Reading the name runs the provider's own code; whatever that raises
+    (including while reading the name as an exact ``str``) propagates
+    unchanged, as a failing ``summarize`` call does.
+
+    Args:
+        provider: Summary provider about to be called.
+
+    Returns:
+        The name as an exact ``str``.
+
+    Raises:
+        PipelineFailure: ``summary_invalid_model_name`` if the name is not a
+            string ``is_storable_model_name`` accepts. The message never
+            carries the name.
+    """
+    return _checked_model_name(provider.model_name)
+
+
+def _checked_model_name(value: object) -> str:
+    """Return ``value`` as an exact ``str`` if every model-name column can store it.
+
+    Args:
+        value: A summary provider's model name.
+
+    Returns:
+        The name as an exact ``str``.
+
+    Raises:
+        PipelineFailure: ``summary_invalid_model_name`` if ``value`` is not a
+            string ``is_storable_model_name`` accepts. The message never
+            carries the name.
+    """
+    model_name: str | None = exact_str(value)
+    if model_name is not None and is_storable_model_name(model_name):
+        return model_name
+    raise PipelineFailure(
+        "summary provider model name cannot be stored",
+        reason=FailureReason.SUMMARY_INVALID_MODEL_NAME,
+    )
+
+
+def _resolved_model_name(
+    *,
+    provider: SummaryProvider,
+    model_name: str | None,
+) -> str:
+    """Check a name the caller already read, or read the provider's once."""
+    if model_name is None:
+        return summary_model_name(provider)
+    return _checked_model_name(model_name)
 
 
 # Keep the existing named command inputs compatible with callers.
