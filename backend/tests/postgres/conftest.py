@@ -164,13 +164,18 @@ def _owned_database(
                 drop_database(admin, name)
 
 
-def _migrate(url: URL) -> None:
-    """Run the Alembic chain to head against ``url``."""
+def alembic_config(url: URL) -> Config:
+    """Return an Alembic configuration bound to the database at ``url``."""
     config = Config(str(ALEMBIC_INI))
     rendered = url.render_as_string(hide_password=False)
     # ConfigParser interpolation treats ``%`` specially; escape it.
     config.set_main_option("sqlalchemy.url", rendered.replace("%", "%%"))
-    upgrade(config, "head")
+    return config
+
+
+def _migrate(url: URL) -> None:
+    """Run the Alembic chain to head against ``url``."""
+    upgrade(alembic_config(url), "head")
 
 
 @contextmanager
