@@ -1251,7 +1251,7 @@ wheels = [
 
 [[package]]
 name = "lintro"
-version = "0.181.6"
+version = "0.181.7"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1267,9 +1267,9 @@ dependencies = [
     { name = "tabulate" },
     { name = "watchdog" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d0/bf/19019cb1ad91aa1c04100a6608b2fce38598a93549008eb0bab157ac67dc/lintro-0.181.6.tar.gz", hash = "sha256:bd204bb0e10fe5f701f69570aa7e8ee0246fbe5f9b96ee8772c04af1bc4041e7", size = 3378288, upload-time = "2026-11-17T11:41:59.575Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/65/435b47309ff222a3e210e1affa487c161b0f19f2e21b5f2b4b59a030243d/lintro-0.181.7.tar.gz", hash = "sha256:c8d36f3b666e5317a5f84283b5ce79840aca82725ed3135a248f71f8971ed61c", size = 3381279, upload-time = "2026-11-17T13:11:25.76Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8b/13/92b9a16ff787991eef576ce44e925d6fa29d1c24b82d65307a6ece47e59f/lintro-0.181.6-py3-none-any.whl", hash = "sha256:4863216053d7004ed2dfc73e173d564c353c193e2860bfe03a8367870c956331", size = 2380163, upload-time = "2026-11-17T11:41:57.293Z" },
+    { url = "https://files.pythonhosted.org/packages/bc/4d/e2663e65d9fe10b1000c2a954feb3a64009ad3f6d7afe68d0469b6e8bbfd/lintro-0.181.7-py3-none-any.whl", hash = "sha256:4b78ad6d3f19b3fe872baa1a45a4f5004a2e43acfc59b0c4e13fc6e1369037de", size = 2382396, upload-time = "2026-11-17T13:11:23.398Z" },
 ]
 
 [[package]]
@@ -1633,7 +1633,7 @@ wheels = [
 
 [[package]]
 name = "podex"
-version = "0.41.50"
+version = "0.41.51"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
@@ -1700,7 +1700,7 @@ dev = [
     { name = "assertpy", specifier = ">=1.1" },
     { name = "fakeredis", extras = ["lua"], specifier = ">=2.26" },
     { name = "httpx", specifier = ">=0.28" },
-    { name = "lintro", specifier = "==0.181.6" },
+    { name = "lintro", specifier = "==0.181.7" },
     { name = "mypy", specifier = ">=1.14" },
     { name = "pylint", specifier = "==4.1.4" },
     { name = "pytest", specifier = ">=8.0" },

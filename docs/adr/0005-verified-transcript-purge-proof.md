@@ -1,6 +1,6 @@
 # 0005. Transcript purge proof identifies a verified source
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-14
 - Tags: retention, transcripts, storage
 

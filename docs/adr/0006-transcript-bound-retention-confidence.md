@@ -1,6 +1,6 @@
 # 0006. Retention confidence comes from the transcript's own extraction
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-14
 - Tags: retention, extraction, transcripts
 
