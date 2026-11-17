@@ -23,6 +23,7 @@ the changelog record _what_ changed.
 | [0013](./0013-safe-first-use-setting-failures.md)       | First-use setting failures carry no configured value            | proposed | 2026-11-16 |
 | [0014](./0014-partial-transcript-cleanup-keeps-tail.md) | Partial transcript cleanup keeps the uncleaned tail             | proposed | 2026-11-16 |
 | [0015](./0015-durable-takedown-suppression.md)          | Takedowns leave a durable suppression checked on every write    | proposed | 2026-11-16 |
+| [0016](./0016-suppression-identity-changes.md)          | Suppressions survive episode moves and subject deletes          | proposed | 2026-11-17 |
 
 ## Format
 

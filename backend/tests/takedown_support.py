@@ -78,6 +78,31 @@ def submit_takedown(
     return request
 
 
+def execute_takedown(
+    db: Session,
+    *,
+    subject_type: TakedownSubjectType,
+    subject_id: int,
+    actions: list[str],
+) -> TakedownExecutionResultData:
+    """Approve and execute a takedown without committing.
+
+    Returns:
+        The execution result.
+    """
+    request = submit_takedown(
+        db,
+        subject_type=subject_type,
+        subject_id=subject_id,
+        actions=actions,
+    )
+    return execute_approved_takedown_request(
+        db=db,
+        request=request,
+        artifact_store=None,
+    )
+
+
 def approve_takedown(
     db: Session,
     *,
@@ -90,16 +115,11 @@ def approve_takedown(
     Returns:
         The execution result.
     """
-    request = submit_takedown(
+    result = execute_takedown(
         db,
         subject_type=subject_type,
         subject_id=subject_id,
         actions=actions,
-    )
-    result = execute_approved_takedown_request(
-        db=db,
-        request=request,
-        artifact_store=None,
     )
     db.commit()
     return result

@@ -9,6 +9,12 @@ sqlalchemy as sa``, ``from ..models import Mention``) are followed, and a
 table named by string
 (``table("mentions")``, ``metadata.tables["mentions"]``) counts as the model.
 
+Identity rows are scanned the same way for the writes the guard handles
+(ADR 0016): an ``Episode`` update (it could move the episode to another
+podcast without carrying its podcast's suppressions) and an ``Episode`` or
+``Podcast`` delete (it would skip the refusal). Inserts of either, and
+``Podcast`` updates, cannot lift a suppression and are not reported.
+
 What it cannot see: a write built dynamically (a model or table chosen at
 run time, SQL assembled from variables), a write through a helper defined in
 another package, and code outside ``backend/src``, ``backend/scripts`` and
@@ -19,11 +25,12 @@ another package, and code outside ``backend/src``, ``backend/scripts`` and
 import ast
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import pytest
 from assertpy import assert_that
 
-from podex.models import GUARDED_MODELS
+from podex.models import GUARDED_MODELS, Episode, Podcast
 
 _BACKEND = Path(__file__).resolve().parent.parent
 _SCANNED = ("src", "scripts", "alembic")
@@ -34,14 +41,27 @@ _EXEMPT = {
     ),
     "alembic/versions": "migrations change schema and backfill suppression rows",
 }
-_GUARDED_NAMES = frozenset(model.__name__ for model in GUARDED_MODELS)
-_GUARDED_TABLES = frozenset(model.__table__.name for model in GUARDED_MODELS)
 _CORE_WRITES = frozenset({"insert", "update", "delete"})
+# The models each write verb must reach through the flush: every guarded
+# model, plus the identity rows whose update or delete the guard handles.
+_MODELS_BY_VERB: dict[str, tuple[type[Any], ...]] = {
+    "insert": GUARDED_MODELS,
+    "update": (*GUARDED_MODELS, Episode),
+    "delete": (*GUARDED_MODELS, Episode, Podcast),
+}
+_NAMES_BY_VERB = {
+    verb: frozenset(model.__name__ for model in models)
+    for verb, models in _MODELS_BY_VERB.items()
+}
+_TABLES_BY_VERB = {
+    verb: frozenset(model.__table__.name for model in models)
+    for verb, models in _MODELS_BY_VERB.items()
+}
 _BULK_METHODS = frozenset(
     {"bulk_save_objects", "bulk_insert_mappings", "bulk_update_mappings"},
 )
 _TABLE_FACTORIES = frozenset({"table", "Table"})
-_SQL_VERBS = ("insert into ", "update ", "delete from ")
+_SQL_VERBS = {"insert into ": "insert", "update ": "update", "delete from ": "delete"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,14 +121,16 @@ def _is_core_write(module: _Module, func: ast.expr) -> str | None:
     return None
 
 
-def _guarded(module: _Module, node: ast.expr) -> str | None:
-    """Return the guarded model or table a statement argument names, if any."""
+def _guarded(module: _Module, node: ast.expr, verb: str) -> str | None:
+    """Return the model or table a ``verb`` must not bypass the flush for."""
+    names = _NAMES_BY_VERB[verb]
+    tables = _TABLES_BY_VERB[verb]
     if isinstance(node, ast.Attribute) and node.attr == "__table__":
-        return _guarded(module, node.value)
+        return _guarded(module, node.value, verb)
     origin = module.qualified(node)
     if origin is not None:
         name = origin.rsplit(".", 1)[-1]
-        if name in _GUARDED_NAMES and (origin == name or origin.startswith("podex")):
+        if name in names and (origin == name or origin.startswith("podex")):
             return name
     if isinstance(node, ast.Call):
         factory = module.qualified(node.func)
@@ -117,19 +139,19 @@ def _guarded(module: _Module, node: ast.expr) -> str | None:
             and factory.rsplit(".", 1)[-1] in _TABLE_FACTORIES
             and node.args
             and isinstance(node.args[0], ast.Constant)
-            and node.args[0].value in _GUARDED_TABLES
+            and node.args[0].value in tables
         ):
             return str(node.args[0].value)
     if (
         isinstance(node, ast.Subscript)
         and isinstance(node.slice, ast.Constant)
-        and node.slice.value in _GUARDED_TABLES
+        and node.slice.value in tables
     ):
         return str(node.slice.value)
     return None
 
 
-def _queried(module: _Module, node: ast.expr) -> str | None:
+def _queried(module: _Module, node: ast.expr, verb: str) -> str | None:
     """Return the guarded model of a ``query(Model)...`` chain, if any."""
     current: ast.expr = node
     while isinstance(current, (ast.Call, ast.Attribute)):
@@ -139,7 +161,7 @@ def _queried(module: _Module, node: ast.expr) -> str | None:
                 and current.func.attr == "query"
                 and current.args
             ):
-                return _guarded(module, current.args[0])
+                return _guarded(module, current.args[0], verb)
             current = current.func
         else:
             current = current.value
@@ -151,9 +173,9 @@ def _raw_sql_target(call: ast.Call) -> str | None:
     for argument in call.args:
         if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
             sql = " ".join(argument.value.lower().split())
-            for verb in _SQL_VERBS:
-                for table in _GUARDED_TABLES:
-                    if f"{verb}{table}" in sql:
+            for prefix, verb in _SQL_VERBS.items():
+                for table in _TABLES_BY_VERB[verb]:
+                    if f"{prefix}{table}" in sql:
                         written: str = table
                         return written
     return None
@@ -165,20 +187,20 @@ def _reason(module: _Module, node: ast.Call) -> str | None:
     verb = _is_core_write(module, node.func)
     if method in _BULK_METHODS:
         return f"session.{method}"
-    if verb and node.args and _guarded(module, node.args[0]):
-        return f"Core {verb}({_guarded(module, node.args[0])})"
+    if verb and node.args and (target := _guarded(module, node.args[0], verb)):
+        return f"Core {verb}({target})"
     if (
         method in _CORE_WRITES
         and isinstance(node.func, ast.Attribute)
-        and _guarded(module, node.func.value)
+        and (target := _guarded(module, node.func.value, method))
     ):
-        return f"{_guarded(module, node.func.value)}.{method}()"
+        return f"{target}.{method}()"
     if (
         method in {"update", "delete"}
         and isinstance(node.func, ast.Attribute)
-        and _queried(module, node.func.value)
+        and (target := _queried(module, node.func.value, method))
     ):
-        return f"Query({_queried(module, node.func.value)}).{method}()"
+        return f"Query({target}).{method}()"
     if (
         method in {"execute", "exec_driver_sql"}
         or verb is None
@@ -266,6 +288,18 @@ _BYPASSES = {
         "from .. import models\n"
         "db.execute(insert(models.EpisodeSummary).values(summary_text='x'))"
     ),
+    "episode-move": "db.execute(update(Episode).values(podcast_id=2))",
+    "episode-table-update": "conn.execute(Episode.__table__.update(), rows)",
+    "episode-query-update": "db.query(Episode).filter(x).update({'podcast_id': 2})",
+    "episode-delete": "db.execute(delete(Episode).where(x))",
+    "podcast-delete": "db.execute(delete(Podcast).where(x))",
+    "podcast-query-delete": "db.query(Podcast).filter(x).delete()",
+    "episode-raw-update": "db.execute(text('UPDATE episodes SET podcast_id = 2'))",
+    "podcast-raw-delete": "db.execute(text('DELETE FROM podcasts WHERE id = 1'))",
+    "podcast-table-by-name": (
+        "import sqlalchemy as sa\n"
+        "db.execute(sa.table('podcasts', sa.column('id')).delete())"
+    ),
 }
 
 
@@ -286,6 +320,11 @@ def test_scan_ignores_orm_writes_and_unguarded_tables() -> None:
             "db.execute(text('UPDATE magic_link_tokens SET used = 1'))",
             "db.query(Mention).filter(x).all()",
             "db.execute(sa.table('content_suppressions').insert())",
+            "db.execute(insert(Episode).values(podcast_id=1))",
+            "db.execute(insert(Podcast).values(name='x'))",
+            "db.execute(update(Podcast).values(status='paused'))",
+            "db.execute(text('UPDATE podcasts SET status = 1'))",
+            "db.delete(episode)",
         ],
     )
 
