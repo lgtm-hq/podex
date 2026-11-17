@@ -580,3 +580,69 @@ def test_failed_reembed_stores_null_vector_under_the_new_model(
         ]
         * 2,
     )
+
+
+def test_over_long_model_name_is_refused_before_any_write(
+    postgres: PostgresDatabase,
+) -> None:
+    """A model name longer than the varchar(120) column fails every chunk.
+
+    The column would refuse the name at flush and lose the whole sync; it is
+    never bound to a statement, and the chunks commit as FAILED without it.
+    """
+    over_long = "m" * 121
+    words = " ".join(f"word{index}" for index in range(6))
+    policy = SemanticChunkingPolicy(max_words=3, overlap_words=0, min_words=2)
+    bound: list[object] = []
+
+    def record(*args: object) -> None:
+        parameters = args[3]
+        batches = parameters if isinstance(parameters, list | tuple) else [parameters]
+        bound.extend(
+            value
+            for batch in batches
+            if isinstance(batch, dict)
+            for value in batch.values()
+        )
+
+    with postgres.sessions() as db:
+        transcript = _add_transcript(db, slug="long-model-name", text_value=words)
+        db.commit()
+        event.listen(postgres.engine, "before_cursor_execute", record)
+        try:
+            result = sync_semantic_chunks_for_transcript(
+                db=db,
+                transcript=transcript,
+                embedding_provider=FullDimensionEmbeddingProvider(
+                    model_name=over_long,
+                ),
+                policy=policy,
+            )
+            db.commit()
+        finally:
+            event.remove(postgres.engine, "before_cursor_execute", record)
+
+    with postgres.sessions() as db:
+        rows = db.execute(
+            select(
+                SemanticChunk.embedding_status,
+                SemanticChunk.embedding_model,
+                SemanticChunk.embedding_error,
+                SemanticChunk.embedding_vector.is_(None).label("vector_is_null"),
+            ).order_by(SemanticChunk.chunk_index),
+        ).all()
+
+    assert_that(bound).does_not_contain(over_long)
+    assert_that(result.created_count).is_equal_to(2)
+    assert_that(result.failed_count).is_equal_to(2)
+    assert_that([tuple(row) for row in rows]).is_equal_to(
+        [
+            (
+                SemanticChunkEmbeddingStatus.FAILED.value,
+                None,
+                "embedding: PipelineFailure; embedding_invalid_model_name",
+                True,
+            ),
+        ]
+        * 2,
+    )

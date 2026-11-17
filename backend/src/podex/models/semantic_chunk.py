@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import struct
+import unicodedata
 from collections.abc import Callable
 from datetime import UTC, datetime
 from enum import StrEnum, auto
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeGuard
 
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.ext.compiler import compiles
@@ -24,6 +25,9 @@ if TYPE_CHECKING:
 
 EMBEDDING_DIMENSIONS = 1536
 """Dimension of the ``semantic_chunks.embedding_vector`` column (migration 0010)."""
+
+EMBEDDING_MODEL_LENGTH = 120
+"""Length of the ``semantic_chunks.embedding_model`` column, in characters."""
 
 FLOAT32_MAX: float = struct.unpack("<f", b"\xff\xff\x7f\x7f")[0]
 """Largest finite float32. pgvector stores each element as a 4-byte float and
@@ -64,6 +68,37 @@ def storable_vector(value: object) -> list[float]:
                 f"embedding vector element {index} must be finite in float32",
             )
     return [float(item) for item in value]
+
+
+# Characters no ``embedding_model`` value may hold: control characters (NUL,
+# which PostgreSQL text refuses, included) and lone surrogates, which no
+# database driver can encode.
+_UNSTORABLE_NAME_CATEGORIES = frozenset({"Cc", "Cs"})
+
+
+def is_storable_model_name(value: object) -> TypeGuard[str]:
+    """Return whether ``embedding_model`` can store ``value`` on every dialect.
+
+    SQLite would store an over-long name that PostgreSQL refuses, so the
+    check is the same everywhere.
+
+    Args:
+        value: Model name to store.
+
+    Returns:
+        ``True`` for a string that is not empty or only whitespace, has at most
+        ``EMBEDDING_MODEL_LENGTH`` characters, and has no control character or
+        lone surrogate.
+    """
+    return (
+        isinstance(value, str)
+        and bool(value.strip())
+        and len(value) <= EMBEDDING_MODEL_LENGTH
+        and not any(
+            unicodedata.category(character) in _UNSTORABLE_NAME_CATEGORIES
+            for character in value
+        )
+    )
 
 
 def _checked_dimensions(dimensions: object) -> int:
@@ -254,8 +289,9 @@ class SemanticChunk(Base):
     - ``embedded``: carries the vector of the latest embed.
     - ``failed``: never carries a vector or ``embedded_at``. ``embedding_model``
       and ``embedding_dimensions`` describe the failed attempt; each is null
-      when the provider's value could not be read, and the dimension is null
-      when it is not an integer the column can hold.
+      when the provider's value could not be read or the column cannot hold
+      it (see ``is_storable_model_name``). A refused model name is checked
+      before the dimension is read, so both are then null.
     - ``pending``: a sync without a provider leaves the other columns as they
       were. A pending chunk may therefore carry the vector, model, dimension and
       time of its last successful embed, or, if its last attempt failed, no
@@ -287,7 +323,10 @@ class SemanticChunk(Base):
         default=SemanticChunkEmbeddingStatus.PENDING.value,
         index=True,
     )
-    embedding_model: Mapped[str | None] = mapped_column(String(120), index=True)
+    embedding_model: Mapped[str | None] = mapped_column(
+        String(EMBEDDING_MODEL_LENGTH),
+        index=True,
+    )
     embedding_dimensions: Mapped[int | None] = mapped_column(Integer)
     embedding_vector: Mapped[list[float] | None] = mapped_column(
         PgVectorType(EMBEDDING_DIMENSIONS),

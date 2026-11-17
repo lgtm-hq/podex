@@ -427,7 +427,11 @@ def test_content_suppression_raised_by_the_provider_propagates(
 )
 @pytest.mark.parametrize(
     "own_step",
-    ["_check_provider_dimensions", "_validate_embedding_count"],
+    [
+        "_storable_model_name",
+        "_check_provider_dimensions",
+        "_validate_embedding_count",
+    ],
 )
 def test_errors_from_our_own_checks_are_not_provider_failures(
     db_session: Session,
@@ -441,13 +445,13 @@ def test_errors_from_our_own_checks_are_not_provider_failures(
     def fail(**_kwargs: object) -> None:
         raise error
 
-    def fail_positional(_dimensions: object) -> None:
+    def fail_positional(_declared: object) -> None:
         raise error
 
     monkeypatch.setattr(
         semantic_chunks,
         own_step,
-        fail_positional if own_step == "_check_provider_dimensions" else fail,
+        fail if own_step == "_validate_embedding_count" else fail_positional,
     )
 
     with pytest.raises(type(error)):
