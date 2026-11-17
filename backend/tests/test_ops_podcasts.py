@@ -14,6 +14,7 @@ from podex.services.audit_log import list_audit_logs, record_audit_log
 from podex.services.ops_podcast_commands import (
     CreateOpsPodcastInputData,
     OpsPodcastSourceInputData,
+    OpsPodcastValidationError,
     UpdateOpsPodcastInputData,
     archive_ops_podcast,
     create_ops_podcast,
@@ -792,7 +793,7 @@ def _create_then_reject(
         ),
     )
     db.flush()
-    raise ValueError("'bogus' is not a valid DiscoverySource")
+    raise OpsPodcastValidationError("'bogus' is not a valid DiscoverySource")
 
 
 def test_api_create_rolls_back_writes_made_before_a_rejection(
