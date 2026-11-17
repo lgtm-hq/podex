@@ -58,6 +58,8 @@ from podex.models.semantic_chunk import (
     EMBEDDING_DIMENSIONS,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
+    exact_str,
+    is_storable_model_name,
 )
 
 # Importing the guard installs its flush events on every session.
@@ -109,6 +111,8 @@ __all__ = [
     "MediaSummary",
     "SemanticChunk",
     "SemanticChunkEmbeddingStatus",
+    "exact_str",
+    "is_storable_model_name",
     "DiscoverySource",
     "Episode",
     "IngestionRun",
