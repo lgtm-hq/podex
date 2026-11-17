@@ -6,12 +6,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from podex.models import (
     DerivativeGenerationRun,
     DerivativeGenerationRunStatus,
     Episode,
+    EpisodeSummary,
     Media,
     Mention,
     Transcript,
@@ -24,6 +26,7 @@ from podex.services.derivative_summaries import (
     generate_episode_summary,
     generate_media_summary,
     stable_source_text_hash,
+    summary_model_name,
 )
 from podex.services.field_normalization import (
     normalize_required as _normalize_required,
@@ -46,6 +49,14 @@ class DerivativeGenerationConfig:
     pipeline_version: str = "derivative-generation-v1"
     chunk_pipeline_version: str = "semantic-chunk-v1"
     summary_prompt_version: str = "summary-prompt-v1"
+
+
+@dataclass(frozen=True, slots=True)
+class _CheckedSummaryProvider:
+    """A summary provider and the model name read from it once and checked."""
+
+    provider: SummaryProvider
+    model_name: str
 
 
 # Keep the existing named command inputs compatible with callers.
@@ -85,6 +96,11 @@ def generate_episode_derivatives(
             call, run row or other derived row. Authorisation holds the
             takedown lock until this transaction ends, so no takedown of the
             episode commits while its text is with a provider.
+        PipelineFailure: ``summary_invalid_model_name`` if the summary
+            provider's model name cannot be stored. The name is read once,
+            right after authorisation and before the transcript or source
+            text is read, any provider is called or the run row is written;
+            every summary of the run uses that one reading.
     """
     if summary_provider is not None:
         # Media summaries lock their media rows; the shared order takes media
@@ -94,6 +110,14 @@ def generate_episode_derivatives(
             media_ids=[media.id for media in _episode_media(db=db, episode=episode)],
         )
     authorize_episode_text(db=db, episode_ids=[episode.id])
+    summary = (
+        _CheckedSummaryProvider(
+            provider=summary_provider,
+            model_name=summary_model_name(summary_provider),
+        )
+        if summary_provider is not None
+        else None
+    )
     config = config or DerivativeGenerationConfig()
     now = now or datetime.now(UTC)
     transcript = transcript or _latest_transcript(db=db, episode=episode)
@@ -108,7 +132,7 @@ def generate_episode_derivatives(
             pipeline_version=config.pipeline_version,
             chunk_pipeline_version=config.chunk_pipeline_version,
             summary_prompt_version=config.summary_prompt_version,
-            summary_model=summary_provider.model_name if summary_provider else None,
+            summary_model=summary.model_name if summary is not None else None,
             source_text_hash=_run_source_hash(
                 db=db,
                 episode=episode,
@@ -128,27 +152,16 @@ def generate_episode_derivatives(
             now=now,
         )
 
-    episode_summary = None
+    episode_summary: EpisodeSummary | None = None
     media_summary_count = 0
-    if summary_provider is not None:
-        episode_summary = generate_episode_summary(
+    if summary is not None:
+        episode_summary, media_summary_count = _generate_summaries(
             db=db,
             episode=episode,
-            provider=summary_provider,
-            pipeline_version=config.pipeline_version,
-            prompt_version=config.summary_prompt_version,
-            generated_at=now,
+            summary=summary,
+            config=config,
+            now=now,
         )
-        for media in _episode_media(db=db, episode=episode):
-            generate_media_summary(
-                db=db,
-                media=media,
-                provider=summary_provider,
-                pipeline_version=config.pipeline_version,
-                prompt_version=config.summary_prompt_version,
-                generated_at=now,
-            )
-            media_summary_count += 1
 
     for graph_triple in graph_triples or []:
         upsert_graph_triple(db=db, payload=graph_triple)
@@ -234,6 +247,51 @@ def stable_derivative_generation_run_key(
     return f"derivative-run:{digest[:64]}"
 
 
+def _generate_summaries(
+    *,
+    db: Session,
+    episode: Episode,
+    summary: _CheckedSummaryProvider,
+    config: DerivativeGenerationConfig,
+    now: datetime,
+) -> tuple[EpisodeSummary, int]:
+    """Summarise the episode and each media it mentions under one model name.
+
+    Args:
+        db: Database session.
+        episode: Episode being processed.
+        summary: Summary provider and its model name, read once by the
+            caller; the provider's ``model_name`` is not read again.
+        config: Versioned derivative generation configuration.
+        now: Generation timestamp.
+
+    Returns:
+        The episode summary and the number of media summaries written.
+    """
+    episode_summary = generate_episode_summary(
+        db=db,
+        episode=episode,
+        provider=summary.provider,
+        model_name=summary.model_name,
+        pipeline_version=config.pipeline_version,
+        prompt_version=config.summary_prompt_version,
+        generated_at=now,
+    )
+    media_summary_count = 0
+    for media in _episode_media(db=db, episode=episode):
+        generate_media_summary(
+            db=db,
+            media=media,
+            provider=summary.provider,
+            model_name=summary.model_name,
+            pipeline_version=config.pipeline_version,
+            prompt_version=config.summary_prompt_version,
+            generated_at=now,
+        )
+        media_summary_count += 1
+    return episode_summary, media_summary_count
+
+
 def _upsert_generation_run(
     *,
     db: Session,
@@ -310,12 +368,16 @@ def _episode_media(
     db: Session,
     episode: Episode,
 ) -> list[Media]:
-    """Return media mentioned in an episode exactly once."""
-    return list(
-        db.query(Media)
-        .join(Mention, Mention.media_id == Media.id)
-        .filter(Mention.episode_id == episode.id)
-        .order_by(Media.id)
-        .distinct()
-        .all(),
+    """Return media mentioned in an episode once each, in ascending id.
+
+    The rows are matched with ``EXISTS`` rather than a join and ``DISTINCT``:
+    ``media`` has JSON columns, which PostgreSQL cannot compare for equality,
+    so a ``DISTINCT`` over whole rows is rejected there. Callers lock the rows
+    in this order.
+    """
+    mentioned = (
+        select(Mention.id)
+        .where(Mention.media_id == Media.id, Mention.episode_id == episode.id)
+        .exists()
     )
+    return list(db.scalars(select(Media).where(mentioned).order_by(Media.id)))

@@ -2,7 +2,7 @@
 
 # 0012. Every main commit keeps its own validation run
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-11-16
 - Tags: ci
 
