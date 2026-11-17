@@ -245,10 +245,21 @@ class SemanticChunkEmbeddingStatus(StrEnum):
 class SemanticChunk(Base):
     """Transcript window persisted as a durable semantic derivative.
 
-    ``embedding_vector`` and ``embedded_at`` are set only while the status is
-    ``embedded``, and then ``embedding_model`` names the model that produced
-    the vector. A ``failed`` chunk has neither; its model and dimensions are
-    those of the failed attempt (dimensions null when not a storable integer).
+    Embedding columns (ADR 0018):
+
+    - A stored ``embedding_vector`` is always labelled with the model,
+      dimension and ``embedded_at`` of the embed that produced it. A chunk's
+      text never changes (its key includes the text hash), so the vector is of
+      the current text.
+    - ``embedded``: carries the vector of the latest embed.
+    - ``failed``: never carries a vector or ``embedded_at``. ``embedding_model``
+      and ``embedding_dimensions`` describe the failed attempt; each is null
+      when the provider's value could not be read, and the dimension is null
+      when it is not an integer the column can hold.
+    - ``pending``: a sync without a provider leaves the other columns as they
+      were. A pending chunk may therefore carry the vector, model, dimension and
+      time of its last successful embed, or, if its last attempt failed, no
+      vector and that attempt's model and dimension.
     """
 
     __tablename__ = "semantic_chunks"

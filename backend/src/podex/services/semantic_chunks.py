@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from hashlib import sha256
-from types import TracebackType
-from typing import Any, Protocol
+from itertools import islice
+from typing import Any, Protocol, TypeVar
 
 from sqlalchemy.orm import Session
 
 from podex.models import (
     EMBEDDING_DIMENSIONS,
+    ContentSuppressedError,
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
@@ -32,6 +33,8 @@ logger = logging.getLogger(__name__)
 # ``embedding_dimensions`` is a PostgreSQL ``integer`` (int4) column.
 _INT4_MIN = -(2**31)
 _INT4_MAX = 2**31 - 1
+
+_T = TypeVar("_T")
 
 
 @dataclass(frozen=True, slots=True)
@@ -111,9 +114,11 @@ class EmbeddingProvider(Protocol):
     NumPy array with ``.tolist()``); any other vector type fails its chunk with
     ``embedding_invalid_type``, whatever its length.
 
-    Any ``Exception`` raised while reading these attributes or embedding fails
-    the whole batch. Only the exception's class (and a validated HTTP status)
-    is recorded, never its message. Interrupts and exits propagate. Each call
+    Any ``Exception`` raised while reading these attributes, embedding, or
+    iterating the result fails the whole batch (ADR 0018). Only the exception's
+    class (and a validated HTTP status) is recorded, never its message.
+    ``ContentSuppressedError``, interrupts, exits and cancellation propagate.
+    The result is read at most one vector past the number of texts. Each call
     must be bounded in time (ADR 0015).
     """
 
@@ -187,7 +192,9 @@ def sync_semantic_chunks_for_transcript(
     Returns:
         Summary of created, updated, deleted, and embedded chunks. A vector the
         embedding column cannot store marks only its own chunk failed; it is
-        never sent to the database. A failed chunk keeps no vector.
+        never sent to the database. A failed embed clears the chunk's vector
+        and ``embedded_at``; without a provider, chunks become ``pending`` and
+        keep their last successful embedding (see ``SemanticChunk``).
 
     Raises:
         ContentSuppressedError: If an approved takedown suppresses the
@@ -279,33 +286,42 @@ def _remove_stale_chunks(
     return deleted
 
 
-@dataclass(slots=True)
-class _ProviderError:
-    """Keep the ``Exception`` raised in its block, as a provider failure.
+class _ProviderFailure(Exception):
+    """Carry an exception the embedding provider's own code raised.
 
-    Like ``contextlib.suppress(Exception)``, but the error is kept so the
-    batch can record it. Provider adapters wrap arbitrary client libraries, so
-    no narrower class list covers them. ``KeyboardInterrupt``, ``SystemExit``
-    and other ``BaseException`` subclasses outside ``Exception`` propagate.
+    Args:
+        error: The provider's exception, also kept as ``__cause__``.
     """
 
-    error: Exception | None = None
+    def __init__(self, error: Exception) -> None:
+        super().__init__("embedding provider failed")
+        self.error = error
 
-    def __enter__(self) -> _ProviderError:
-        """Start the guarded provider interaction."""
-        return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        traceback: TracebackType | None,
-    ) -> bool:
-        """Keep an ``Exception`` and stop it; let anything else propagate."""
-        if isinstance(exc, Exception):
-            self.error = exc
-            return True
-        return False
+def _from_provider(read: Callable[[], _T]) -> _T:
+    """Run one step of the provider's own code, marking what it raises.
+
+    Provider adapters wrap arbitrary client libraries, so any ``Exception``
+    they raise is an embedding failure. ``ContentSuppressedError`` is a
+    takedown refusal, never an embedding failure, and propagates unchanged, as
+    do ``BaseException`` subclasses outside ``Exception`` (interrupts, exits,
+    cancellation).
+
+    Args:
+        read: The provider attribute read, call or result read.
+
+    Returns:
+        What ``read`` returned.
+
+    Raises:
+        _ProviderFailure: If ``read`` raised any other ``Exception``.
+    """
+    try:
+        return read()
+    except ContentSuppressedError:
+        raise
+    except Exception as error:
+        raise _ProviderFailure(error) from error
 
 
 def _embed_chunks(
@@ -317,9 +333,13 @@ def _embed_chunks(
     """Apply one embedding batch, storing only vectors the column accepts.
 
     A provider whose declared dimension differs from the column is refused
-    before it is called. Any exception from the provider or a wrong vector
-    count fails the whole batch; a single vector that cannot be stored fails
-    only its chunk.
+    before it is called. Any exception from the provider's own code (its
+    attribute reads, the call, reading its result) or a wrong vector count
+    fails the whole batch; a single vector that cannot be stored fails only
+    its chunk. Errors from this module's own code propagate.
+
+    The result is read at most one vector past the number of texts, so an
+    endless result fails the count instead of hanging the sync.
 
     Args:
         chunks: Ordered chunks awaiting embeddings.
@@ -331,21 +351,32 @@ def _embed_chunks(
     """
     if provider is None or not chunks:
         return 0, 0
+    embedder: EmbeddingProvider = provider
+    texts = [chunk.text for chunk in chunks]
     model_name: str | None = None
     dimensions: object = None
-    vectors: list[Any] = []
-    with _ProviderError() as failure:
-        model_name = provider.model_name
-        dimensions = provider.dimensions
+    try:
+        model_name = _from_provider(lambda: embedder.model_name)
+        dimensions = _from_provider(lambda: embedder.dimensions)
         _check_provider_dimensions(dimensions)
-        vectors = list(provider.embed_texts(texts=[chunk.text for chunk in chunks]))
-        _validate_embedding_count(vectors=vectors, expected_count=len(chunks))
-    if failure.error is not None:
+        vectors: list[Any] = _from_provider(
+            lambda: list(islice(embedder.embed_texts(texts=texts), len(texts) + 1)),
+        )
+        _validate_embedding_count(vectors=vectors, expected_count=len(texts))
+    except _ProviderFailure as failure:
         _mark_embedding_failed(
             chunks=chunks,
             model_name=model_name,
             dimensions=dimensions,
             error=failure.error,
+        )
+        return 0, len(chunks)
+    except PipelineFailure as failure:
+        _mark_embedding_failed(
+            chunks=chunks,
+            model_name=model_name,
+            dimensions=dimensions,
+            error=failure,
         )
         return 0, len(chunks)
     embedded_count = 0
