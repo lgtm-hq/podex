@@ -306,10 +306,10 @@ def test_scheduled_run_whose_storing_fails_leaves_no_skippable_gap(
         (9, 8, 7),
         (6, 5),
     )
+    # Planned an hour ago on the default six-hour cadence, so it is due now.
     plan_recurring_discovery_work(
         db=db_session,
-        interval_minutes=60,
-        now=datetime(2026, 5, 10, 12, 0, tzinfo=UTC),
+        now=datetime.now(UTC) - timedelta(hours=1),
     )
     db_session.commit()
     create = vars(DiscoveryOrchestrator)["_create_episode"]

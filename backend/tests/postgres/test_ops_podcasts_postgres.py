@@ -3,9 +3,10 @@
 SQLite ignores column lengths and stores NUL, so only PostgreSQL shows that an
 overlong or NUL value would fail (or be truncated) at flush. These tests check
 that such values are rejected by request validation before any statement
-reaches the database, that text exactly at each limit is stored unchanged, and
-that only the slug's unique violation answers 409. They run in the PostgreSQL
-CI lane and are skipped elsewhere.
+reaches the database, that text exactly at each limit is stored unchanged (a
+slug at its limit is also recorded whole in the audit log), and that only the
+slug's unique violation answers 409. They run in the PostgreSQL CI lane and are
+skipped elsewhere.
 """
 
 from collections.abc import Iterator
@@ -65,10 +66,10 @@ _LIMITED_FIELD_IDS = [".".join(path) for path, _ in _LIMITED_FIELDS]
 _ROUTES = ("POST", "PATCH")
 # Two-, three- and four-byte UTF-8 characters: limits count characters.
 _MULTIBYTE = "é漢🎧ß"
-# The audit entry stores the slug in a 120-character column, so a longer slug
-# fails at the audit insert (issue #881); until then the slug is stored end to
-# end only up to this length. Rejection is still checked at the 255 limit.
-_STORABLE_SLUG_LENGTH = 120
+_SLUG_LIMIT = 255
+_AUDIT_SQL = text(
+    "SELECT action, resource_id, resource_identifier FROM audit_logs ORDER BY id",
+)
 
 
 def _multibyte(length: int) -> str:
@@ -256,8 +257,7 @@ def test_routes_store_multibyte_text_at_the_limit_and_reject_one_more(
     limit: int,
 ) -> None:
     """Limits count characters as PostgreSQL does, whatever their byte length."""
-    stored_length = _STORABLE_SLUG_LENGTH if path == ("slug",) else limit
-    at_limit = _multibyte(stored_length)
+    at_limit = _multibyte(limit)
     podcast_id = _add_podcast(postgres, slug="pg-show")
 
     accepted = _send(
@@ -408,3 +408,54 @@ def test_update_reports_other_integrity_errors_as_500_on_postgres(
     assert_that(response.status_code).is_equal_to(500)
     assert_that(response.json()["detail"]).is_equal_to("Internal server error.")
     assert_that(_stored(postgres)).is_equal_to(before)
+
+
+@pytest.mark.parametrize(
+    ("created_slug", "updated_slug"),
+    [
+        ("c" * _SLUG_LIMIT, "u" * _SLUG_LIMIT),
+        (_multibyte(_SLUG_LIMIT), "漢" * _SLUG_LIMIT),
+    ],
+    ids=["ascii", "multibyte"],
+)
+def test_routes_audit_a_slug_at_its_limit_on_postgres(
+    postgres: PostgresDatabase,
+    created_slug: str,
+    updated_slug: str,
+) -> None:
+    """Create, update and archive record a slug at its limit in full."""
+    assert_that(Podcast.__table__.columns["slug"].type.length).is_equal_to(
+        _SLUG_LIMIT,
+    )
+
+    with _ops_client(postgres) as client:
+        created = client.post(
+            _PODCASTS,
+            json={"name": "PG Long Slug", "slug": created_slug},
+            headers=_HEADERS,
+        )
+        podcast_id = created.json()["id"]
+        updated = client.patch(
+            f"{_PODCASTS}/{podcast_id}",
+            json={"slug": updated_slug},
+            headers=_HEADERS,
+        )
+        archived = client.post(
+            f"{_PODCASTS}/{podcast_id}/archive",
+            headers=_HEADERS,
+        )
+
+    assert_that(
+        [created.status_code, updated.status_code, archived.status_code],
+    ).is_equal_to([201, 200, 200])
+    with postgres.engine.connect() as connection:
+        audits = [tuple(row) for row in connection.execute(_AUDIT_SQL)]
+        row = connection.execute(_ROW_SQL, {"id": podcast_id}).mappings().one()
+    assert_that(row["slug"]).is_equal_to(updated_slug)
+    assert_that(audits).is_equal_to(
+        [
+            ("create_podcast", podcast_id, created_slug),
+            ("update_podcast", podcast_id, updated_slug),
+            ("archive_podcast", podcast_id, updated_slug),
+        ],
+    )

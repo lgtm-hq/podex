@@ -32,7 +32,7 @@ Nothing guaranteed that:
    walk, is reported in the discovery run's `errors` (so the run is recorded as
    failed) and never counts as the end of the listing.
 2. **The catalog becomes the cursor only after a recorded complete walk.**
-   `podcasts.podscripts_listing_walked_at` (nullable, migration 0024) is set to
+   `podcasts.podscripts_listing_walked_at` (nullable, migration 0025) is set to
    the run's start time when a walk reached the listing's real end (an empty
    page) with no failed page, no early stop and below the page limit. It is
    written after every episode of that run is stored and committed with them;
