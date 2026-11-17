@@ -10,9 +10,10 @@ uses it to refuse writes, so a reader and a writer cannot disagree about what
 a suppression covers.
 """
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum, auto
+from typing import Any
 
 from sqlalchemy import (
     CheckConstraint,
@@ -57,10 +58,16 @@ class ContentSuppressionScope(StrEnum):
 class ContentSuppressedError(ValueError):
     """Raised when a write would recreate content an approved takedown removed.
 
+    Also raised when a flush deletes a podcast or episode that a suppression
+    covers, because the suppression is keyed by that row's id.
+
     Attributes:
         scope: Suppression scope that covers the write.
-        episode_id: Episode the refused content belongs to.
+        episode_id: Episode the refused content belongs to, or ``None`` when
+            only a podcast is named.
         media_id: Media of the refused mention, for mention writes.
+        podcast_id: Suppressed podcast the refusal names, for a podcast
+            delete or a move next to it; the message then names the podcast.
         row: The refused row and why, such as ``Mention 5 (moved out of
             its pair)``, when a flush refused it.
     """
@@ -69,11 +76,16 @@ class ContentSuppressedError(ValueError):
         self,
         *,
         scope: ContentSuppressionScope,
-        episode_id: int,
+        episode_id: int | None = None,
         media_id: int | None = None,
+        podcast_id: int | None = None,
         row: str = "",
     ) -> None:
-        subject = f"episode {episode_id}"
+        subject = (
+            f"podcast {podcast_id}"
+            if podcast_id is not None
+            else f"episode {episode_id}"
+        )
         if media_id is not None:
             subject = f"{subject} and media {media_id}"
         message = f"{scope.value} for {subject} are suppressed by an approved takedown"
@@ -83,7 +95,17 @@ class ContentSuppressedError(ValueError):
         self.scope = scope
         self.episode_id = episode_id
         self.media_id = media_id
+        self.podcast_id = podcast_id
         self.row = row
+
+
+class RetryableLockError(ValueError):
+    """Content changed, or a lock was busy, while locks were being taken.
+
+    Nothing was written. The caller rolls back and retries; when the message
+    names a stale copy of a row (an episode moved since it was loaded), it
+    reloads that row first. Routes map ``ValueError`` to 409.
+    """
 
 
 class ContentSuppression(Base):
@@ -116,11 +138,13 @@ class ContentSuppression(Base):
     )
     subject_type: "Mapped[str]" = mapped_column(String(32))
     scope: "Mapped[str]" = mapped_column(String(32))
+    # A suppression is keyed by these ids, so the database refuses to delete
+    # the row it covers instead of cascading the suppression away (ADR 0017).
     podcast_id: "Mapped[int | None]" = mapped_column(
-        ForeignKey("podcasts.id", ondelete="CASCADE"),
+        ForeignKey("podcasts.id", ondelete="RESTRICT"),
     )
     episode_id: "Mapped[int | None]" = mapped_column(
-        ForeignKey("episodes.id", ondelete="CASCADE"),
+        ForeignKey("episodes.id", ondelete="RESTRICT"),
     )
     media_id: "Mapped[int | None]" = mapped_column(
         ForeignKey("media.id"),
@@ -247,6 +271,20 @@ PostgreSQL's parameter limits.
 
 _UNION_GROUP_SIZE = 400
 """Literal rows per ``UNION ALL`` group, under SQLite's 500-term limit."""
+
+
+def batches(values: Iterable[Any]) -> Iterator[list[Any]]:
+    """Split sorted values into statements of ``SUPPRESSION_BATCH_SIZE``.
+
+    Args:
+        values: Ids, pairs or keys; duplicates are dropped.
+
+    Yields:
+        Ascending batches of at most ``SUPPRESSION_BATCH_SIZE`` values.
+    """
+    ordered = sorted(set(values))
+    for start in range(0, len(ordered), SUPPRESSION_BATCH_SIZE):
+        yield ordered[start : start + SUPPRESSION_BATCH_SIZE]
 
 
 def suppressed_episodes_statement(
