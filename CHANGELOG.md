@@ -22,6 +22,29 @@ The format is based on [Keep a Changelog][kac], and this project adheres to
 
 ### Security
 
+## [0.41.48] - 2026-11-17
+
+### Changed
+
+- **deps**: update ghcr.io/astral-sh/uv docker tag to 0.13.9 (patch) (#913) (f61ab13)
+- **deps**: update dependency astral-sh/uv to 0.13.9 (patch) (#912) (bc46460)
+
+### Fixed
+
+- **derivatives**: refuse an embedding provider whose model name cannot be stored (#908)
+  (6a1411b)
+
+## [0.41.47] - 2026-11-17
+
+### Changed
+
+- **deps**: update lintro to 0.181.5 (patch) (#911) (7b46744)
+
+### Fixed
+
+- **discovery**: keep numbered series episodes apart when grouping one run's records
+  (#903) (8e0b889)
+
 ## [0.41.46] - 2026-11-17
 
 ### Changed

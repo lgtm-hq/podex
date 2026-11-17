@@ -18,6 +18,8 @@ from podex.models import (
     SemanticChunk,
     SemanticChunkEmbeddingStatus,
     Transcript,
+    exact_str,
+    is_storable_model_name,
 )
 from podex.models.semantic_chunk import storable_vector
 from podex.services.content_suppression import authorize_episode_text
@@ -103,6 +105,9 @@ class TranscriptSegmentData:
 
 class EmbeddingProvider(Protocol):
     """Protocol for model-backed embedding providers.
+
+    ``model_name`` must pass ``is_storable_model_name`` as an exact ``str``, or
+    the provider is never called (``embedding_invalid_model_name``).
 
     ``dimensions`` must equal the embedding column's dimension
     (``EMBEDDING_DIMENSIONS``): a provider declaring any other value is never
@@ -332,8 +337,9 @@ def _embed_chunks(
 ) -> tuple[int, int]:
     """Apply one embedding batch, storing only vectors the column accepts.
 
-    A provider whose declared dimension differs from the column is refused
-    before it is called. Any exception from the provider's own code (its
+    A provider whose model name the ``embedding_model`` column cannot store,
+    or whose declared dimension differs from the column, is refused before it
+    is called. Any exception from the provider's own code (its
     attribute reads, the call, reading its result) or a wrong vector count
     fails the whole batch; a single vector that cannot be stored fails only
     its chunk. Errors from this module's own code propagate.
@@ -356,7 +362,8 @@ def _embed_chunks(
     model_name: str | None = None
     dimensions: object = None
     try:
-        model_name = _from_provider(lambda: embedder.model_name)
+        declared: str | None = _from_provider(lambda: exact_str(embedder.model_name))
+        model_name = _storable_model_name(declared)
         dimensions = _from_provider(lambda: embedder.dimensions)
         _check_provider_dimensions(dimensions)
         vectors: list[Any] = _from_provider(
@@ -611,6 +618,16 @@ def _semantic_chunk_needs_update(
             chunk.start_seconds != candidate.start_seconds,
             chunk.end_seconds != candidate.end_seconds,
         ),
+    )
+
+
+def _storable_model_name(model_name: str | None) -> str:
+    """Return a name ``embedding_model`` can store; never put it in the error."""
+    if model_name is not None and is_storable_model_name(model_name):
+        return model_name
+    raise PipelineFailure(
+        "embedding provider model name cannot be stored",
+        reason=FailureReason.EMBEDDING_INVALID_MODEL_NAME,
     )
 
 
