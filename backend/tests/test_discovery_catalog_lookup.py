@@ -4,6 +4,7 @@ Each test runs the real orchestrator over synthetic feeds and listings and
 observes the stored rows; nothing is fetched from the network.
 """
 
+import sqlite3
 from datetime import timedelta
 
 import pytest
@@ -175,6 +176,24 @@ def test_title_and_time_find_a_row_without_conflicting_evidence(
     hit = _probe(db_session, monkeypatch, podcast, record)
 
     assert_that(hit and hit.id).is_equal_to(row.id if found else None)
+
+
+def test_a_dated_record_never_takes_an_undated_row_of_its_title(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Title and time need the same instant; an undated row has none."""
+    podcast = show(db_session)
+    store(db_session, podcast, title="Why We Started")
+
+    hit = _probe(
+        db_session,
+        monkeypatch,
+        podcast,
+        _record("Why We Started", published_at=DAY),
+    )
+
+    assert_that(hit).is_none()
 
 
 @pytest.mark.parametrize(
@@ -372,6 +391,16 @@ def test_a_guid_change_before_any_run_fills_the_season_adds_a_row(
             None,
         ),
         (
+            {"rss_guid": "urn:show:a"},
+            {"season_number": 2, "rss_guid": "urn:show:a"},
+            None,
+        ),
+        (
+            {"episode_number": 0, "rss_guid": "urn:show:a"},
+            {"episode_number": 0, "season_number": 2, "rss_guid": "urn:show:a"},
+            None,
+        ),
+        (
             {"episode_number": 5, "season_number": 1, "rss_guid": "urn:show:a"},
             {"episode_number": 5, "season_number": 2, "rss_guid": "urn:show:a"},
             1,
@@ -386,6 +415,8 @@ def test_a_guid_change_before_any_run_fills_the_season_adds_a_row(
         "filled-by-guid",
         "filled-by-url",
         "numbers-differ",
+        "neither-numbered",
+        "both-numbered-zero",
         "never-overwritten",
         "not-by-number-or-title",
     ],
@@ -719,3 +750,35 @@ def test_a_listing_numbered_across_the_show_against_a_seasoned_feed(
     podcast = show(db_session, listing=True)
 
     assert_that(counts(db_session, monkeypatch, podcast, runs)).is_equal_to(expected)
+
+
+def test_the_guid_rule_holds_where_sql_lowercases_every_letter(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SQL candidates are checked again with the rule, as PostgreSQL needs.
+
+    The test's SQLite connection gets a ``lower`` that lowercases every
+    letter, as PostgreSQL's does, so "\u00c9" and "\u00e9" become SQL
+    candidates for each other; the rule compares them exactly.
+    """
+    raw = db_session.connection().connection.dbapi_connection
+    if not isinstance(raw, sqlite3.Connection):
+        pytest.fail("the default test lane runs on SQLite")
+    raw.create_function("lower", 1, unicode_lower, deterministic=True)
+    podcast = show(db_session)
+    store(db_session, podcast, title="Stored", rss_guid="urn:show:\u00e9")
+
+    hit = _probe(
+        db_session,
+        monkeypatch,
+        podcast,
+        _record(rss_guid="urn:show:\u00c9"),
+    )
+
+    assert_that(hit).is_none()
+
+
+def unicode_lower(value: str | None) -> str | None:
+    """Lowercase every letter, as PostgreSQL's ``lower`` does."""
+    return None if value is None else value.lower()

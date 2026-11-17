@@ -59,6 +59,17 @@ class _CatalogMatch:
     by_guid_or_url: bool
 
 
+def _same_instant(stored: datetime | None, reported: datetime | None) -> bool:
+    """Return whether a row's time and a record's time are the same, or both unknown.
+
+    A stored time without an offset is read as UTC; the feed reader reports
+    times in UTC, so the stored value is the reported instant on every database.
+    """
+    if reported is None:
+        return stored is None
+    return stored is not None and as_utc(stored) == as_utc(reported)
+
+
 def _conflicts(row: Episode, discovered: DiscoveredEpisode) -> bool:
     """Return whether a row holds a GUID, URL or number the record contradicts.
 
@@ -576,28 +587,19 @@ class DiscoveryOrchestrator:
     ) -> Episode | None:
         """Return the oldest row with the record's exact title and publication time.
 
-        An undated record matches only an undated row. A row that holds a
-        GUID, URL or number the record contradicts is never taken.
+        An undated record matches only an undated row, so for it this step is a
+        match by title alone. A dated record matches only a row dated the same
+        instant, never an undated row. A row that holds a GUID, URL or number
+        the record contradicts is never taken.
         """
         candidates = query.filter(Episode.title == discovered.title)
         if discovered.published_at is None:
             candidates = candidates.filter(Episode.published_at.is_(None))
-            wanted = None
-        else:
-            candidates = candidates.filter(Episode.published_at.is_not(None))
-            wanted = as_utc(discovered.published_at)
         return next(
             (
                 row
                 for row in candidates.order_by(Episode.id)
-                if (
-                    (row.published_at is None)
-                    if wanted is None
-                    else (
-                        row.published_at is not None
-                        and as_utc(row.published_at) == wanted
-                    )
-                )
+                if _same_instant(row.published_at, discovered.published_at)
                 and not _conflicts(row, discovered)
             ),
             None,

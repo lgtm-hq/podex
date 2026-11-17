@@ -48,10 +48,15 @@ reports any item, and passes on only values that name one item:
   written. The reported URL is the link as written.
 - **GUIDs.** An item's GUID becomes its `rss_guid` unless another item of the
   feed has the same GUID (by the GUID rule below), or the GUID, read as a
-  link, is the site link or a link shared by items.
+  link (compared as links are, so ignoring the fragment), is the site link or
+  a link shared by items.
 - **Seasons.** A positive whole `itunes:season` is carried as
   `DiscoveredEpisode.season_number`. A missing, 0 or unreadable season means
   none. The season qualifies the item's episode number.
+- **Dates.** A parsed `pubDate` is reported in UTC (`astimezone(UTC)`).
+  SQLite keeps only the wall-clock time of a stored value, so a date kept with
+  its offset would be read back as another instant; in UTC, what is stored and
+  what step 6 below compares are the same instant on every database.
 
 Links and GUIDs are counted across the whole feed, before the `since` window is
 applied.
@@ -111,11 +116,13 @@ by the first step that finds one:
    has already ruled that row out. A record without a season takes any row
    with the number, as before;
 6. for a record without a YouTube id or Spotify URI: the same title and the
-   same publication time, or no publication time on both. A row whose GUID
-   (by the GUID rule), URL or number (with seasons as in the matcher)
-   contradicts the record is never taken. Lowest id first: several undated
-   rows with one title resolve to the oldest. Within one run such records
-   are already grouped by the matcher (identical titles, no dates).
+   same publication instant, or no publication time on both; a dated record
+   never takes an undated row. For an undated record this step is therefore
+   a match by title alone, among undated rows. A row whose GUID (by the GUID
+   rule), URL or number (with seasons as in the matcher) contradicts the
+   record is never taken. Lowest id first: several undated rows with one
+   title resolve to the oldest. Within one run such records are already
+   grouped by the matcher (identical titles, no dates).
 
 Apart from the GUID rule in step 3, the season in step 5, step 6 and the season
 fill, the lookup is ADR 0019's. A matched row still only gains fields it lacks;
@@ -130,9 +137,13 @@ its title and number are never rewritten.
   unique links (other than by fragment) and unique GUIDs and no seasons are
   read and stored as before.
 - Feed items left without an identifier or URL are found again by title and
-  time, also when undated or when the reader cannot parse their dates, so such
-  feeds are stable from the second run. A row an earlier release merged them
-  into keeps its first item, and the other items get rows of their own.
+  time, also when undated, when the reader cannot parse their dates and when
+  their dates carry a UTC offset. On a fresh catalog the first run stores
+  them and later runs add nothing. On a catalog an earlier release filled, the
+  row it merged the items into keeps its first item and the other items get
+  rows of their own in the first run, except as listed under "not covered"
+  below (wall-clock dates, a feed that fixes its GUIDs or links at the
+  deploy); the count is stable after that.
 - A link or GUID that stops being shared (fixed by the feed, or because the
   sharing item left the feed) finds the row stored while it was shared, and
   the row gains it.
@@ -175,18 +186,57 @@ its title and number are never rewritten.
     finds it by its GUID or URL. If the item's GUID and link both change
     before such a run, the seasoned record skips the season-less row and a
     second row is stored (main keeps one).
+  - Rows an earlier release stored on SQLite from a feed dated with a UTC
+    offset hold the feed's wall-clock time, read back as UTC, so step 6 never
+    finds them by time. Once such an item is identified by neither its GUID
+    nor its URL, its old row stays and the item gets one row of its own; the
+    count is then stable (three homepage-linked items without GUIDs at -0700:
+    1 row before the deploy, then 4, 4, 4, 4). Stored times are not
+    reinterpreted. After the first run each such item has two rows of one
+    title whose times differ by the feed's offset; on PostgreSQL:
+    `SELECT a.id AS old_id, b.id AS new_id, a.title FROM episodes a JOIN
+    episodes b ON b.podcast_id = a.podcast_id AND b.title = a.title AND
+    b.id > a.id WHERE a.published_at <> b.published_at AND
+    abs(extract(epoch FROM a.published_at - b.published_at)) <= 14 * 3600;`
+    The lower id is the old row.
   - A republished episode with a new GUID becomes a second row: within a feed
-    that lists both copies, and across runs when its link changes too.
+    that lists both copies, and across runs when its link changes too. A feed
+    whose links are not passed on (homepage links) and that regenerates every
+    GUID doubles its rows: a daily show of four items gives 4, 4, 8, 8, 8, 8
+    rows when the GUIDs are regenerated before the third run, where main keeps
+    one row throughout. Step 6 does not take a row that holds another GUID.
+  - The row an earlier release merged a feed's items into remains when the
+    feed fixes its GUIDs or links at the deploy: the items then arrive with
+    their own GUIDs or links, step 6 does not take a row holding the shared
+    GUID or link, and every item gets a new row, the first item included.
+  - A season filled on a row earlier in a run is not visible to later lookups
+    in that run (no autoflush). A row stored before migration 0027 that a run
+    fills by GUID can still be taken by number, in that same run, by another
+    season's record without a GUID; the split arrives one run late (season 1
+    episode 5 by GUID and a GUID-less season 2 episode 5 together: 1, 2, 2,
+    2 rows).
+  - A wrong season can become permanent on a listing row. Listing
+    "5-opening-night" stored first, then runs reading only the feed's season
+    2 episode 5 "Second Wind": the first run takes the listing row by number
+    and gives it the feed's GUID; the next finds it by that GUID with the
+    same number and fills season 2, which is never overwritten. To find such
+    rows: `SELECT id, title, episode_url, episode_number, season_number FROM
+    episodes WHERE season_number IS NOT NULL AND episode_url LIKE
+    'https://podscripts.co/%';`, then compare each title with the feed item
+    holding the row's GUID.
   - A feed of one item, or a truncated feed, cannot show that a link or GUID
     is shared; only the site link is recognised there.
   - Links unique only by their fragment ("/#ep1", "/#ep2") compare as the same
     link, so such links are treated as the site link or as shared and dropped;
-    those feeds are not read exactly as before.
+    those feeds are not read exactly as before. The same holds for unique
+    GUIDs that differ from the site link only by a fragment: they are
+    dropped too.
   - Items of a feed without GUIDs that share a title and fall within seven
     days still merge in one run; only distinct GUIDs keep same-source items
     apart.
   - Step 6 needs the exact title and publication time; an item without an
-    identifier or URL that is retitled or redated is stored again.
+    identifier or URL that is retitled or redated is stored again. For an
+    undated record step 6 matches by title alone among undated rows.
   - Dates the reader cannot parse (ISO 8601, Atom) are stored as no date; the
     reader only parses RFC 822 dates (tracked separately).
 - Changing the reader's identity inputs, the GUID rule, the season rules or

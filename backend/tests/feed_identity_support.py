@@ -84,7 +84,7 @@ def feed_xml(items: Sequence[FeedItem], *, site: str = SITE) -> str:
                 parts.append(f"<{name}>{escape(value)}</{name}>")
         date = item.published_at
         if isinstance(date, datetime):
-            date = date.strftime("%a, %d %b %Y %H:%M:%S GMT")
+            date = date.strftime("%a, %d %b %Y %H:%M:%S %z")
         if date is not None:
             parts.append(f"<pubDate>{escape(date)}</pubDate>")
         parts.append("</item>")

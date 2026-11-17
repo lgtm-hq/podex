@@ -255,13 +255,16 @@ class RSSDiscovery:
         if not title:
             return None
 
-        # Parse published date
+        # Parse published date. It is reported in UTC: SQLite stores only the
+        # wall-clock time, so a kept offset would be read back as another
+        # instant and the title-and-time lookup would miss the stored row.
         published_at = None
         if entry.get("published"):
             try:
                 published_at = parsedate_to_datetime(entry.published)
                 if published_at.tzinfo is None:
                     published_at = published_at.replace(tzinfo=UTC)
+                published_at = published_at.astimezone(UTC)
             except (ValueError, TypeError):
                 pass
 
