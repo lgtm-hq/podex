@@ -7,7 +7,11 @@ import pytest
 from assertpy import assert_that
 
 from podex.services.discovery import DiscoveredEpisode
-from podex.services.episode_matching import episodes_match, group_same_episodes
+from podex.services.episode_matching import (
+    episodes_match,
+    group_same_episodes,
+    title_numbers_conflict,
+)
 
 _DAY = datetime(2026, 3, 2, 15, 0, tzinfo=UTC)
 _HOMEPAGE = "https://show.example/"
@@ -19,7 +23,7 @@ def _episode(
     number: int | None = None,
     published_at: datetime | None = None,
     episode_url: str | None = None,
-    source: str = "rss",
+    source: str | None = "rss",
 ) -> DiscoveredEpisode:
     """Return a discovered episode with only the fields under test."""
     return DiscoveredEpisode(
@@ -54,6 +58,16 @@ def test_differing_numbers_from_one_source_never_match() -> None:
     assert_that(episodes_match(first, second)).is_false()
 
 
+def test_records_without_a_source_are_never_the_same_source() -> None:
+    """Without a source, a differing number does not separate; the titles decide."""
+    first = _episode("Protect Our Parks", number=5, source=None)
+    second = _episode("Protect Our Parks", number=6, source=None)
+    sourced = _episode("Protect Our Parks", number=6)
+
+    assert_that(episodes_match(first, second)).is_true()
+    assert_that(episodes_match(first, sourced)).is_true()
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     [
@@ -75,6 +89,30 @@ def test_shared_stable_identifier_wins_over_differing_numbers(
     assert_that(group_same_episodes([before, after])).is_equal_to([[before, after]])
 
 
+@pytest.mark.parametrize("blank", ["", "   "], ids=["empty", "whitespace"])
+def test_blank_identifiers_identify_nothing(blank: str) -> None:
+    """An empty or blank GUID shared by two records does not join them."""
+    first = replace(_episode("A Conversation"), rss_guid=blank)
+    second = replace(_episode("Completely Retitled"), rss_guid=blank)
+
+    assert_that(episodes_match(first, second)).is_false()
+
+
+def test_stable_identifier_outranks_numbers_when_grouping() -> None:
+    """Records sharing a GUID stay together and take the third record's number too.
+
+    From one source, numbers 5 and 6 would separate the first two records;
+    the shared GUID outranks that, and the listing's 5 then joins them.
+    """
+    before = replace(_episode("The Return", number=5), rss_guid="urn:example:g")
+    after = replace(_episode("The Return", number=6), rss_guid="urn:example:g")
+    listing = _episode("The Return", number=5, source="podscripts")
+
+    assert_that(group_same_episodes([before, after, listing])).is_equal_to(
+        [[before, after, listing]],
+    )
+
+
 def test_rss_guid_identifies_records_whose_titles_differ() -> None:
     """A shared feed GUID joins records that share nothing else."""
     first = replace(_episode("A Conversation"), rss_guid="urn:example:1")
@@ -91,6 +129,9 @@ def test_shared_url_ranks_below_a_differing_number_from_one_source() -> None:
 
     assert_that(episodes_match(unnumbered, other_source)).is_true()
     assert_that(episodes_match(other_source, renumbered)).is_false()
+    assert_that(group_same_episodes([unnumbered, other_source])).is_equal_to(
+        [[unnumbered, other_source]],
+    )
 
 
 def test_identity_wins_over_conflicting_title_numbers() -> None:
@@ -170,6 +211,41 @@ def test_title_numbers_still_separate_differently_numbered_sources() -> None:
     assert_that(episodes_match(listing, same)).is_true()
 
 
+@pytest.mark.parametrize(
+    "newest_first", [True, False], ids=["18-then-17", "17-then-18"]
+)
+def test_equal_number_with_matching_titles_pairs_first(newest_first: bool) -> None:
+    """An equal number never loses to an earlier match on identical titles."""
+    listing = _episode("Protect Our Parks", number=17, source="podscripts")
+    seventeen = _episode("Protect Our Parks", number=17, published_at=_DAY)
+    eighteen = _episode(
+        "Protect Our Parks",
+        number=18,
+        published_at=_DAY + timedelta(days=7),
+    )
+    feed = [eighteen, seventeen] if newest_first else [seventeen, eighteen]
+
+    groups = group_same_episodes([listing, *feed])
+
+    assert_that(groups).contains([listing, seventeen], [eighteen])
+    assert_that(groups).is_length(2)
+
+
+@pytest.mark.parametrize("tenth_first", [True, False], ids=["tenth-first", "ten-first"])
+def test_title_matches_pair_before_an_equal_number_alone(tenth_first: bool) -> None:
+    """An equal number whose titles disagree yields to two title matches."""
+    tenth = _episode("The Tenth One", source="podscripts")
+    things = _episode("10 Things We Learned", number=10, source="podscripts")
+    feed_tenth = _episode("The Tenth One", number=10, published_at=_DAY)
+    feed_things = _episode("10 Things We Learned", number=347, published_at=_DAY)
+    listing = [tenth, things] if tenth_first else [things, tenth]
+
+    groups = group_same_episodes([*listing, feed_tenth, feed_things])
+
+    assert_that(groups).contains([tenth, feed_tenth], [things, feed_things])
+    assert_that(groups).is_length(2)
+
+
 def test_cross_source_duplicate_matches_only_its_own_episode() -> None:
     """A slightly different title from another source joins its own episode."""
     feed_eighteen = _episode("Protect Our Parks 18", number=2581, published_at=_DAY)
@@ -223,6 +299,58 @@ def test_siblings_never_merge_through_a_shared_match() -> None:
     assert_that(groups).is_equal_to([[untitled, eighteen], [seventeen]])
 
 
+def test_title_numbers_veto_a_group_through_a_shared_match() -> None:
+    """Unnumbered siblings whose titles' numbers conflict never meet via a third."""
+    untitled = _episode("Protect Our Parks", published_at=_DAY, source="spotify")
+    eighteen = _episode("Protect Our Parks 18", published_at=_DAY)
+    seventeen = _episode("Protect Our Parks 17", published_at=_DAY)
+
+    groups = group_same_episodes([untitled, eighteen, seventeen])
+
+    assert_that(groups).is_equal_to([[untitled, eighteen], [seventeen]])
+
+
+@pytest.mark.parametrize(
+    ("one", "other", "conflict"),
+    [
+        ("Our 1,000th Episode Spectacular", "Our 1000th Episode Spectacular", False),
+        ("The $1,000,000 Question", "The $1000000 Question", False),
+        ("Episodes 100,101", "Episodes 100 and 101", False),
+        ("Episodes 100,101", "Episode 102", True),
+        ("Best of the '90s", "Best of the 90s", False),
+        ("Class of '99", "Class of 99", False),
+        ("The '10 Things' Episode", "The 10 Things Episode", False),
+        ("Best of 2025", "Best of '25", False),
+        ("Best of 2025", "Best of '24", True),
+        ("Class of '68", "Class of 2068", False),
+        ("Class of '68", "Class of 1968", True),
+        ("Class of '69", "Class of 1969", False),
+        ("Class of '69", "Class of 2069", True),
+        ("Round 1 of 2: Game 1", "Round 2 of 2: Game 1", True),
+    ],
+    ids=[
+        "thousands-ordinal",
+        "thousands-amount",
+        "comma-list",
+        "comma-list-other-number",
+        "decade",
+        "short-year-bare",
+        "quoted-number",
+        "short-year-full",
+        "short-year-other",
+        "pivot-68-is-2068",
+        "pivot-68-not-1968",
+        "pivot-69-is-1969",
+        "pivot-69-not-2069",
+        "repeats-count",
+    ],
+)
+def test_title_numbers_conflict(one: str, other: str, conflict: bool) -> None:
+    """Separators, short years and repeated numbers read as people write them."""
+    assert_that(title_numbers_conflict(one, other)).is_equal_to(conflict)
+    assert_that(title_numbers_conflict(other, one)).is_equal_to(conflict)
+
+
 @pytest.mark.parametrize(
     ("first", "second"),
     [
@@ -238,31 +366,49 @@ def test_thousands_separators_are_not_a_number_conflict(
     assert_that(episodes_match(_episode(first), _episode(second))).is_true()
 
 
-def test_two_digit_year_matches_its_full_year() -> None:
-    """ "'25" is read as 2025 and "'99" as 1999; another year still conflicts."""
+def test_short_years_merge_on_the_same_day() -> None:
+    """ "'25" and "2025", "'90s" and "90s" match as they did before."""
     full = _episode("Best of 2025", published_at=_DAY)
     short = _episode("Best of '25", published_at=_DAY, source="spotify")
     other = _episode("Best of '24", published_at=_DAY, source="spotify")
-    nineties = _episode("Classics Of '99")
-    nineties_full = _episode("Classics Of 1999", source="spotify")
+    decade = _episode("Best of the '90s")
+    bare_decade = _episode("Best of the 90s", source="spotify")
 
     assert_that(episodes_match(full, short)).is_true()
     assert_that(episodes_match(full, other)).is_false()
-    assert_that(episodes_match(nineties, nineties_full)).is_true()
+    assert_that(episodes_match(decade, bare_decade)).is_true()
+
+
+def test_similarity_uses_the_titles_as_written() -> None:
+    """Normalised numbers never make dissimilar titles similar."""
+    short = _episode("Top 10 of '24", published_at=_DAY)
+    longer = _episode("Top 10 of 2024 part 2", published_at=_DAY, source="spotify")
+
+    assert_that(episodes_match(short, longer)).is_false()
 
 
 def test_numbering_labels_of_different_schemes_compare_the_rest() -> None:
-    """ "Episode 105: X" and "S2E5: X" from two sources on one day are one episode."""
+    """ "Episode 105: X" and "S2E5: X" are one episode only across sources, same day."""
     feed = _episode("Episode 105: The Return", published_at=_DAY)
     spotify = _episode("S2E5: The Return", published_at=_DAY, source="spotify")
-    listing = _episode("#105 - The Return", source="podscripts")
-
+    same_source = _episode("S2E5: The Return", published_at=_DAY)
+    next_day = _episode(
+        "S2E5: The Return",
+        published_at=_DAY + timedelta(days=1),
+        source="spotify",
+    )
     bare_feed = _episode("Episode 105", published_at=_DAY)
     bare_spotify = _episode("S2E5", published_at=_DAY, source="spotify")
 
     assert_that(episodes_match(feed, spotify)).is_true()
-    assert_that(episodes_match(listing, spotify)).is_false()
-    assert_that(episodes_match(listing, feed)).is_true()
+    assert_that(episodes_match(feed, same_source)).is_false()
+    assert_that(episodes_match(feed, next_day)).is_false()
+    assert_that(
+        episodes_match(
+            _episode("Episode 105: The Return"),
+            _episode("S2E5: The Return", source="spotify"),
+        ),
+    ).is_false()
     # With nothing after the labels, the whole titles are compared.
     assert_that(episodes_match(bare_feed, bare_spotify)).is_false()
 

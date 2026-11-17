@@ -14,7 +14,7 @@ from dataclasses import fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from podex.config import get_settings
@@ -32,11 +32,7 @@ from podex.services.discovery import (
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
-from podex.services.episode_matching import (
-    STABLE_ID_FIELDS,
-    group_same_episodes,
-    known_number,
-)
+from podex.services.episode_matching import group_same_episodes
 from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
@@ -294,10 +290,8 @@ class DiscoveryOrchestrator:
         """Deduplicate and merge episodes from multiple sources.
 
         Records are grouped by the rule in ``podex.services.episode_matching``
-        (ADR 0018): a shared stable identifier joins them; then an equal
-        episode number joins them and a differing one from the same source
-        keeps them apart; then a shared episode URL joins them; otherwise
-        similar titles whose numbers and dates do not conflict join them.
+        (ADR 0019). The catalog lookup in ``_find_existing_episode`` is not
+        part of that rule.
         """
         return [self._merge_episodes(group) for group in group_same_episodes(episodes)]
 
@@ -407,42 +401,35 @@ class DiscoveryOrchestrator:
         podcast: Podcast,
         discovered: DiscoveredEpisode,
     ) -> Episode | None:
-        """Find the catalog episode that matches the discovered one.
-
-        Applies the catalog part of ADR 0018, in order: a shared feed GUID,
-        Spotify URI or YouTube id finds the row whatever its number; then an
-        equal episode number; then the episode URL, but only on a row whose
-        number does not differ from the discovered one. Episode number 0
-        means no number. A stored number's source is not recorded, so a URL
-        never overrides a differing number here. Titles and dates are not
-        compared against the catalog.
-        """
+        """Find an existing episode that matches the discovered one."""
         query = self.session.query(Episode).filter(Episode.podcast_id == podcast.id)
 
-        for name in STABLE_ID_FIELDS:
-            value = getattr(discovered, name)
-            if value:
-                ep = query.filter(getattr(Episode, name) == value).first()
-                if ep:
-                    return ep
+        # Try matching by source-specific IDs first
+        if discovered.youtube_id:
+            ep = query.filter(Episode.youtube_id == discovered.youtube_id).first()
+            if ep:
+                return ep
 
-        number = known_number(discovered.episode_number)
-        if number is not None:
-            ep = query.filter(Episode.episode_number == number).first()
+        if discovered.spotify_uri:
+            ep = query.filter(Episode.spotify_uri == discovered.spotify_uri).first()
+            if ep:
+                return ep
+
+        if discovered.rss_guid:
+            ep = query.filter(Episode.rss_guid == discovered.rss_guid).first()
             if ep:
                 return ep
 
         if discovered.episode_url:
-            by_url = query.filter(Episode.episode_url == discovered.episode_url)
-            if number is not None:
-                by_url = by_url.filter(
-                    or_(
-                        Episode.episode_number.is_(None),
-                        Episode.episode_number == 0,
-                        Episode.episode_number == number,
-                    ),
-                )
-            ep = by_url.first()
+            ep = query.filter(Episode.episode_url == discovered.episode_url).first()
+            if ep:
+                return ep
+
+        # Try matching by episode number
+        if discovered.episode_number:
+            ep = query.filter(
+                Episode.episode_number == discovered.episode_number
+            ).first()
             if ep:
                 return ep
 

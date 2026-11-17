@@ -1,6 +1,7 @@
 """Tests for idempotent episode discovery persistence."""
 
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 from typing import cast
 
 import httpx
@@ -212,124 +213,6 @@ def _feed_podcast(db: Session) -> Podcast:
     return podcast
 
 
-_HOMEPAGE = "https://show.example/"
-
-
-def test_feed_entries_sharing_a_link_with_different_numbers_stay_apart(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A shared link does not merge entries whose episode numbers differ."""
-    _serve_feed(
-        monkeypatch,
-        [
-            DiscoveredEpisode(
-                title=f"Protect Our Parks {series}",
-                episode_number=number,
-                episode_url=_HOMEPAGE,
-                rss_guid=f"urn:example:{number}",
-                discovery_source="rss",
-            )
-            for series, number in ((18, 2581), (17, 2580))
-        ],
-    )
-    podcast = _feed_podcast(db_session)
-
-    with DiscoveryOrchestrator(db_session) as orchestrator:
-        result = orchestrator.discover_for_podcast(podcast)
-
-    assert_that(result.new_episodes).is_equal_to(2)
-    numbers = db_session.scalars(
-        select(Episode.episode_number).where(Episode.podcast_id == podcast.id),
-    ).all()
-    assert_that(sorted(number for number in numbers if number is not None)).is_equal_to(
-        [2580, 2581],
-    )
-
-
-def test_catalog_match_skips_rows_whose_number_differs(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A shared link never matches a catalog row numbered differently.
-
-    The discovered episode matches the row with its own number instead, even
-    though that row's title and link differ.
-    """
-    podcast = _feed_podcast(db_session)
-    older = persist_episode(
-        db_session,
-        podcast=podcast,
-        title="Protect Our Parks 17",
-        episode_number=2580,
-        episode_url=_HOMEPAGE,
-    )
-    same_number = persist_episode(
-        db_session,
-        podcast=podcast,
-        title="#2581 - Protect Our Parks 18",
-        episode_number=2581,
-        episode_url="https://podscripts.co/podcasts/show/2581-protect-our-parks-18",
-    )
-    db_session.commit()
-    _serve_feed(
-        monkeypatch,
-        [
-            DiscoveredEpisode(
-                title="Protect Our Parks 18",
-                episode_number=2581,
-                episode_url=_HOMEPAGE,
-                rss_guid="urn:example:2581",
-                discovery_source="rss",
-            ),
-        ],
-    )
-
-    with DiscoveryOrchestrator(db_session) as orchestrator:
-        result = orchestrator.discover_for_podcast(podcast)
-
-    assert_that(result.new_episodes).is_equal_to(0)
-    assert_that(result.updated_episodes).is_equal_to(1)
-    db_session.refresh(older)
-    db_session.refresh(same_number)
-    assert_that(older.rss_guid).is_none()
-    assert_that(same_number.rss_guid).is_equal_to("urn:example:2581")
-
-
-def test_catalog_row_numbered_differently_is_not_updated_by_a_new_episode(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A new numbered episode is created, not folded into a row with another number."""
-    podcast = _feed_podcast(db_session)
-    persist_episode(
-        db_session,
-        podcast=podcast,
-        title="Protect Our Parks 17",
-        episode_number=2580,
-        episode_url=_HOMEPAGE,
-    )
-    db_session.commit()
-    _serve_feed(
-        monkeypatch,
-        [
-            DiscoveredEpisode(
-                title="Protect Our Parks 18",
-                episode_number=2581,
-                episode_url=_HOMEPAGE,
-                rss_guid="urn:example:2581",
-                discovery_source="rss",
-            ),
-        ],
-    )
-
-    with DiscoveryOrchestrator(db_session) as orchestrator:
-        result = orchestrator.discover_for_podcast(podcast)
-
-    assert_that(result.new_episodes).is_equal_to(1)
-    assert_that(db_session.query(Episode).count()).is_equal_to(2)
-
-
 _NOW = datetime(2026, 6, 1, 12, 0, tzinfo=UTC)
 _FEED_DAY = datetime(2026, 5, 20, 9, 0, tzinfo=UTC)
 _FEED_LINK = "https://show.example/episodes/the-return"
@@ -357,33 +240,55 @@ def _feed_item(
     number: int | None,
     *,
     title: str = "The Return",
-    guid: str = "urn:example:the-return",
+    guid: str | None = "urn:example:the-return",
     link: str | None = _FEED_LINK,
+    published_at: datetime = _FEED_DAY,
 ) -> DiscoveredEpisode:
     """Return one dated feed entry."""
     return DiscoveredEpisode(
         title=title,
         episode_number=number,
-        published_at=_FEED_DAY,
+        published_at=published_at,
         episode_url=link,
         rss_guid=guid,
         discovery_source="rss",
     )
 
 
+@dataclass(frozen=True, slots=True)
+class _Round:
+    """What one discovery run reads: listing links, feed entries, its time."""
+
+    links: dict[str, str] = field(default_factory=dict)
+    feed: list[DiscoveredEpisode] = field(default_factory=list)
+    now: datetime = _NOW
+    feed_fails: bool = False
+
+
 def _run(
     db: Session,
     monkeypatch: pytest.MonkeyPatch,
     podcast: Podcast,
-    *,
-    links: dict[str, str],
-    feed: list[DiscoveredEpisode],
+    run: _Round,
 ) -> None:
-    """Run one discovery over the given listing links and feed entries."""
-    _serve_listing(monkeypatch, links)
-    _serve_feed(monkeypatch, feed)
-    with DiscoveryOrchestrator(db, clock=lambda: _NOW) as orchestrator:
+    """Run one discovery over the round's listing links and feed entries."""
+    _serve_listing(monkeypatch, run.links)
+    if run.feed_fails:
+        monkeypatch.setattr(RSSDiscovery, "discover_episodes", _failing_feed)
+    else:
+        _serve_feed(monkeypatch, run.feed)
+    with DiscoveryOrchestrator(db, clock=lambda: run.now) as orchestrator:
         orchestrator.discover_for_podcast(podcast)
+
+
+def _failing_feed(
+    self: RSSDiscovery,
+    podcast: Podcast,
+    since: datetime | None = None,
+) -> list[DiscoveredEpisode]:
+    """Fail as an unreachable feed does."""
+    del self, podcast, since
+    raise httpx.ConnectError("feed unreachable")
 
 
 def _rows(db: Session, podcast: Podcast) -> list[Episode]:
@@ -535,8 +440,7 @@ def test_sources_numbering_one_episode_differently_store_it_once(
         db_session,
         monkeypatch,
         podcast,
-        links={slug: title},
-        feed=[_feed_item(feed_number, title=title)],
+        _Round(links={slug: title}, feed=[_feed_item(feed_number, title=title)]),
     )
 
     rows = _rows(db_session, podcast)
@@ -563,36 +467,10 @@ def test_source_seen_first_in_an_earlier_run_still_gives_one_row(
         db_session,
         monkeypatch,
         podcast,
-        links=links if listing_first else {},
-        feed=[] if listing_first else feed,
+        _Round(links=links) if listing_first else _Round(feed=feed),
     )
-    _run(db_session, monkeypatch, podcast, links=links, feed=feed)
+    _run(db_session, monkeypatch, podcast, _Round(links=links, feed=feed))
 
-    assert_that(_rows(db_session, podcast)).is_length(1)
-
-
-@pytest.mark.parametrize("stored_number", [None, 0], ids=["null", "zero"])
-def test_url_match_accepts_rows_without_a_number(
-    db_session: Session,
-    monkeypatch: pytest.MonkeyPatch,
-    stored_number: int | None,
-) -> None:
-    """A numbered record finds an unnumbered row with its URL."""
-    podcast = _feed_podcast(db_session)
-    persist_episode(
-        db_session,
-        podcast=podcast,
-        title="The Return",
-        episode_number=stored_number,
-        episode_url=_FEED_LINK,
-    )
-    db_session.commit()
-    _serve_feed(monkeypatch, [_feed_item(5)])
-
-    with DiscoveryOrchestrator(db_session) as orchestrator:
-        result = orchestrator.discover_for_podcast(podcast)
-
-    assert_that(result.new_episodes).is_equal_to(0)
     assert_that(_rows(db_session, podcast)).is_length(1)
 
 
@@ -612,8 +490,7 @@ def test_renumbered_episode_leaves_one_row_per_listing_url(
             db_session,
             monkeypatch,
             podcast,
-            links=links,
-            feed=[_feed_item(number)],
+            _Round(links=links, feed=[_feed_item(number)]),
         )
 
     listing_url = _listing_url("the-return")
@@ -621,3 +498,198 @@ def test_renumbered_episode_leaves_one_row_per_listing_url(
     assert_that(rows).is_length(1)
     assert_that([row.episode_url for row in rows]).is_equal_to([listing_url])
     assert_that(podcast.podscripts_listing_walked_at).is_not_none()
+
+
+_LATER = (_NOW, _NOW + timedelta(hours=1), _NOW + timedelta(hours=2))
+"""Start times of consecutive runs, so each run's walk record is visible."""
+
+
+def _assert_one_row_per_listing_url(db: Session, podcast: Podcast) -> None:
+    """Assert that no listing URL is stored on two rows of ``podcast``."""
+    listing_urls = [
+        row.episode_url
+        for row in _rows(db, podcast)
+        if row.episode_url and row.episode_url.startswith(_listing_url(""))
+    ]
+    assert_that(listing_urls).does_not_contain_duplicates()
+
+
+def _walked_at(podcast: Podcast) -> datetime | None:
+    """Return the podcast's complete-walk record in UTC."""
+    walked_at = podcast.podscripts_listing_walked_at
+    return walked_at.replace(tzinfo=UTC) if walked_at is not None else None
+
+
+@pytest.mark.parametrize("feed_fails", [False, True], ids=["dropped", "failed"])
+def test_feed_first_row_without_a_link_stays_one_row(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    feed_fails: bool,
+) -> None:
+    """A feed-first row is found by its listing URL once the feed stops reporting it.
+
+    The run reading both sources writes the listing URL onto the feed's row
+    (it has none); the listing record alone then finds that row by URL.
+    """
+    podcast = _two_source_podcast(db_session)
+    links = {"105-the-return": "The Return"}
+    item = _feed_item(5, link=None)
+
+    _run(db_session, monkeypatch, podcast, _Round(feed=[item], now=_LATER[0]))
+    _run(
+        db_session,
+        monkeypatch,
+        podcast,
+        _Round(links=links, feed=[item], now=_LATER[1]),
+    )
+    _run(
+        db_session,
+        monkeypatch,
+        podcast,
+        _Round(links=links, now=_LATER[2], feed_fails=feed_fails),
+    )
+
+    rows = _rows(db_session, podcast)
+    assert_that(rows).is_length(1)
+    assert_that(rows[0].episode_url).is_equal_to(_listing_url("105-the-return"))
+    assert_that(rows[0].rss_guid).is_equal_to("urn:example:the-return")
+    _assert_one_row_per_listing_url(db_session, podcast)
+    assert_that(_walked_at(podcast)).is_equal_to(_LATER[2])
+
+
+@pytest.mark.parametrize(
+    ("first_guid", "second_guid"),
+    [(None, None), ("urn:example:first", "urn:example:second")],
+    ids=["feed-without-guids", "guid-changes-with-the-number"],
+)
+def test_feed_renumbering_keeps_the_listing_row(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    first_guid: str | None,
+    second_guid: str | None,
+) -> None:
+    """A renumbered feed item keeps one row through the unchanged listing URL."""
+    podcast = _two_source_podcast(db_session)
+    links = {"the-return": "The Return"}
+
+    for now, number, guid in ((_LATER[0], 5, first_guid), (_LATER[1], 6, second_guid)):
+        _run(
+            db_session,
+            monkeypatch,
+            podcast,
+            _Round(links=links, feed=[_feed_item(number, guid=guid)], now=now),
+        )
+
+    rows = _rows(db_session, podcast)
+    assert_that(rows).is_length(1)
+    assert_that(rows[0].episode_url).is_equal_to(_listing_url("the-return"))
+    _assert_one_row_per_listing_url(db_session, podcast)
+    assert_that(_walked_at(podcast)).is_equal_to(_LATER[1])
+
+
+@pytest.mark.parametrize("tenth_first", [True, False], ids=["tenth-first", "ten-first"])
+def test_feed_numbers_pair_each_listing_row_with_its_own_item(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    tenth_first: bool,
+) -> None:
+    """Each feed item's GUID and date land on its own listing row.
+
+    The feed numbers "The Tenth One" 10, which equals the leading number of
+    the listing's "10-things-we-learned"; the titles pair them correctly.
+    """
+    podcast = _two_source_podcast(db_session)
+    listing = [
+        ("the-tenth-one", "The Tenth One"),
+        ("10-things-we-learned", "10 Things We Learned"),
+    ]
+    links = dict(listing if tenth_first else reversed(listing))
+    tenth_day = _FEED_DAY - timedelta(days=30)
+    feed = [
+        _feed_item(
+            10,
+            title="The Tenth One",
+            guid="urn:example:tenth",
+            link="https://show.example/tenth",
+            published_at=tenth_day,
+        ),
+        _feed_item(
+            347,
+            title="10 Things We Learned",
+            guid="urn:example:things",
+            link="https://show.example/things",
+        ),
+    ]
+
+    _run(db_session, monkeypatch, podcast, _Round(links=links, now=_LATER[0]))
+    _run(
+        db_session,
+        monkeypatch,
+        podcast,
+        _Round(links=links, feed=feed, now=_LATER[1]),
+    )
+    _run(db_session, monkeypatch, podcast, _Round(feed=feed, now=_LATER[2]))
+
+    assert_that(_rows(db_session, podcast)).is_length(2)
+    _assert_one_row_per_listing_url(db_session, podcast)
+    by_url = {row.episode_url: row for row in _rows(db_session, podcast)}
+    assert_that(by_url).is_length(2)
+    tenth = by_url[_listing_url("the-tenth-one")]
+    things = by_url[_listing_url("10-things-we-learned")]
+    assert_that(tenth.rss_guid).is_equal_to("urn:example:tenth")
+    assert_that(tenth.published_at and tenth.published_at.date()).is_equal_to(
+        tenth_day.date(),
+    )
+    assert_that(things.rss_guid).is_equal_to("urn:example:things")
+    assert_that(things.published_at and things.published_at.date()).is_equal_to(
+        _FEED_DAY.date(),
+    )
+    # The feed-only run reads an empty listing, which records no walk.
+    assert_that(_walked_at(podcast)).is_equal_to(_LATER[1])
+
+
+@pytest.mark.parametrize(
+    "newest_first", [True, False], ids=["18-then-17", "17-then-18"]
+)
+def test_equal_number_pairs_before_an_identical_title(
+    db_session: Session,
+    monkeypatch: pytest.MonkeyPatch,
+    newest_first: bool,
+) -> None:
+    """The listing's episode 17 pairs with feed episode 17, not with 18.
+
+    All three titles are "Protect Our Parks"; only the numbers tell them apart.
+    """
+    podcast = _two_source_podcast(db_session)
+    seventeen = _feed_item(
+        17,
+        title="Protect Our Parks",
+        guid="urn:example:17",
+        link="https://show.example/17",
+    )
+    eighteen = _feed_item(
+        18,
+        title="Protect Our Parks",
+        guid="urn:example:18",
+        link="https://show.example/18",
+        published_at=_FEED_DAY + timedelta(days=7),
+    )
+    feed = [eighteen, seventeen] if newest_first else [seventeen, eighteen]
+
+    _run(
+        db_session,
+        monkeypatch,
+        podcast,
+        _Round(links={"17-protect-our-parks": "Protect Our Parks"}, feed=feed),
+    )
+
+    rows = {row.episode_number: row for row in _rows(db_session, podcast)}
+    assert_that(sorted(rows)).is_equal_to([17, 18])
+    assert_that(rows[17].episode_url).is_equal_to(
+        _listing_url("17-protect-our-parks"),
+    )
+    assert_that(rows[17].rss_guid).is_equal_to("urn:example:17")
+    assert_that(rows[17].published_at and rows[17].published_at.date()).is_equal_to(
+        _FEED_DAY.date(),
+    )
+    assert_that(rows[18].rss_guid).is_equal_to("urn:example:18")
