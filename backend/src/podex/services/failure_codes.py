@@ -17,6 +17,8 @@ class FailureReason(StrEnum):
     TRUNCATED_RESPONSE = auto()
     LEGACY_RESPONSE_SHAPE = auto()
     INVALID_CORRECTIONS = auto()
+    UNEXPECTED_STOP_REASON = auto()
+    CORRECTION_BUDGET_EXCEEDED = auto()
     UNCLASSIFIED_FAILURE = auto()
     CONFIGURATION = auto()
     EMBEDDING_COUNT_MISMATCH = auto()

@@ -31,10 +31,11 @@ class Model:
 
     ``answer`` is the reply for every request, or a function of the
     transcript piece sent. A string becomes one text block and a list is used
-    as the content blocks. ``stop_reason`` is returned with every reply.
+    as the content blocks. ``stop_reason`` (any JSON value) is returned with
+    every reply.
     """
 
-    def __init__(self, answer: Answer, stop_reason: str = "end_turn") -> None:
+    def __init__(self, answer: Answer, stop_reason: object = "end_turn") -> None:
         self.answer = answer
         self.stop_reason = stop_reason
         self.sent: list[dict[str, Any]] = []
@@ -58,13 +59,7 @@ class Model:
 
     def transcripts_sent(self) -> list[str]:
         """Return the transcript text inside each request's delimiters."""
-        transcripts: list[str] = []
-        for body in self.sent:
-            content: str = body["messages"][0]["content"]
-            transcripts.append(
-                content.split("<transcript>\n", 1)[1].split("\n</transcript>", 1)[0],
-            )
-        return transcripts
+        return [piece_text(body) for body in self.sent]
 
 
 def drop_ambient_sdk_settings(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,7 +112,7 @@ def clean(
     answer: Answer,
     text: str = TRANSCRIPT,
     *,
-    stop_reason: str = "end_turn",
+    stop_reason: object = "end_turn",
     **kwargs: Any,
 ) -> tuple[CleanupResult, Model]:
     """Run cleanup against a model that answers ``answer``.
@@ -132,14 +127,7 @@ def clean(
         The result and the model that recorded the requests.
     """
     model = Model(answer, stop_reason)
-    with httpx2.Client(transport=httpx2.MockTransport(model)) as http_client:
-        client: anthropic.Anthropic = anthropic.Anthropic(
-            api_key=f"synthetic-{token_hex(4)}",
-            http_client=http_client,
-            max_retries=0,
-        )
-        result = TranscriptCleaner(client=client).cleanup_transcript(text, **kwargs)
-    return result, model
+    return clean_with(model, text, **kwargs), model
 
 
 def rejection_counts(result: CleanupResult) -> dict[str, int]:
@@ -203,3 +191,56 @@ def sentence_text(length: int) -> str:
         Text whose words all differ.
     """
     return "".join(f"w{index:05d} " for index in range(length // 7 + 1))[:length]
+
+
+def padded(core: str, words: int = 60) -> str:
+    """Return ``core`` between two runs of distinct filler words.
+
+    The filler keeps a short correction well inside the change budget and
+    never contains the text a test corrects.
+
+    Args:
+        core: Text under test.
+        words: Filler words on each side.
+
+    Returns:
+        Filler, ``core``, a space, then filler.
+    """
+    return sentence_text(7 * words) + core + " " + sentence_text(7 * words)
+
+
+def piece_text(body: dict[str, Any]) -> str:
+    """Return the transcript text inside one decoded request body.
+
+    Args:
+        body: Decoded Messages API request body.
+
+    Returns:
+        Text between the transcript delimiters.
+    """
+    content: str = body["messages"][0]["content"]
+    return content.split("<transcript>\n", 1)[1].split("\n</transcript>", 1)[0]
+
+
+def clean_with(
+    handler: Callable[[httpx2.Request], httpx2.Response],
+    text: str,
+    **kwargs: Any,
+) -> CleanupResult:
+    """Run cleanup through the real SDK with ``handler`` as the HTTP endpoint.
+
+    Args:
+        handler: Answers every request the SDK sends.
+        text: Transcript to clean.
+        **kwargs: Further ``cleanup_transcript`` arguments.
+
+    Returns:
+        The cleanup result.
+    """
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as http_client:
+        client: anthropic.Anthropic = anthropic.Anthropic(
+            api_key=f"synthetic-{token_hex(4)}",
+            http_client=http_client,
+            max_retries=0,
+        )
+        return TranscriptCleaner(client=client).cleanup_transcript(text, **kwargs)

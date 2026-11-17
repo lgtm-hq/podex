@@ -38,6 +38,7 @@ class _FakeMessages:
             raise self.error
         return SimpleNamespace(
             content=[SimpleNamespace(type="text", text=self.text or "")],
+            stop_reason="end_turn",
         )
 
 

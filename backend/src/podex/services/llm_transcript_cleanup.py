@@ -7,15 +7,16 @@ injected by the caller (tuned prompts are podex-ops data, resolved through
 
 The model never returns transcript text. It proposes corrections (exact
 original text, replacement, reason) and this module applies the ones that pass
-the rules in :func:`_check_correction` and :func:`_select_corrections` to the
-original text. Every character no applied correction covers is returned as it
-was. See ADR 0021.
+the rules below to the original text. Every character no applied correction
+covers is returned as it was. See ADR 0021.
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from enum import StrEnum, auto
 from typing import Any, NamedTuple
@@ -39,15 +40,34 @@ _MAX_TERMINOLOGY_TERMS = 50
 _MAX_LOOKBACK_CHARS = 1000
 # A transcript is read in at most this many requests of ``max_chars`` each.
 MAX_PIECES = 5
+# A limit below this reads one piece only, as before pieces existed: a piece
+# shorter than the shortest transcript worth sending is not worth a request.
+MIN_PIECED_LIMIT = 100
 # Consecutive pieces share up to this many characters (at most a tenth of
 # ``max_chars``) so that an error across a cut is seen whole by one request.
 MAX_OVERLAP_CHARS = 200
-# Corrections accepted from one reply, and the size of each one.
+# Corrections considered from one reply.
 MAX_CORRECTIONS_PER_REPLY = 200
-MAX_ORIGINAL_CHARS = 300
+# An original holds the misheard words plus the neighbours that make it
+# unique: about ten words. Longer originals rewrite sentences, not words.
+MAX_ORIGINAL_CHARS = 80
+# A replacement may be this much longer than its original (a name spelt out
+# in full) and must keep at least this share of the original's length.
 MAX_REPLACEMENT_GROWTH_CHARS = 40
+MIN_REPLACEMENT_PERCENT = 50
+# Accepted corrections may cover at most this share of the text a piece owns.
+# Speech-to-text word error rates on conversational audio are a few percent;
+# the names, terms and word boundaries cleanup fixes are a part of those, and
+# each fix quotes a few neighbouring words, roughly tripling what it covers.
+MAX_CHANGED_PERCENT = 15
 MAX_REASON_CHARS = 200
 _CUT_OFF_STOP_REASON = "max_tokens"
+_COMPLETE_STOP_REASONS = frozenset({"end_turn", "stop_sequence"})
+# Unicode categories never accepted in a replacement unless the original
+# already holds that character: controls, format characters (bidirectional
+# controls, zero-width characters, byte order mark, soft hyphen), surrogates.
+_UNSAFE_CATEGORIES = frozenset({"Cc", "Cf", "Cs"})
+_OLD_SHAPE_KEY = re.compile(r'(?<!\\)"cleaned_text"\s*:')
 
 
 class CorrectionRejection(StrEnum):
@@ -58,12 +78,16 @@ class CorrectionRejection(StrEnum):
     ORIGINAL_TOO_LONG = auto()
     EMPTY_REPLACEMENT = auto()
     UNCHANGED = auto()
+    UNSAFE_REPLACEMENT = auto()
     OVERSIZED_REPLACEMENT = auto()
+    UNDERSIZED_REPLACEMENT = auto()
     NOT_FOUND = auto()
     AMBIGUOUS = auto()
     AT_CUT = auto()
-    DUPLICATE = auto()
+    NOT_OWNED = auto()
+    OVER_BUDGET = auto()
     OVERLAP = auto()
+    SUPERSEDED = auto()
 
 
 @dataclass(frozen=True)
@@ -73,7 +97,8 @@ class CleanupCorrection:
     Attributes:
         original: Exact input text that was replaced.
         corrected: Replacement text proposed by the model.
-        reason: The model's short reason, cut to ``MAX_REASON_CHARS``.
+        reason: The model's short reason without control, format or
+            surrogate characters, cut to ``MAX_REASON_CHARS``.
         start: Index of ``original`` in the input transcript.
     """
 
@@ -105,8 +130,9 @@ class CleanupResult:
             ``unread_chars``.
         unread_chars: Input characters after the last piece whose reply
             arrived (or that was blank and skipped), because the piece bound
-            was reached, a request failed or the input was shorter than the
-            minimum. These are returned exactly as they were.
+            was reached, a request failed, the reply had the old shape or the
+            input was shorter than the minimum. These are returned exactly as
+            they were.
         rejections: Count of proposed corrections not applied, by reason.
     """
 
@@ -145,23 +171,31 @@ class CleanupResult:
 
     @property
     def corrections_proposed(self) -> int:
-        """Return the number of corrections the used replies proposed."""
+        """Return the number of corrections in replies whose list was read."""
         return self.correction_count + self.corrections_rejected
 
 
 class _Piece(NamedTuple):
-    """Half-open range ``[start, end)`` of the input sent in one request."""
+    """Half-open range ``[start, end)`` of the input."""
 
     start: int
     end: int
 
 
 class _Reply(NamedTuple):
-    """Usable corrections from one reply, or why it was not used."""
+    """Usable corrections from one reply, or why it was not used.
+
+    Attributes:
+        items: The reply's ``corrections`` list, or None when not usable.
+        error: Failure descriptor, if any.
+        stop: Whether to stop reading further pieces.
+        received: Whether a reply arrived for the piece.
+    """
 
     items: list[object] | None
     error: str | None
     stop: bool
+    received: bool
 
 
 def _reject(
@@ -170,7 +204,8 @@ def _reject(
     count: int = 1,
 ) -> None:
     """Add ``count`` rejections for ``reason``."""
-    rejections[reason] = rejections.get(reason, 0) + count
+    if count:
+        rejections[reason] = rejections.get(reason, 0) + count
 
 
 def _split_at_limit(text: str, max_chars: int) -> tuple[str, str]:
@@ -223,9 +258,8 @@ def _plan_pieces(text: str, max_chars: int) -> list[_Piece]:
 
     Each piece is cut as :func:`_split_at_limit` describes. The next piece
     starts as :func:`_next_start` describes, so neighbours share at most
-    ``min(max_chars // 10, MAX_OVERLAP_CHARS)`` characters. A piece is at
-    least ``max_chars - 2 * (max_chars // 10)`` characters longer than that
-    overlap, so every piece advances.
+    ``min(max_chars // 10, MAX_OVERLAP_CHARS)`` characters. A limit below
+    ``MIN_PIECED_LIMIT`` reads the first piece only.
 
     Args:
         text: Full transcript text.
@@ -234,10 +268,11 @@ def _plan_pieces(text: str, max_chars: int) -> list[_Piece]:
     Returns:
         Pieces in input order; text after the last one is not read.
     """
+    most = MAX_PIECES if max_chars >= MIN_PIECED_LIMIT else 1
     overlap = min(max_chars // 10, MAX_OVERLAP_CHARS)
     pieces: list[_Piece] = []
     start = 0
-    while start < len(text) and len(pieces) < MAX_PIECES:
+    while start < len(text) and len(pieces) < most:
         head, _rest = _split_at_limit(text[start:], max_chars)
         end = start + len(head)
         pieces.append(_Piece(start, end))
@@ -245,6 +280,29 @@ def _plan_pieces(text: str, max_chars: int) -> list[_Piece]:
             break
         start = _next_start(text, end, overlap)
     return pieces
+
+
+def _cores(pieces: list[_Piece]) -> list[_Piece]:
+    """Split the read text into the part each piece owns.
+
+    Neighbouring pieces divide the text they share at its midpoint; the
+    first piece owns from the start and the last to its end.
+
+    Args:
+        pieces: Pieces in input order.
+
+    Returns:
+        One non-overlapping range per piece, together covering all pieces.
+    """
+    cores: list[_Piece] = []
+    low = pieces[0].start if pieces else 0
+    for index, piece in enumerate(pieces):
+        high = piece.end
+        if index + 1 < len(pieces):
+            high = (pieces[index + 1].start + piece.end) // 2
+        cores.append(_Piece(low, high))
+        low = high
+    return cores
 
 
 def _covered_chars(pieces: list[_Piece]) -> int:
@@ -265,6 +323,20 @@ def _covered_chars(pieces: list[_Piece]) -> int:
     return total
 
 
+def _without_unsafe(value: str) -> str:
+    """Drop control, format and surrogate characters.
+
+    Args:
+        value: Text from the reply.
+
+    Returns:
+        The text without characters in ``_UNSAFE_CATEGORIES``.
+    """
+    return "".join(
+        char for char in value if unicodedata.category(char) not in _UNSAFE_CATEGORIES
+    )
+
+
 def _correction_fields(item: object) -> tuple[str, str, str] | None:
     """Return (original, corrected, reason) from a well-formed item.
 
@@ -276,8 +348,8 @@ def _correction_fields(item: object) -> tuple[str, str, str] | None:
         item: One entry of the reply's ``corrections`` list.
 
     Returns:
-        The three fields, with the reason cut to ``MAX_REASON_CHARS``, or
-        None when the item is malformed.
+        The three fields, the reason made safe and cut to
+        ``MAX_REASON_CHARS``, or None when the item is malformed.
     """
     if not isinstance(item, dict):
         return None
@@ -292,7 +364,7 @@ def _correction_fields(item: object) -> tuple[str, str, str] | None:
         and isinstance(corrected, str)
         and isinstance(reason, str)
     ):
-        return original, corrected, reason[:MAX_REASON_CHARS]
+        return original, corrected, _without_unsafe(reason)[:MAX_REASON_CHARS]
     return None
 
 
@@ -300,24 +372,40 @@ def _replacement_rejection(
     original: str,
     corrected: str,
 ) -> CorrectionRejection | None:
-    """Apply the size rules to one correction.
+    """Apply the size and content rules to one correction.
+
+    A replacement may contain a control, format or surrogate character only
+    when the original contains that same character.
 
     Args:
         original: Text the correction replaces.
         corrected: Its replacement.
 
     Returns:
-        The rule the correction breaks, or None.
+        The first rule the correction breaks, in the order listed, or None.
     """
-    if len(original) > MAX_ORIGINAL_CHARS:
-        return CorrectionRejection.ORIGINAL_TOO_LONG
-    if not corrected.strip():
-        return CorrectionRejection.EMPTY_REPLACEMENT
-    if corrected == original:
-        return CorrectionRejection.UNCHANGED
-    if len(corrected) > len(original) + MAX_REPLACEMENT_GROWTH_CHARS:
-        return CorrectionRejection.OVERSIZED_REPLACEMENT
-    return None
+    rules = (
+        (len(original) > MAX_ORIGINAL_CHARS, CorrectionRejection.ORIGINAL_TOO_LONG),
+        (not corrected.strip(), CorrectionRejection.EMPTY_REPLACEMENT),
+        (corrected == original, CorrectionRejection.UNCHANGED),
+        (
+            any(
+                unicodedata.category(char) in _UNSAFE_CATEGORIES
+                and char not in original
+                for char in corrected
+            ),
+            CorrectionRejection.UNSAFE_REPLACEMENT,
+        ),
+        (
+            len(corrected) > len(original) + MAX_REPLACEMENT_GROWTH_CHARS,
+            CorrectionRejection.OVERSIZED_REPLACEMENT,
+        ),
+        (
+            len(corrected) * 100 < len(original) * MIN_REPLACEMENT_PERCENT,
+            CorrectionRejection.UNDERSIZED_REPLACEMENT,
+        ),
+    )
+    return next((rejection for broken, rejection in rules if broken), None)
 
 
 def _locate(original: str, piece_text: str) -> int | CorrectionRejection:
@@ -441,42 +529,86 @@ def _place_corrections(
     return placed
 
 
-def _select_corrections(
-    placed: list[CleanupCorrection],
+def _drop_overlapping(
+    corrections: list[CleanupCorrection],
     rejections: dict[CorrectionRejection, int],
 ) -> list[CleanupCorrection]:
-    """Drop duplicates and overlapping corrections.
-
-    A correction with the same position, original and replacement as an
-    earlier one (the same fix proposed by two overlapping pieces) is counted
-    as ``DUPLICATE``. Of the rest, every correction whose original shares a
-    character with another's is rejected as ``OVERLAP``; neither wins.
-    Corrections that only touch end to start both apply.
+    """Reject every correction of one reply that overlaps another of it.
 
     Args:
-        placed: Corrections placed in the input, from every used reply.
+        corrections: Corrections from one reply.
         rejections: Counts to update.
 
     Returns:
-        Non-overlapping corrections in input order.
+        The non-overlapping ones in input order.
     """
-    unique: dict[tuple[int, str, str], CleanupCorrection] = {}
-    for correction in placed:
-        key = (correction.start, correction.original, correction.corrected)
-        if key in unique:
-            _reject(rejections, CorrectionRejection.DUPLICATE)
-        else:
-            unique[key] = correction
-    ordered = sorted(unique.values(), key=lambda c: (c.start, c.end))
+    ordered = sorted(corrections, key=lambda c: (c.start, c.end))
     overlapping: set[int] = set()
     for index, correction in enumerate(ordered):
         for later in range(index + 1, len(ordered)):
             if ordered[later].start >= correction.end:
                 break
             overlapping.update((index, later))
-    if overlapping:
-        _reject(rejections, CorrectionRejection.OVERLAP, len(overlapping))
+    _reject(rejections, CorrectionRejection.OVERLAP, len(overlapping))
     return [c for i, c in enumerate(ordered) if i not in overlapping]
+
+
+def _accept_reply(
+    placed: list[CleanupCorrection],
+    core: _Piece,
+    rejections: dict[CorrectionRejection, int],
+) -> list[CleanupCorrection] | None:
+    """Keep the corrections a piece owns, within its change budget.
+
+    A correction whose start lies outside the piece's core belongs to the
+    neighbour and is rejected as ``NOT_OWNED``. When the owned corrections
+    together cover more than ``MAX_CHANGED_PERCENT`` of the core, none of them
+    is applied (``OVER_BUDGET``). Overlapping owned corrections are both
+    rejected (``OVERLAP``).
+
+    Args:
+        placed: Corrections from one reply, placed in the input.
+        core: Range the piece owns.
+        rejections: Counts to update.
+
+    Returns:
+        Accepted corrections, or None when the reply exceeded its budget.
+    """
+    owned = [c for c in placed if core.start <= c.start < core.end]
+    _reject(rejections, CorrectionRejection.NOT_OWNED, len(placed) - len(owned))
+    covered = sum(len(c.original) for c in owned)
+    if covered * 100 > MAX_CHANGED_PERCENT * (core.end - core.start):
+        _reject(rejections, CorrectionRejection.OVER_BUDGET, len(owned))
+        return None
+    return _drop_overlapping(owned, rejections)
+
+
+def _resolve_across_pieces(
+    accepted: list[CleanupCorrection],
+    rejections: dict[CorrectionRejection, int],
+) -> list[CleanupCorrection]:
+    """Settle overlaps between corrections from neighbouring pieces.
+
+    Corrections from one piece no longer overlap, so any overlap left is
+    between pieces. The correction that starts later wins: the overlapping
+    text begins at its start, which its own piece owns. The other is rejected
+    as ``SUPERSEDED``.
+
+    Args:
+        accepted: Corrections accepted from every piece.
+        rejections: Counts to update.
+
+    Returns:
+        Non-overlapping corrections in input order.
+    """
+    kept: list[CleanupCorrection] = []
+    for correction in sorted(accepted, key=lambda c: c.start, reverse=True):
+        if kept and correction.end > kept[-1].start:
+            _reject(rejections, CorrectionRejection.SUPERSEDED)
+        else:
+            kept.append(correction)
+    kept.reverse()
+    return kept
 
 
 def _apply_corrections(text: str, corrections: list[CleanupCorrection]) -> str:
@@ -499,6 +631,26 @@ def _apply_corrections(text: str, corrections: list[CleanupCorrection]) -> str:
     return "".join(parts)
 
 
+def _loads_object(candidate: str) -> dict[str, Any] | None:
+    """Decode a JSON object, treating any decoder refusal as no object.
+
+    The decoder raises ``ValueError`` for invalid JSON and for integers longer
+    than the interpreter's digit limit, and ``RecursionError`` for very deep
+    nesting.
+
+    Args:
+        candidate: Text to decode.
+
+    Returns:
+        The object, or None.
+    """
+    try:
+        parsed = json.loads(candidate)
+    except (ValueError, RecursionError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _parse_json_response(response_text: str) -> dict[str, Any] | None:
     """Parse a JSON object from model output, tolerating surrounding prose.
 
@@ -508,11 +660,8 @@ def _parse_json_response(response_text: str) -> dict[str, Any] | None:
     Returns:
         The parsed object, or None when no valid JSON object is found.
     """
-    try:
-        parsed = json.loads(response_text)
-    except json.JSONDecodeError:
-        parsed = None
-    if isinstance(parsed, dict):
+    parsed = _loads_object(response_text)
+    if parsed is not None:
         return parsed
 
     start = response_text.find("{")
@@ -532,19 +681,11 @@ def _parse_json_response(response_text: str) -> dict[str, Any] | None:
 
     if end <= start:
         return None
-
-    try:
-        fallback = json.loads(response_text[start:end])
-    except json.JSONDecodeError:
-        return None
-    return fallback if isinstance(fallback, dict) else None
+    return _loads_object(response_text[start:end])
 
 
 def _parse_corrections(response_text: str) -> tuple[list[object] | None, str | None]:
     """Return the reply's ``corrections`` list, or why the reply is unusable.
-
-    A reply that carries ``cleaned_text`` has the shape of the prompt used
-    before corrections only; it is reported and nothing in it is applied.
 
     Args:
         response_text: Text of the reply's first text block.
@@ -555,16 +696,58 @@ def _parse_corrections(response_text: str) -> tuple[list[object] | None, str | N
     parsed = _parse_json_response(response_text)
     if parsed is None:
         return None, describe_failure("cleanup", reason=FailureReason.INVALID_JSON)
-    if "cleaned_text" in parsed:
-        return None, describe_failure(
-            "cleanup", reason=FailureReason.LEGACY_RESPONSE_SHAPE
-        )
     corrections = parsed.get("corrections")
     if not isinstance(corrections, list):
         return None, describe_failure(
             "cleanup", reason=FailureReason.INVALID_CORRECTIONS
         )
     return corrections, None
+
+
+def _stop_failure(stop_reason: object) -> FailureReason | None:
+    """Return why a reply that stopped this way is not used, if it is not.
+
+    Args:
+        stop_reason: The reply's ``stop_reason``, of any type.
+
+    Returns:
+        None for a reply that ended normally, otherwise the failure reason.
+    """
+    if not isinstance(stop_reason, str):
+        return FailureReason.UNEXPECTED_STOP_REASON
+    if stop_reason == _CUT_OFF_STOP_REASON:
+        return FailureReason.TRUNCATED_RESPONSE
+    if stop_reason not in _COMPLETE_STOP_REASONS:
+        return FailureReason.UNEXPECTED_STOP_REASON
+    return None
+
+
+def _decode_reply(response_text: str, stop_reason: object) -> _Reply:
+    """Decide what one received reply contributes.
+
+    The old reply shape is recognised first, from a ``"cleaned_text":`` key
+    anywhere in the text (even in a reply cut off at the token cap), and
+    stops reading: every later piece would get the same reply. Then only a
+    reply that ended normally is parsed.
+
+    Args:
+        response_text: Text of the reply's first text block.
+        stop_reason: The reply's ``stop_reason``.
+
+    Returns:
+        The reply's corrections, or the error and whether to stop.
+    """
+    if _OLD_SHAPE_KEY.search(response_text):
+        error = describe_failure("cleanup", reason=FailureReason.LEGACY_RESPONSE_SHAPE)
+        return _Reply(items=None, error=error, stop=True, received=True)
+    stop_failure = _stop_failure(stop_reason)
+    if stop_failure is not None:
+        error = describe_failure("cleanup", reason=stop_failure)
+        return _Reply(items=None, error=error, stop=False, received=True)
+    if not response_text:
+        return _Reply(items=None, error=None, stop=False, received=True)
+    items, parse_error = _parse_corrections(response_text)
+    return _Reply(items=items, error=parse_error, stop=False, received=True)
 
 
 def _cleanup_context(
@@ -641,9 +824,9 @@ class TranscriptCleaner:
             guest_name: Name of the guest (if any).
             terminology: Known terms that may be misspelled.
             max_chars: Maximum characters of one request. Longer input is
-                read in at most ``MAX_PIECES`` pieces (see
-                :func:`_plan_pieces`); text after the last is kept as it is
-                and counted in ``unread_chars``.
+                read in at most ``MAX_PIECES`` pieces (one below
+                ``MIN_PIECED_LIMIT``; see :func:`_plan_pieces`); text after
+                the last is kept as it is and counted in ``unread_chars``.
 
         Returns:
             CleanupResult with corrected text and correction counts.
@@ -672,9 +855,9 @@ class TranscriptCleaner:
             guest_name=guest_name,
             terminology=terminology,
         )
-        placed, used = self._read_pieces(transcript_text, pieces, context, result)
+        accepted, used = self._read_pieces(transcript_text, pieces, context, result)
 
-        result.corrections_made = _select_corrections(placed, result.rejections)
+        result.corrections_made = _resolve_across_pieces(accepted, result.rejections)
         result.cleaned_text = _apply_corrections(
             transcript_text, result.corrections_made
         )
@@ -695,12 +878,13 @@ class TranscriptCleaner:
         context: str,
         result: CleanupResult,
     ) -> tuple[list[CleanupCorrection], list[_Piece]]:
-        """Send each piece and place the corrections of every usable reply.
+        """Send each piece and accept the corrections of every usable reply.
 
         A blank piece is not sent. A failed request stops reading: its piece
-        and the text after it are unread. A reply that is received but not
-        used (cut off, not JSON, old shape, no corrections list) leaves its
-        piece uncleaned and reading continues.
+        and the text after it are unread. An old-shape reply also stops
+        reading, after its piece. Any other reply that is received but not
+        used (cut off, other stop reason, not JSON, no corrections list, over
+        budget) leaves its piece uncleaned and reading continues.
 
         Args:
             text: Full transcript text.
@@ -710,25 +894,36 @@ class TranscriptCleaner:
                 updated.
 
         Returns:
-            Tuple of (placed corrections, pieces whose reply was used).
+            Tuple of (accepted corrections, pieces whose reply was used).
         """
-        placed: list[CleanupCorrection] = []
+        accepted: list[CleanupCorrection] = []
         used: list[_Piece] = []
-        for piece in pieces:
+        for piece, core in zip(pieces, _cores(pieces), strict=True):
             piece_text = text[piece.start : piece.end]
-            if piece_text.strip():
-                reply = self._read_piece(piece_text, context)
-                if reply.error is not None:
-                    result.errors.append(reply.error)
-                if reply.stop:
-                    break
-                if reply.items is not None:
-                    placed.extend(
-                        _place_corrections(reply.items, text, piece, result.rejections)
+            if not piece_text.strip():
+                result.unread_chars = len(text) - piece.end
+                continue
+            reply = self._read_piece(piece_text, context)
+            if reply.error is not None:
+                result.errors.append(reply.error)
+            if reply.received:
+                result.unread_chars = len(text) - piece.end
+            if reply.stop:
+                break
+            if reply.items is None:
+                continue
+            placed = _place_corrections(reply.items, text, piece, result.rejections)
+            kept = _accept_reply(placed, core, result.rejections)
+            if kept is None:
+                result.errors.append(
+                    describe_failure(
+                        "cleanup", reason=FailureReason.CORRECTION_BUDGET_EXCEEDED
                     )
-                    used.append(piece)
-            result.unread_chars = len(text) - piece.end
-        return placed, used
+                )
+                continue
+            accepted.extend(kept)
+            used.append(piece)
+        return accepted, used
 
     def _read_piece(self, piece_text: str, context: str) -> _Reply:
         """Request corrections for one piece and decode the reply.
@@ -740,7 +935,7 @@ class TranscriptCleaner:
         Returns:
             The reply's corrections, or the error and whether to stop.
         """
-        response_text, truncated, request_error = self._request_text(
+        response_text, stop_reason, request_error = self._request_text(
             f"CONTEXT:\n{context}\n\n"
             "TRANSCRIPT TO CLEAN:\n"
             f"<transcript>\n{piece_text}\n</transcript>\n\n"
@@ -748,24 +943,18 @@ class TranscriptCleaner:
             "transcript. Return as JSON.",
         )
         if request_error is not None:
-            return _Reply(items=None, error=request_error, stop=True)
-        if truncated:
-            error = describe_failure("cleanup", reason=FailureReason.TRUNCATED_RESPONSE)
-            return _Reply(items=None, error=error, stop=False)
-        if not response_text:
-            return _Reply(items=None, error=None, stop=False)
-        items, parse_error = _parse_corrections(response_text)
-        return _Reply(items=items, error=parse_error, stop=False)
+            return _Reply(items=None, error=request_error, stop=True, received=False)
+        return _decode_reply(response_text, stop_reason)
 
-    def _request_text(self, user_message: str) -> tuple[str, bool, str | None]:
+    def _request_text(self, user_message: str) -> tuple[str, object, str | None]:
         """Send one cleanup request and decode the first text block.
 
         Args:
             user_message: Fully formatted user turn for the request.
 
         Returns:
-            Tuple of (response text, whether the reply stopped at the token
-            cap, error message); the error is None on success.
+            Tuple of (response text, the reply's stop reason, error message);
+            the error is None on success.
         """
         # Keep this task-specific Anthropic request contract explicit.
         # pylint: disable=duplicate-code
@@ -776,20 +965,20 @@ class TranscriptCleaner:
                 system=self.system_prompt,
                 messages=[{"role": "user", "content": user_message}],
             )
-            truncated = getattr(response, "stop_reason", None) == _CUT_OFF_STOP_REASON
-            return first_response_text(response), truncated, None
+            stop_reason: object = getattr(response, "stop_reason", None)
+            return first_response_text(response), stop_reason, None
         # pylint: enable=duplicate-code
         except anthropic.APIStatusError as exc:
             error = describe_failure("cleanup", exc)
             log_failure(logger, error, exc)
-            return "", False, error
+            return "", None, error
         except anthropic.APIConnectionError as exc:
             error = describe_failure("cleanup", exc)
             log_failure(logger, error, exc)
-            return "", False, error
+            return "", None, error
         except MALFORMED_RESPONSE_ERRORS as exc:
             error = describe_failure(
                 "cleanup", exc, reason=FailureReason.MALFORMED_RESPONSE
             )
             log_failure(logger, error, exc)
-            return "", False, error
+            return "", None, error
