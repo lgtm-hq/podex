@@ -15,7 +15,7 @@
 leave out stale model generations and unusable vectors. The embedding backfill
 (#715) selects `pending`, `failed` and stale-model chunks.
 
-Three gaps remained in how a failure was recorded:
+Four gaps remained in how a failure was recorded:
 
 - A chunk that was embedded and then failed under another model kept the old
   vector and `embedded_at`, but took the new model's label. The row named a
@@ -25,6 +25,9 @@ Three gaps remained in how a failure was recorded:
   marked `failed`.
 - A right-length vector that was not a `list` or `tuple` was reported as
   `embedding_dimensions_mismatch`.
+- The provider's `model_name` was written unchecked to `embedding_model`
+  (`String(120)`). A name the column cannot store failed the flush and lost the
+  whole sync instead of failing the chunks (#904).
 
 ADR 0009 already defines the bounded failure descriptor for embedding failures
 and its fixed validation-shape reasons.
@@ -40,6 +43,9 @@ and its fixed validation-shape reasons.
 - `failed`: a failed embed clears `embedding_vector` and `embedded_at`.
   - `embedding_model` and `embedding_dimensions` describe the failed attempt.
   - Each is null when the provider's value could not be read.
+  - The model name is null when it is refused (see **Model name**). The
+    dimension is then null too, even when it was readable, because it is not
+    read once the name is refused.
   - The dimension is null when it is not an `int` within the int4 column.
 - `pending`: a sync without a provider leaves the embedding columns as they
   were. A pending chunk may carry the vector, model, dimension and time of its
@@ -49,7 +55,8 @@ and its fixed validation-shape reasons.
 **Provider errors.** This applies to any `Exception` raised by the provider's
 own code:
 
-- reading its `model_name` and `dimensions`;
+- reading its `model_name` (including reading it as an exact `str`) and
+  `dimensions`;
 - the `embed_texts` call;
 - reading the result. The result is read at most one vector past the number of
   texts, so an endless result fails the count check instead of hanging.
@@ -58,8 +65,8 @@ Such an exception fails the whole batch. The stored descriptor is the ADR 0009
 one: the exception's class name, an allowlisted HTTP status when the class is a
 known HTTP adapter, and `request_failed`, or the exception's own explicit
 reason. The message is never read. Errors from this module's own code (building
-the request, the dimension and count checks) are not provider failures and
-propagate. So do:
+the request, the model-name, dimension and count checks) are not provider
+failures and propagate. So do:
 
 - `ContentSuppressedError`, a takedown refusal (ADR 0015);
 - `BaseException` subclasses outside `Exception`: `KeyboardInterrupt`,
@@ -75,8 +82,23 @@ The vector column type refuses, on every dialect and before the statement runs,
 what pgvector refuses: non-sequence values, booleans, strings, `None`, NaN,
 infinity and float32 overflow.
 
-This extends ADR 0009. ADR 0009 is unchanged; this ADR adds one reason to its
-closed set and widens which provider exceptions reach its descriptor.
+**Model name.** The sync reads `model_name` once per sync, before `dimensions`
+and before any text is sent. It reads the name as an exact built-in `str`: a
+`str` subclass is copied without running any method it defines, so the subclass
+cannot change what is checked or stored. A value that is not a `str` reads as
+no name. The name must be a string that is not empty or only whitespace, has
+at most 120 characters, and has no control character (Unicode `Cc`, NUL
+included) or lone surrogate (`Cs`). These are what PostgreSQL or the drivers
+refuse. Only control characters and lone surrogates are refused: format,
+private-use and unassigned code points are stored as given. Any other name
+refuses the provider before it is called. Every chunk fails with a new reason,
+`embedding_invalid_model_name`, and no model name is recorded. Neither the
+stored descriptor nor the log carries the refused value.
+
+This extends ADR 0009. ADR 0009 is unchanged; this ADR adds two reasons to its
+closed set and widens which provider exceptions reach its descriptor. The
+reasons are `embedding_invalid_type` (a vector that is not a list or tuple) and
+`embedding_invalid_model_name` (a model name `embedding_model` cannot store).
 
 Not chosen: on failure, keeping the previous vector with its previous model
 label. That would keep a usable vector across a transient failure. But a
