@@ -32,6 +32,8 @@ class DiscoveredEpisode:
     description: str | None = None
     episode_url: str | None = None
     thumbnail_url: str | None = None
+    # A feed may number per season; the number is then only unique within it.
+    season_number: int | None = None
 
     # Source-specific IDs
     youtube_id: str | None = None

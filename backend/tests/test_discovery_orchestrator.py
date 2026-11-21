@@ -364,7 +364,10 @@ def test_feed_items_numbered_zero_are_separate_episodes(
     db_session: Session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Episode number 0 means no number, so it joins nothing."""
+    """Episode number 0 means no number, so it joins nothing.
+
+    The items carry no GUIDs, so only their numbers and titles tell them apart.
+    """
     titles = ["Trailer", "Bonus: Live Q&A", "Announcement", "Holiday Special"]
     _serve_feed(
         monkeypatch,
@@ -372,7 +375,7 @@ def test_feed_items_numbered_zero_are_separate_episodes(
             _feed_item(
                 0,
                 title=title,
-                guid=f"urn:example:{index}",
+                guid=None,
                 link=f"https://show.example/{index}",
             )
             for index, title in enumerate(titles)

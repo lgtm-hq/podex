@@ -46,6 +46,9 @@ class Episode(Base):
     )
     title: "Mapped[str]" = mapped_column(String(500), index=True)
     episode_number: "Mapped[int | None]" = mapped_column(default=None)
+    # Set with the number it qualifies when a feed numbers per season; NULL for
+    # sources numbering across the show and for rows stored before it existed.
+    season_number: "Mapped[int | None]" = mapped_column(default=None)
     published_at: "Mapped[datetime | None]" = mapped_column(
         DateTime(timezone=True),
         default=None,

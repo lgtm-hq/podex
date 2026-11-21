@@ -9,13 +9,13 @@ This module provides the DiscoveryOrchestrator class which:
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-from dataclasses import fields, replace
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Query, Session
 
 from podex.config import get_settings
 from podex.models import Episode
@@ -32,7 +32,12 @@ from podex.services.discovery import (
 from podex.services.discovery_podscripts import PodscriptsDiscovery
 from podex.services.discovery_rss import RSSDiscovery
 from podex.services.discovery_spotify import SpotifyDiscovery
-from podex.services.episode_matching import group_same_episodes
+from podex.services.episode_matching import (
+    GUID_WHITESPACE,
+    group_same_episodes,
+    guid_key,
+    known_number,
+)
 from podex.services.failure_descriptors import describe_failure, log_failure
 
 if TYPE_CHECKING:
@@ -44,6 +49,55 @@ logger = logging.getLogger(__name__)
 def _utc_now() -> datetime:
     """Return the current time in UTC."""
     return datetime.now(UTC)
+
+
+@dataclass(frozen=True, slots=True)
+class _CatalogMatch:
+    """A stored row found for a discovered record, and how it was found."""
+
+    episode: Episode
+    by_guid_or_url: bool
+
+
+def _same_instant(stored: datetime | None, reported: datetime | None) -> bool:
+    """Return whether a row's time and a record's time are the same, or both unknown.
+
+    A stored time without an offset is read as UTC; the feed reader reports
+    times in UTC, so the stored value is the reported instant on every database.
+    """
+    if reported is None:
+        return stored is None
+    return stored is not None and as_utc(stored) == as_utc(reported)
+
+
+def _conflicts(row: Episode, discovered: DiscoveredEpisode) -> bool:
+    """Return whether a row holds a GUID, URL or number the record contradicts.
+
+    GUIDs compare by ``guid_key``; numbers in two known, different seasons
+    differ even when they are equal. A value missing on either side
+    contradicts nothing.
+    """
+    record_guid, row_guid = guid_key(discovered.rss_guid), guid_key(row.rss_guid)
+    if record_guid is not None and row_guid is not None and record_guid != row_guid:
+        return True
+    if (
+        discovered.episode_url
+        and row.episode_url
+        and discovered.episode_url != row.episode_url
+    ):
+        return True
+    record_number = known_number(discovered.episode_number)
+    row_number = known_number(row.episode_number)
+    if record_number is None or row_number is None:
+        return False
+    record_season = known_number(discovered.season_number)
+    row_season = known_number(row.season_number)
+    seasons_differ = (
+        record_season is not None
+        and row_season is not None
+        and record_season != row_season
+    )
+    return record_number != row_number or seasons_differ
 
 
 class DiscoveryOrchestrator:
@@ -320,12 +374,26 @@ class DiscoveryOrchestrator:
             # Identity precedence is handled above; fill the remaining data fields.
             for record_field in fields(DiscoveredEpisode):
                 name = record_field.name
-                if name in {"title", "has_transcript", "discovery_source"}:
+                if name in {
+                    "title",
+                    "has_transcript",
+                    "discovery_source",
+                    "season_number",
+                }:
                     continue
                 value = getattr(ep, name)
                 if value and not getattr(merged, name):
                     setattr(merged, name, value)
 
+        # A season qualifies the number it came with, never another source's.
+        merged.season_number = next(
+            (
+                ep.season_number
+                for ep in episodes
+                if ep.season_number and ep.episode_number == merged.episode_number
+            ),
+            None,
+        )
         return merged
 
     def _upsert_episodes(
@@ -366,14 +434,19 @@ class DiscoveryOrchestrator:
         stored_all = False
         try:
             for discovered in episodes:
-                existing = self._find_existing_episode(podcast, discovered)
+                match = self._match_existing(podcast, discovered)
+                existing = match.episode if match is not None else None
                 published_at = discovered.published_at
                 if published_at is None and existing is not None:
                     published_at = existing.published_at
                 inside = published_in_window(published_at, since)
 
-                if existing is not None:
-                    if self._update_episode(existing, discovered):
+                if match is not None:
+                    if self._update_episode(
+                        match.episode,
+                        discovered,
+                        fill_season=match.by_guid_or_url,
+                    ):
                         updated_count += 1
                 elif inside:
                     self._create_episode(podcast, discovered)
@@ -401,39 +474,136 @@ class DiscoveryOrchestrator:
         podcast: Podcast,
         discovered: DiscoveredEpisode,
     ) -> Episode | None:
-        """Find an existing episode that matches the discovered one."""
-        query = self.session.query(Episode).filter(Episode.podcast_id == podcast.id)
+        """Find an existing episode that matches the discovered one (ADR 0020)."""
+        match = self._match_existing(podcast, discovered)
+        return match.episode if match is not None else None
 
+    def _match_existing(
+        self,
+        podcast: Podcast,
+        discovered: DiscoveredEpisode,
+    ) -> _CatalogMatch | None:
+        """Find the stored row for a discovered record, and how it was found.
+
+        In order (ADR 0019, extended by ADR 0020): YouTube id, Spotify URI,
+        feed GUID (by ``guid_key``), URL, episode number (within the record's
+        season when it has one), and, for a record without a YouTube id or
+        Spotify URI, title and publication time together. Each step runs only
+        when the earlier ones found nothing.
+        """
+        query = self.session.query(Episode).filter(Episode.podcast_id == podcast.id)
+        return next(
+            (
+                _CatalogMatch(episode=row, by_guid_or_url=by_guid_or_url)
+                for by_guid_or_url, row in self._lookup_steps(query, discovered)
+                if row is not None
+            ),
+            None,
+        )
+
+    def _lookup_steps(
+        self,
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Iterator[tuple[bool, Episode | None]]:
+        """Yield each step's row, or None, with whether it was a GUID or URL step."""
         # Try matching by source-specific IDs first
         if discovered.youtube_id:
-            ep = query.filter(Episode.youtube_id == discovered.youtube_id).first()
-            if ep:
-                return ep
-
+            yield (
+                False,
+                query.filter(Episode.youtube_id == discovered.youtube_id).first(),
+            )
         if discovered.spotify_uri:
-            ep = query.filter(Episode.spotify_uri == discovered.spotify_uri).first()
-            if ep:
-                return ep
-
-        if discovered.rss_guid:
-            ep = query.filter(Episode.rss_guid == discovered.rss_guid).first()
-            if ep:
-                return ep
-
+            yield (
+                False,
+                query.filter(Episode.spotify_uri == discovered.spotify_uri).first(),
+            )
+        if discovered.rss_guid and guid_key(discovered.rss_guid) is not None:
+            yield True, self._find_by_guid(query, discovered.rss_guid)
         if discovered.episode_url:
-            ep = query.filter(Episode.episode_url == discovered.episode_url).first()
-            if ep:
-                return ep
-
+            yield (
+                True,
+                query.filter(Episode.episode_url == discovered.episode_url).first(),
+            )
         # Try matching by episode number
         if discovered.episode_number:
-            ep = query.filter(
-                Episode.episode_number == discovered.episode_number
-            ).first()
-            if ep:
-                return ep
+            yield False, self._find_by_number(query, discovered)
+        if not (discovered.youtube_id or discovered.spotify_uri):
+            yield False, self._find_by_title_and_time(query, discovered)
 
-        return None
+    @staticmethod
+    def _find_by_guid(query: Query[Episode], guid: str) -> Episode | None:
+        """Return the row whose GUID equals ``guid`` by ``guid_key``.
+
+        An exactly equal GUID is preferred, as before. Otherwise the rows whose
+        trimmed, lowercased GUID equals the key's lowercased form are checked
+        with ``guid_key`` (PostgreSQL also lowercases non-ASCII letters, which
+        the rule compares exactly), oldest first.
+        """
+        ep = query.filter(Episode.rss_guid == guid).first()
+        if ep:
+            return ep
+        key = guid_key(guid)
+        candidates = query.filter(
+            func.lower(func.trim(Episode.rss_guid, GUID_WHITESPACE)) == func.lower(key),
+        ).order_by(Episode.id)
+        return next(
+            (row for row in candidates if guid_key(row.rss_guid) == key),
+            None,
+        )
+
+    @staticmethod
+    def _find_by_number(
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Episode | None:
+        """Return the first row with the record's number, in a compatible season.
+
+        A record with a season matches a row of the same season first, then a
+        row without a season; never a row of another season. A row without a
+        season is skipped when the record has a GUID and the row another one:
+        the GUID step has already ruled it out, so it is another item of the
+        feed. A record without a season matches any row with the number.
+        """
+        numbered = query.filter(Episode.episode_number == discovered.episode_number)
+        season = known_number(discovered.season_number)
+        if season is None:
+            return numbered.first()
+        same_season = numbered.filter(Episode.season_number == season).first()
+        if same_season is not None:
+            return same_season
+        seasonless = numbered.filter(Episode.season_number.is_(None))
+        if guid_key(discovered.rss_guid) is None:
+            return seasonless.first()
+        return next(
+            (row for row in seasonless if guid_key(row.rss_guid) is None),
+            None,
+        )
+
+    @staticmethod
+    def _find_by_title_and_time(
+        query: Query[Episode],
+        discovered: DiscoveredEpisode,
+    ) -> Episode | None:
+        """Return the oldest row with the record's exact title and publication time.
+
+        An undated record matches only an undated row, so for it this step is a
+        match by title alone. A dated record matches only a row dated the same
+        instant, never an undated row. A row that holds a GUID, URL or number
+        the record contradicts is never taken.
+        """
+        candidates = query.filter(Episode.title == discovered.title)
+        if discovered.published_at is None:
+            candidates = candidates.filter(Episode.published_at.is_(None))
+        return next(
+            (
+                row
+                for row in candidates.order_by(Episode.id)
+                if _same_instant(row.published_at, discovered.published_at)
+                and not _conflicts(row, discovered)
+            ),
+            None,
+        )
 
     def _create_episode(
         self,
@@ -445,6 +615,7 @@ class DiscoveryOrchestrator:
             podcast_id=podcast.id,
             title=discovered.title,
             episode_number=discovered.episode_number,
+            season_number=known_number(discovered.season_number),
             youtube_id=discovered.youtube_id,
             published_at=discovered.published_at,
             duration_seconds=discovered.duration_seconds,
@@ -463,12 +634,28 @@ class DiscoveryOrchestrator:
         self,
         episode: Episode,
         discovered: DiscoveredEpisode,
+        *,
+        fill_season: bool = False,
     ) -> bool:
         """Update an existing episode with new data.
+
+        With ``fill_season`` (the row was found by GUID or URL), a row without
+        a season takes the record's season when both carry the same episode
+        number. A stored season is never overwritten.
 
         Returns True if any changes were made.
         """
         changed = False
+        season = known_number(discovered.season_number)
+        if (
+            fill_season
+            and season is not None
+            and episode.season_number is None
+            and known_number(episode.episode_number) is not None
+            and episode.episode_number == discovered.episode_number
+        ):
+            episode.season_number = season
+            changed = True
 
         # Fill in missing fields
         if discovered.spotify_uri and not episode.spotify_uri:
