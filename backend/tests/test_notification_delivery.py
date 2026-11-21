@@ -8,6 +8,7 @@ from assertpy import assert_that
 
 from podex.config import AuthSettings, Settings
 from podex.services.notification_delivery import (
+    DIGEST_SMTP_TIMEOUT_SECONDS,
     SmtpDigestSender,
     build_digest_sender,
 )
@@ -79,7 +80,11 @@ def test_send_digest_builds_one_text_message(smtp: type[_RecordingSmtp]) -> None
     assert_that(smtp.instances).is_length(1)
     connection = smtp.instances[0]
     assert_that(connection.endpoint).is_equal_to(
-        {"host": "smtp.example.com", "port": 2525},
+        {
+            "host": "smtp.example.com",
+            "port": 2525,
+            "timeout": DIGEST_SMTP_TIMEOUT_SECONDS,
+        },
     )
     assert_that(connection.calls).is_equal_to(["send_message", "close"])
     assert_that(connection.messages).is_length(1)
