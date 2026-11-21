@@ -315,10 +315,14 @@ def test_cleanup_sends_messages_request_and_decodes_corrections() -> None:
 
 
 @_SERVICES
-def test_response_without_text_block_is_empty_not_an_error(
+def test_response_without_text_block_fails_extraction_and_keeps_cleanup(
     run_service: Callable[[anthropic.Anthropic], list[str]],
 ) -> None:
-    """Only non-text content blocks leave the service result unchanged."""
+    """Only non-text blocks: extraction records an empty reply; cleanup is kept.
+
+    Extraction must answer with a JSON array (``[]`` when nothing is found),
+    so a reply without text is a failed window. Cleanup keeps the input.
+    """
     body = {
         **_message("unused"),
         "content": [
@@ -329,7 +333,8 @@ def test_response_without_text_block_is_empty_not_an_error(
 
     errors = run_service(_client(provider))
 
-    assert_that(errors).is_empty()
+    expected = ["extraction: empty_response"] if run_service is _extract else []
+    assert_that(errors).is_equal_to(expected)
     assert_that(provider.requests).is_length(1)
 
 
