@@ -16,7 +16,7 @@ concurrency:
 jobs:
   scorecards:
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-scorecards.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-scorecards.yml@0c373f1252e0fe23a1e119df639b51d63b02b7d8 # v0.116.3
     with:
       job-name: "🛡️ Scorecard Analysis"
       egress-policy: block
@@ -44,7 +44,7 @@ jobs:
     needs: [scorecards]
     if: failure() && github.ref == 'refs/heads/main'
     # yamllint disable-line rule:line-length
-    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@808da537a4e346ac1ab3b9e1df10142909b96bc6 # v0.98.3
+    uses: lgtm-hq/lgtm-ci/.github/workflows/reusable-main-failure-notifier.yml@0c373f1252e0fe23a1e119df639b51d63b02b7d8 # v0.116.3
     permissions:
       actions: read
       contents: read
