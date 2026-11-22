@@ -32,16 +32,12 @@ class SmtpDelivery:
             starttls=settings.auth.smtp_starttls,
         )
 
-    def send_email(
-        self, message: EmailMessage, *, timeout: float | None = None
-    ) -> None:
-        """Deliver a prepared message using the configured TLS/authentication."""
-        # Omit timeout for digest delivery to preserve its existing socket policy.
-        connection = (
-            smtplib.SMTP(host=self.host, port=self.port)
-            if timeout is None
-            else smtplib.SMTP(host=self.host, port=self.port, timeout=timeout)
-        )
+    def send_email(self, message: EmailMessage, *, timeout: float) -> None:
+        """Deliver a prepared message using the configured TLS/authentication.
+
+        ``timeout`` bounds each socket operation; every caller sets one.
+        """
+        connection = smtplib.SMTP(host=self.host, port=self.port, timeout=timeout)
         with connection as smtp:
             if self.starttls:
                 smtp.starttls()

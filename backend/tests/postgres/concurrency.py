@@ -13,16 +13,24 @@ waiting for the lock the test is about:
 
 If that never happens within the timeout, the helper raises with the last
 state it saw. The ordering is observed from the server, not assumed from sleeps.
+
+``run_paused`` interleaves two transactions inside their work rather than at
+its end: the first runs until it executes a statement matching a pattern and
+pauses there, holding its locks; the second runs until it either finishes or
+the server shows it waiting behind the first; then the first resumes. Both
+commit, or roll back when they raise, and the outcome of each is returned, so
+a deadlock or a stale write shows up as that side's error instead of hanging.
 """
 
 import re
+import threading
 import time
 from collections.abc import Callable, Sequence
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, event, text
 from sqlalchemy.orm import Session
 
 from tests.postgres.conftest import PostgresDatabase
@@ -210,3 +218,193 @@ def run_overlapping(
     finally:
         first_db.close()
         second_db.close()
+
+
+_PAUSED_THREAD = "paused-first"
+
+
+@dataclass(frozen=True, slots=True)
+class StepOutcome:
+    """What one side of a paused race returned or raised.
+
+    Attributes:
+        result: The step's return value, ``None`` when it raised.
+        error: The exception it raised, ``None`` when it committed.
+    """
+
+    result: Any
+    error: BaseException | None
+
+
+@dataclass(frozen=True, slots=True)
+class PausedRun:
+    """Outcome of ``run_paused``.
+
+    Attributes:
+        first: The paused transaction's outcome.
+        second: The other transaction's outcome.
+        second_waited_on: The statement the second transaction was waiting
+            on behind the first while the first was paused, or ``None`` when
+            it finished without waiting.
+    """
+
+    first: StepOutcome
+    second: StepOutcome
+    second_waited_on: str | None
+
+
+def _commit_or_roll_back(
+    db: Session, step: Callable[[Session], SecondResult]
+) -> SecondResult:
+    """Run a step and commit it; roll back if it raises, releasing its locks.
+
+    Returns:
+        The step's result.
+    """
+    try:
+        return _run_then_commit(db, step)
+    finally:
+        if db.in_transaction():
+            db.rollback()
+
+
+def _outcome(future: "Future[Any]") -> StepOutcome:
+    """Return a finished step's result or error."""
+    error = future.exception(timeout=LOCK_WAIT_TIMEOUT_SECONDS)
+    if error is not None:
+        return StepOutcome(result=None, error=error)
+    return StepOutcome(result=future.result(), error=None)
+
+
+def _finished_or_waiting(
+    engine: Engine,
+    future: "Future[Any]",
+    *,
+    waiter: int,
+    blocker: int,
+) -> str | None:
+    """Wait until ``future`` is done or ``waiter`` waits on a lock of ``blocker``.
+
+    Returns:
+        The statement ``waiter`` is waiting on, or ``None`` when it finished.
+
+    Raises:
+        AssertionError: If neither happens within the timeout.
+    """
+    deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
+    seen: _Observation | None = None
+    while time.monotonic() < deadline:
+        if future.done():
+            return None
+        seen = _observe(engine, waiter)
+        if (
+            seen is not None
+            and seen.wait_event_type == "Lock"
+            and blocker in seen.blockers
+        ):
+            return seen.query
+        time.sleep(0.02)
+    msg = (
+        "the second transaction neither finished nor waited behind the paused "
+        f"one (pid {blocker}); last seen: {seen}"
+    )
+    raise AssertionError(msg)
+
+
+class _Pause:
+    """Pause the first thread once, right after a matching statement."""
+
+    def __init__(self, pattern: str) -> None:
+        self.pattern = re.compile(pattern, re.DOTALL)
+        self.paused = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(
+        self,
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        *_rest: object,
+    ) -> None:
+        """``after_cursor_execute`` listener: wait here once, in the first thread."""
+        if (
+            threading.current_thread().name.startswith(_PAUSED_THREAD)
+            and not self.paused.is_set()
+            and self.pattern.search(statement)
+        ):
+            self.paused.set()
+            self.release.wait(LOCK_WAIT_TIMEOUT_SECONDS)
+
+    def wait_until_paused(self, first: "Future[Any]") -> None:
+        """Block until the first thread pauses.
+
+        Raises:
+            AssertionError: If it finishes or times out without pausing.
+        """
+        deadline = time.monotonic() + LOCK_WAIT_TIMEOUT_SECONDS
+        while not self.paused.wait(0.02):
+            if first.done() or time.monotonic() > deadline:
+                self.release.set()
+                msg = (
+                    "the first transaction never ran a statement matching "
+                    f"{self.pattern.pattern!r}; outcome: {_outcome(first)}"
+                )
+                raise AssertionError(msg)
+
+
+def run_paused(
+    postgres: PostgresDatabase,
+    *,
+    first: Callable[[Session], FirstResult],
+    second: Callable[[Session], SecondResult],
+    pause_after: str,
+) -> PausedRun:
+    """Pause ``first`` after a statement, run ``second`` against it, resume.
+
+    ``first`` runs in a worker thread until it executes a statement matching
+    the regular expression ``pause_after`` (searched in the SQL text), and
+    waits there with its locks held. ``second`` then runs on another
+    connection until it finishes or the server shows it waiting behind
+    ``first``. ``first`` then resumes. Each side commits, or rolls back if it
+    raises; errors are returned, not raised.
+
+    Returns:
+        Both outcomes and the statement the second side waited on.
+
+    Raises:
+        AssertionError: If ``first`` ends without running a matching
+            statement, or ``second`` neither finishes nor waits behind it.
+    """
+    pause = _Pause(pause_after)
+    sessions = (postgres.sessions(), postgres.sessions())
+    pids = tuple(backend_pid(db) for db in sessions)
+    event.listen(postgres.engine, "after_cursor_execute", pause)
+    try:
+        with (
+            ThreadPoolExecutor(
+                max_workers=1, thread_name_prefix=_PAUSED_THREAD
+            ) as firsts,
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="second") as seconds,
+        ):
+            first_future = firsts.submit(_commit_or_roll_back, sessions[0], first)
+            pause.wait_until_paused(first_future)
+            second_future = seconds.submit(_commit_or_roll_back, sessions[1], second)
+            try:
+                waited_on = _finished_or_waiting(
+                    postgres.engine,
+                    second_future,
+                    waiter=pids[1],
+                    blocker=pids[0],
+                )
+            finally:
+                pause.release.set()
+            return PausedRun(
+                first=_outcome(first_future),
+                second=_outcome(second_future),
+                second_waited_on=waited_on,
+            )
+    finally:
+        pause.release.set()
+        event.remove(postgres.engine, "after_cursor_execute", pause)
+        for db in sessions:
+            db.close()

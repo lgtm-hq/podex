@@ -7,6 +7,15 @@ from podex.config import Settings
 
 from .smtp_delivery import SmtpDelivery
 
+DIGEST_SMTP_TIMEOUT_SECONDS = 10.0
+"""Socket timeout for each digest SMTP operation (connect, each command).
+
+Digest delivery runs in the transaction that evaluated the account's alert
+rules, which holds their row locks, so a media merge of a watched record
+waits for it. Committing evaluation before delivery needs per-item
+scheduler transactions (#90); until then this bounds each wait.
+"""
+
 
 class DigestSender(Protocol):
     """Delivery boundary for an assembled notification digest."""
@@ -25,7 +34,7 @@ class SmtpDigestSender(SmtpDelivery):
         message["From"] = self.from_email
         message["To"] = email
         message.set_content(body_text)
-        self.send_email(message)
+        self.send_email(message, timeout=DIGEST_SMTP_TIMEOUT_SECONDS)
 
 
 def build_digest_sender(*, settings: Settings) -> DigestSender | None:

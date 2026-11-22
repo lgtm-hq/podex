@@ -35,8 +35,8 @@ from podex.services.graph_relations import (
 )
 from podex.services.media_alias_repository import ensure_media_alias
 from podex.services.media_aliases import normalize_media_alias
+from podex.services.media_locks import lock_media
 from podex.services.media_merge_references import (
-    delete_mentions_covered_after_merge,
     lock_merge_pair,
     merge_verification_sources,
     move_media_references,
@@ -554,7 +554,9 @@ def split_ops_media(
         RuntimeError: If resulting detail cannot be loaded.
         ValueError: If no valid mentions are selected or the title is empty.
     """
-    source = db.query(Media).filter(Media.id == media_id).first()
+    # The record first, FOR UPDATE, as a merge takes it (ADR 0020); the
+    # mentions are read only once it is held.
+    source = lock_media(db=db, media_ids=[media_id], exclusive=True).get(media_id)
     if source is None:
         return None
     if not payload.title.strip():
@@ -586,15 +588,17 @@ def split_ops_media(
         source=MediaAliasSourceType.MANUAL,
         is_primary=True,
     )
+    for mention in mentions:
+        mention.media = created_media
+    # The flush locks the moved mentions' podcast rows; the suppression copies
+    # and the counter, the last lock, come after it (ADR 0020).
+    db.flush()
     if copy_pair_suppressions(
         db=db,
         source_media_id=source.id,
         created_media_id=created_media.id,
     ):
         bump_suppression_version(db)
-    for mention in mentions:
-        mention.media = created_media
-    db.flush()
 
     source_detail = get_ops_media_detail(db=db, media_id=media_id)
     created_detail = get_ops_media_detail(db=db, media_id=created_media.id)
@@ -790,11 +794,6 @@ def merge_ops_media(
     if source_media.type != target_media.type:
         raise ValueError("Media types must match for merge")
 
-    delete_mentions_covered_after_merge(
-        db=db,
-        source_media_id=source_media.id,
-        target_media_id=target_media.id,
-    )
     move_media_references(db=db, source_media=source_media, target_media=target_media)
 
     for field_name in _merge_scalar_field_names():

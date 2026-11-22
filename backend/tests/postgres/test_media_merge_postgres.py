@@ -173,7 +173,7 @@ def _merge_and_evaluation(
     )
     evaluate = partial(_evaluate, user_id=fixture.user_id)
     # Whichever runs second must wait in its own FOR UPDATE on the rule rows
-    # (evaluation's _lock_alert_rules, or the merge's rule plan), not at a
+    # (evaluation's lock_alert_rules, or the merge's rule plan), not at a
     # later write.
     rule_lock = row_lock_wait("account_alert_rules")
 
