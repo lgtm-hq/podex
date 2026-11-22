@@ -9,13 +9,17 @@ against stored rows is the orchestrator's catalog lookup and is not part of it.
 For two records, the first rule that speaks decides:
 
 1. A shared stable identifier (feed GUID, Spotify URI, YouTube id; never
-   empty or blank) means one episode.
-2. A differing episode number means two episodes only when both records come
+   empty or blank) means one episode. Feed GUIDs compare by ``guid_key``.
+2. Two feed GUIDs that differ, from records of the same source, mean two
+   episodes. The feed reader drops a GUID that several items of a feed share,
+   so a GUID that reaches the matcher names one item.
+3. A differing episode number means two episodes only when both records come
    from the same source. A record without a source is never the same source
-   as another record. Episode number 0 means no number.
-3. An equal episode number means one episode.
-4. A shared episode URL means one episode.
-5. Otherwise the titles and dates decide. Conflicting numbers written in the
+   as another record. Episode number 0 means no number. Numbers in two known,
+   different seasons differ even when they are equal.
+4. An equal episode number means one episode.
+5. A shared episode URL means one episode.
+6. Otherwise the titles and dates decide. Conflicting numbers written in the
    titles mean two episodes, as do publication dates more than
    ``DATE_TOLERANCE`` apart; without a conflict, similar titles mean one
    episode, and how similar depends on how close the known dates are.
@@ -36,6 +40,17 @@ from podex.services.discovery import DiscoveredEpisode
 
 STABLE_ID_FIELDS = ("youtube_id", "spotify_uri", "rss_guid")
 """Fields whose equal, non-blank values identify one episode."""
+
+_EXACT_ID_FIELDS = ("youtube_id", "spotify_uri")
+"""Stable identifiers compared exactly; feed GUIDs compare by ``guid_key``."""
+
+_ASCII_LOWER = str.maketrans(
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "abcdefghijklmnopqrstuvwxyz",
+)
+
+GUID_WHITESPACE = " \t\n\r\f\v"
+"""Characters a GUID may be surrounded by: ASCII whitespace, as SQL can trim."""
 
 DATE_TOLERANCE = timedelta(days=7)
 """Largest gap between two known publication dates of one episode."""
@@ -219,6 +234,25 @@ def known_number(number: int | None) -> int | None:
     return number or None
 
 
+def guid_key(guid: str | None) -> str | None:
+    """Return the form in which a feed GUID is compared, or None for no GUID.
+
+    Surrounding ASCII whitespace (``GUID_WHITESPACE``) is ignored and the
+    ASCII letters A-Z compare without case; every other character compares
+    exactly. An empty or blank GUID identifies nothing. Stored GUIDs are never
+    rewritten to this form.
+
+    Args:
+        guid: A feed GUID as reported or stored.
+
+    Returns:
+        The comparison key, or None for a missing, empty or blank GUID.
+    """
+    if guid is None:
+        return None
+    return guid.strip(GUID_WHITESPACE).translate(_ASCII_LOWER) or None
+
+
 def _shared_value(first: str | None, second: str | None) -> bool:
     """Return whether two values are equal and not empty or blank."""
     return bool(first and first.strip() and first == second)
@@ -229,10 +263,45 @@ def _shared_stable_identifier(
     second: DiscoveredEpisode,
 ) -> bool:
     """Return whether the records share a feed GUID, Spotify URI or YouTube id."""
+    guid = guid_key(first.rss_guid)
+    if guid is not None and guid == guid_key(second.rss_guid):
+        return True
     return any(
         _shared_value(getattr(first, name), getattr(second, name))
-        for name in STABLE_ID_FIELDS
+        for name in _EXACT_ID_FIELDS
     )
+
+
+def _distinct_feed_guids(first: DiscoveredEpisode, second: DiscoveredEpisode) -> bool:
+    """Return whether two records of one source carry different feed GUIDs."""
+    one, other = guid_key(first.rss_guid), guid_key(second.rss_guid)
+    return (
+        one is not None
+        and other is not None
+        and one != other
+        and _same_source(first, second)
+    )
+
+
+def _same_number(first: DiscoveredEpisode, second: DiscoveredEpisode) -> bool | None:
+    """Return whether the episode numbers are equal, or None when one is unknown.
+
+    Numbers in two known, different seasons are not equal. A record without a
+    season (the listing numbers across the show) is compatible with any season.
+    """
+    first_number = known_number(first.episode_number)
+    second_number = known_number(second.episode_number)
+    if first_number is None or second_number is None:
+        return None
+    first_season = known_number(first.season_number)
+    second_season = known_number(second.season_number)
+    if (
+        first_season is not None
+        and second_season is not None
+        and first_season != second_season
+    ):
+        return False
+    return first_number == second_number
 
 
 def _same_source(first: DiscoveredEpisode, second: DiscoveredEpisode) -> bool:
@@ -247,10 +316,11 @@ def _identity(first: DiscoveredEpisode, second: DiscoveredEpisode) -> bool | Non
     """Return what identifiers, numbers and URLs say, or None when they are silent."""
     if _shared_stable_identifier(first, second):
         return True
-    first_number = known_number(first.episode_number)
-    second_number = known_number(second.episode_number)
-    if first_number is not None and second_number is not None:
-        if first_number == second_number:
+    if _distinct_feed_guids(first, second):
+        return False
+    same_number = _same_number(first, second)
+    if same_number is not None:
+        if same_number:
             return True
         if _same_source(first, second):
             return False
@@ -361,10 +431,7 @@ def _pair_tier(first: DiscoveredEpisode, second: DiscoveredEpisode) -> int | Non
     identity = _identity(first, second)
     if identity is False:
         return None
-    first_number = known_number(first.episode_number)
-    if first_number is not None and first_number == known_number(
-        second.episode_number,
-    ):
+    if _same_number(first, second):
         if _titles_and_dates_match(first, second):
             return _NUMBER_AND_TITLE_TIER
         return _NUMBER_ONLY_TIER
