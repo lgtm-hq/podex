@@ -27,6 +27,7 @@ the changelog record _what_ changed.
 | [0017](./0017-suppression-identity-changes.md)          | Moves and deletes that would lift a suppression are refused     | proposed | 2026-11-17 |
 | [0018](./0018-embedding-failure-state.md)               | Failed embeddings keep no vector; provider errors are failures  | accepted | 2026-11-17 |
 | [0019](./0019-episode-identity-precedence.md)           | Precedence of episode identity evidence in discovery            | accepted | 2026-11-17 |
+| [0020](./0020-windowed-media-extraction.md)             | Media extraction reads the whole transcript in bounded windows  | proposed | 2026-11-17 |
 
 ## Format
 
