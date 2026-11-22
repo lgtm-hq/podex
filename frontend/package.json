@@ -39,7 +39,7 @@
   "overrides": {
     "js-yaml": "4.3.2",
     "fast-uri": "4.2.3",
-    "source-map-js": "1.2.3",
+    "source-map-js": "1.2.4",
     "glob": "14.0.6",
     "minimatch": "11.0.9"
   },
